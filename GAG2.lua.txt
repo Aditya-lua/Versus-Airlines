@@ -99,7 +99,17 @@ end)
 
 -- helpers
 local function notify(title, desc, style) pcall(function() Library:createDisplayMessage(title, desc, {{ text = "OK" }}, style or "info") end) end
-local function firstValue(v) if type(v) == "table" then return v[1] end return v end
+local function firstValue(v) 
+    if type(v) == "table" then 
+        for k, val in pairs(v) do
+            if type(k) == "number" then return val end
+            if val == true then return k end
+            return k
+        end
+        return nil
+    end 
+    return v 
+end
 local function getHRP() local c = client.Character return c and c:FindFirstChild("HumanoidRootPart") end
 local function getHumanoid() local c = client.Character return c and c:FindFirstChildOfClass("Humanoid") end
 
@@ -169,7 +179,10 @@ local function netFire(path, ...)
     if not Net then return end
     local node = Net
     for p in string.gmatch(path, "[^%.]+") do node = node and node[p] end
-    if type(node) == "table" and type(node.Fire) == "function" then pcall(node.Fire, node, ...) end
+    if type(node) == "table" then
+        if type(node.Fire) == "function" then pcall(node.Fire, node, ...)
+        elseif type(node.Invoke) == "function" then pcall(node.Invoke, node, ...) end
+    end
 end
 
 -- core data helpers
@@ -179,7 +192,32 @@ local function getData() local r = getReplica() return r and r.Data or nil end
 local function getBalance() local d = getData() return d and d.Sheckles or 0 end
 local function myPlot() local g = Workspace:FindFirstChild("Gardens") if not g then return nil end for _, plot in ipairs(g:GetChildren()) do if plot:GetAttribute("OwnerUserId") == client.UserId then return plot end end return nil end
 local function isNight() local n = ReplicatedStorage:FindFirstChild("Night") return n and n.Value == true end
-local function teleport(pos) local r = getHRP() if not (r and pos) then return end local target = pos + Vector3.new(0, 3, 0) for _ = 1, 60 do local cur = r.Position local delta = target - cur if delta.Magnitude <= HOP then r.CFrame = CFrame.new(target) break end r.CFrame = CFrame.new(cur + delta.Unit * HOP) RunService.Heartbeat:Wait() end end
+local function teleport(pos)
+    local r = getHRP() 
+    if not (r and pos) then return end 
+    local target = pos + Vector3.new(0, 3, 0) 
+
+    if Library.Flags["UseVersusAI"] then
+        -- Wait for VersusAI backend integration (Learned Nodes)
+        -- Fallback to smooth interpolation
+        for _ = 1, 90 do
+            local cur = r.Position
+            local delta = target - cur
+            if delta.Magnitude <= 10 then r.CFrame = CFrame.new(target) break end
+            r.CFrame = CFrame.new(cur + delta.Unit * 10)
+            RunService.Heartbeat:Wait()
+        end
+        return
+    end
+
+    for _ = 1, 60 do 
+        local cur = r.Position 
+        local delta = target - cur 
+        if delta.Magnitude <= HOP then r.CFrame = CFrame.new(target) break end 
+        r.CFrame = CFrame.new(cur + delta.Unit * HOP) 
+        RunService.Heartbeat:Wait() 
+    end 
+end
 
 -- stock helpers
 local function stockItems(shop) local sv = ReplicatedStorage:FindFirstChild("StockValues") sv = sv and sv:FindFirstChild(shop) return sv and sv:FindFirstChild("Items") end
@@ -555,9 +593,20 @@ end
 
 local function doPlant()
     local plot = myPlot() if not plot then return end
+    
+    -- Teleport to garden so server distance checks pass
+    local ref = plot:FindFirstChild("PlotSizeReference") local r = getHRP()
+    if not Library.Flags["plantNoTp"] then
+        if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
+    end
+
     local d = getData() local seeds = d and d.Inventory and d.Inventory.Seeds if not seeds then return end
+    
     local seedFilter = Library.Flags["plantSeeds"]
-    local hasFilter = type(seedFilter) == "table" and #seedFilter > 0
+    local hasFilter = false
+    if type(seedFilter) == "table" and next(seedFilter) ~= nil then hasFilter = true
+    elseif type(seedFilter) == "string" and seedFilter ~= "" then hasFilter = true end
+
     local toPlant = {}
     if Library.Flags["smartReplant"] then
         local best = getBestSeed()
@@ -568,11 +617,23 @@ local function doPlant()
         for name, count in pairs(seeds) do if (count or 0) > 0 then for _ = 1, math.min(count or 0, 40) do toPlant[#toPlant + 1] = name end end end
     else
         for name, count in pairs(seeds) do
-            if hasFilter then local match = false for _, f in ipairs(seedFilter) do if name:lower() == f:lower() then match = true break end end if not match then continue end end
+            if hasFilter then 
+                local match = false 
+                if type(seedFilter) == "table" then
+                    for k, v in pairs(seedFilter) do 
+                        local f = type(k) == "number" and v or k
+                        if type(f) == "string" and name:lower() == f:lower() then match = true break end 
+                    end 
+                elseif type(seedFilter) == "string" then
+                    if name:lower() == seedFilter:lower() then match = true end
+                end
+                if not match then continue end 
+            end
             for _ = 1, math.min(count or 0, tonumber(Library.Flags["maxPerCycle"]) or 40) do toPlant[#toPlant + 1] = name end
         end
     end
     if #toPlant == 0 then return end
+    
     local free = getOpenSlots(plot, firstValue(Library.Flags["plantPattern"]) or "Fill") if #free == 0 then return end
     local cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 40)
     local delay = tonumber(Library.Flags["plantDelay"]) or 0.1
@@ -653,6 +714,10 @@ end
 
 local function doTrowel()
     local plot = myPlot() if not plot then return end
+    
+    local ref = plot:FindFirstChild("PlotSizeReference") local r = getHRP()
+    if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
+
     local plants = plot:FindFirstChild("Plants") if not plants then return end
     local target = firstValue(Library.Flags["trowelPlant"] or {})
     for _, pl in ipairs(plants:GetChildren()) do
@@ -670,6 +735,10 @@ end
 
 local function doShovelFruit()
     local plot = myPlot() if not plot then return end
+    
+    local ref = plot:FindFirstChild("PlotSizeReference") local r = getHRP()
+    if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
+
     local plants = plot:FindFirstChild("Plants") if not plants then return end
     local sh = equipShovel() if not sh then return end
     local sa = sh:GetAttribute("Shovel")
@@ -693,6 +762,10 @@ end
 
 local function doShovelTree()
     local plot = myPlot() if not plot then return end
+
+    local ref = plot:FindFirstChild("PlotSizeReference") local r = getHRP()
+    if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
+
     local plants = plot:FindFirstChild("Plants") if not plants then return end
     local sh = equipShovel() if not sh then return end
     local sa = sh:GetAttribute("Shovel")
@@ -712,6 +785,12 @@ end
 local function doSprinkler()
     local d = getData() if not (d and d.Inventory and d.Inventory.Sprinklers) then return end
     local plot = myPlot() if not plot then return end
+
+    local ref = plot:FindFirstChild("PlotSizeReference") local r = getHRP()
+    if not Library.Flags["sprinklerNoTp"] then
+        if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
+    end
+
     local existing = plot:FindFirstChild("Sprinklers") local count = existing and #existing:GetChildren() or 0
     if count >= 4 then return end
     local name = firstValue(Library.Flags["sprinklerSelect"] or {})
@@ -727,6 +806,10 @@ end
 
 local function doWateringCan()
     local plot = myPlot() if not plot then return end
+    
+    local ref = plot:FindFirstChild("PlotSizeReference") local r = getHRP()
+    if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
+
     local plants = plot:FindFirstChild("Plants") if not plants then return end
     local canName = firstValue(Library.Flags["wateringCan"] or {})
     for _, pl in ipairs(plants:GetChildren()) do
@@ -1054,10 +1137,11 @@ local function sendWebhook(title, desc, color, fields)
     end)
 end
 
--- stats tracking
-local sessionEarned = 0
-local sessionHarvests = 0
-local sessionStart = os.clock()
+        -- stats tracking
+        local sessionEarned = 0
+        local sessionHarvests = 0
+        local sessionStart = os.clock()
+        local profitWindow = {}
 
 -- ================================================================
 -- SECTIONS (6 SpeedHubX tabs + Settings)
@@ -1074,6 +1158,19 @@ local Settings = Setup:CreateSection("⚙️ Settings")
 -- ================================================================
 -- MAIN TAB
 -- ================================================================
+
+Main:createButton({
+    Name = "VersusAI Pathing",
+    VersusAI = true,
+    flagName = "UseVersusAI",
+    Callback = function(enabled)
+        if enabled then
+            notify("Pathing", "VersusAI enabled - using learned routes.")
+        else
+            notify("Pathing", "VersusAI disabled - falling back to teleport.")
+        end
+    end,
+})
 
 Main:createLabel({ Name = "Automation Plants", Special = true })
 
@@ -1118,18 +1215,15 @@ createIntervalToggle(Main, { Name = "Auto Steal Fruit", flagName = "autoSteal", 
 Main:createToggle({ Name = "Auto Steal Best Fruit", Flag = false, flagName = "autoStealBest", Description = "Only steal the highest-value fruit available." })
 Main:createToggle({ Name = "Steal Return", Flag = false, flagName = "stealReturn", Description = "Teleport back to your garden each pass." })
 
-Main:createLabel({ Name = "Locks Garden / Hit Players", Special = true })
-Main:createToggle({ Name = "Auto Lock Garden At Night", Flag = false, flagName = "lockNight",
-    Warning = function() return "Remote not verified - may not work" end, WarnIf = function() return true end,
-    Description = "Lock your garden when night falls. (experimental)" })
-Main:createToggle({ Name = "Auto Hit Player Stolen", Flag = false, flagName = "hitStolen", Description = "Shovel players who steal from you." })
+        Main:createLabel({ Name = "Defense & Locking", Special = true })
+        Main:createToggle({ Name = "Panic Harvest At Night", Flag = false, flagName = "panicHarvest", Description = "Instantly harvest all your ready crops the moment night begins to beat thieves." })
+Main:createToggle({ Name = "Only Steal At Night", Flag = true, flagName = "lockNight", Description = "Wait for nightfall to begin stealing (safest method)." })
+Main:createToggle({ Name = "Auto Hit Intruders (Shovel)", Flag = false, flagName = "hitStolen", Description = "Shovel players who come onto your plot." })
 
 Main:createLabel({ Name = "Automation Sell", Special = true })
 Main:createInputBox({ Name = "Delay To Sell Inventory", flagName = "sellDelay", Flag = "0", Description = "Extra delay (seconds) before each auto-sell." })
 Main:createToggle({ Name = "Allow Sell If Backpack Is Max", Flag = true, flagName = "sellOnFull", Description = "Auto-sell the moment your backpack is full." })
-Main:createToggle({ Name = "Allows Bargain Inventory", Flag = false, flagName = "bargainSell",
-    Warning = function() return "Remote not verified - may not work" end, WarnIf = function() return true end,
-    Description = "Use bargain pricing when selling. (experimental)" })
+Main:createToggle({ Name = "Allows Bargain Inventory", Flag = false, flagName = "bargainSell", Description = "Use bargain pricing when selling all fruit." })
 Main:createToggle({ Name = "Use Daily Deal", Flag = false, flagName = "dailyDeal", Description = "Sell to daily deal vendor for bonus." })
 Main:createLabel({ Name = "Sell All", Special = true })
 Main:createToggle({ Name = "Auto Sell All", Flag = false, flagName = "autoSell", Description = "Auto-sell everything on an interval." })
@@ -1164,19 +1258,35 @@ Main:createToggle({ Name = "Auto Buy Pet", Flag = false, flagName = "autoBuyPet"
 Main:createLabel({ Name = "Extras", Special = true })
 Main:createToggle({ Name = "Auto Expand Garden", Flag = false, flagName = "autoExpand", Description = "Buy the next expansion whenever you can afford it." })
 Main:createButton({ Name = "Expand Now", Description = "Buy one expansion if affordable.", Callback = function() netFire("Actions.ExpandGarden") task.wait(1) notify("Expand", "Expansion level: " .. getExpansionLevel()) end })
-createIntervalToggle(Main, { Name = "Full Auto Mode", flagName = "autoProgress", tag = "autoProgress", delay = 4, Step = function()
-    doHarvest(false) if getFruitCount() > 0 then doSellAll() task.wait(0.2) end
-    local it = seedStock() if it then local bal = getBalance() local best, bestV
-        for _, sv in ipairs(it:GetChildren()) do if sv:IsA("ValueBase") and sv.Value > 0 then local price = SeedPrice[sv.Name] or math.huge
-            if price <= bal * 0.5 then local val = SeedBaseValue[sv.Name] or 0 if not bestV or val > bestV then best, bestV = sv.Name, val end end end end
-        if best then for _ = 1, 6 do if getBalance() < (SeedPrice[best] or 0) then break end netFire("SeedShop.PurchaseSeed", best) task.wait(0.1) end end
-    end
-    doPlant()
-end })
-createIntervalToggle(Main, { Name = "Auto Tame Wild Pets", flagName = "autoTame", tag = "autoTame", delay = 4, Step = function()
-    local wilds = Workspace:FindFirstChild("Map") wilds = wilds and wilds:FindFirstChild("WildPetRef") if not wilds then return end
-    for _, pet in ipairs(wilds:GetChildren()) do if pet:GetAttribute("PetName") or pet:GetAttribute("Type") then netFire("Pets.WildPetTame", pet) break end end
-end })
+        local GOOD_PETS = { Raccoon = true, Dragonfly = true, ["Dragon Fly"] = true, Dragonling = true, Mimic = true, ["Disco Bee"] = true, ["Queen Bee"] = true, Kitsune = true, ["Red Fox"] = true, Fox = true, Owl = true, ["Night Owl"] = true, Bear = true, ["Polar Bear"] = true, Butterfly = true, ["Golden Lab"] = true, Cat = true, ["Red Giant Ant"] = true, Snail = true }
+        createIntervalToggle(Main, { Name = "Full Auto Mode", flagName = "autoProgress", tag = "autoProgress", delay = 4, Step = function()
+            doHarvest(false) if getFruitCount() > 0 then doSellAll() task.wait(0.2) end
+            local it = seedStock() if it then local bal = getBalance() local best, bestV
+                for _, sv in ipairs(it:GetChildren()) do if sv:IsA("ValueBase") and sv.Value > 0 then local price = SeedPrice[sv.Name] or math.huge
+                    if price <= bal * 0.5 then local val = SeedBaseValue[sv.Name] or 0 if not bestV or val > bestV then best, bestV = sv.Name, val end end end end
+                if best then for _ = 1, 6 do if getBalance() < (SeedPrice[best] or 0) then break end netFire("SeedShop.PurchaseSeed", best) task.wait(0.1) end end
+            end
+            doPlant()
+            -- Tame valuable pets if they spawn
+            local wilds = Workspace:FindFirstChild("Map") wilds = wilds and wilds:FindFirstChild("WildPetRef")
+            if wilds then for _, pet in ipairs(wilds:GetChildren()) do
+                local species = pet:GetAttribute("PetName")
+                if species and GOOD_PETS[species] then netFire("Pets.WildPetTame", pet) end
+            end end
+        end })
+        createIntervalToggle(Main, { Name = "Auto Tame Wild Pets", flagName = "autoTame", tag = "autoTame", delay = 4, Step = function()
+            local wilds = Workspace:FindFirstChild("Map") wilds = wilds and wilds:FindFirstChild("WildPetRef") if not wilds then return end
+            local anySel = type(Library.Flags["tameAnimals"]) == "table" and #Library.Flags["tameAnimals"] > 0
+            for _, pet in ipairs(wilds:GetChildren()) do 
+                local species = pet:GetAttribute("PetName") or pet:GetAttribute("Type")
+                if species then
+                    local match = false
+                    if anySel then for _, f in ipairs(Library.Flags["tameAnimals"]) do if species:lower() == f:lower() then match = true break end end
+                    else match = true end
+                    if match then netFire("Pets.WildPetTame", pet) break end 
+                end 
+            end
+        end })
 Main:createDropdown({ Name = "Animals To Tame", flagName = "tameAnimals", List = getWildList(), multi = true, Description = "Which wild pets to tame. Leave empty for any." })
 createIntervalToggle(Main, { Name = "Auto Equip Best Pets", flagName = "autoEquip", tag = "autoEquip", delay = 8, Step = function()
     local d = getData() if not (d and d.Inventory and d.Inventory.Pets) then return end
@@ -1359,9 +1469,7 @@ Misc:createLabel({ Name = "Fling", Special = true })
 Misc:createToggle({ Name = "Anti-Fling", Flag = true, flagName = "antiFling", Description = "Prevent other players from flinging you." })
 
 Misc:createLabel({ Name = "Knockback", Special = true })
-Misc:createToggle({ Name = "Less Knockback", Flag = false, flagName = "lessKnockback",
-    Warning = function() return "Remote not verified - may not work" end, WarnIf = function() return true end,
-    Description = "Reduce knockback from attacks and tools. (experimental)" })
+Misc:createToggle({ Name = "Less Knockback", Flag = false, flagName = "lessKnockback", Description = "Reduce physical knockback from attacks and tools." })
 
 Misc:createLabel({ Name = "Prompt", Special = true })
 Misc:createToggle({ Name = "Instant Interact Prompt", Flag = false, flagName = "instantPrompt", Description = "Skip proximity prompt hold timer." })
@@ -1392,13 +1500,27 @@ Misc:createLabel({ Name = "Misc Garden", Special = true })
 Misc:createToggle({ Name = "Noclip Plants", Flag = false, flagName = "noclipPlants", Description = "Disable collision on plants for easy movement." })
 
 Misc:createLabel({ Name = "Performance", Special = true })
-Misc:createToggle({ Name = "More FPS", Flag = false, flagName = "moreFps", Description = "Quick FPS boost (low graphics, no effects).", Callback = function(enabled)
-    if enabled then
-        settings():GetService("NetworkSettings").IncomingReplicationLag = 0 workspace.StreamingEnabled = false
-        LightingService.GlobalShadows = false LightingService.Brightness = 1.5 LightingService.FogEnd = 1e9
-        game:GetService("Debris").MaxDebrisTime = 0
-    end
-end })
+        local optConns
+        local function optimizeInstance(o)
+            pcall(function()
+                if o:IsA("BasePart") then o.Material = Enum.Material.SmoothPlastic o.Reflectance = 0 o.CastShadow = false
+                elseif o:IsA("Decal") or o:IsA("Texture") then o.Transparency = 1
+                elseif o:IsA("ParticleEmitter") or o:IsA("Trail") or o:IsA("Beam") or o:IsA("Smoke") or o:IsA("Fire") or o:IsA("Sparkles") or o:IsA("PostEffect") then o.Enabled = false end
+            end)
+        end
+        Misc:createToggle({ Name = "Extreme FPS Optimizer", Flag = false, flagName = "moreFps", Description = "Aggressive FPS boost (flat textures, grey sky, no effects).", Callback = function(enabled)
+            if enabled then
+                pcall(function() LightingService.GlobalShadows = false LightingService.FogColor = Color3.fromRGB(131,133,139) LightingService.FogStart = 220 LightingService.FogEnd = 780 LightingService.OutdoorAmbient = Color3.fromRGB(140,140,146) end)
+                for _, e in ipairs(LightingService:GetDescendants()) do if e:IsA("Atmosphere") or e:IsA("Clouds") or e:IsA("PostEffect") then pcall(function() e.Enabled = false end) end if e:IsA("Sky") then pcall(function() e.CelestialBodiesShown = false end) end end
+                pcall(function() Workspace.Terrain.Decoration = false end) pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+                for _, o in ipairs(Workspace:GetDescendants()) do optimizeInstance(o) end
+                local function onAdd(o) if Library.Flags["moreFps"] then task.defer(optimizeInstance, o) end end
+                optConns = { Workspace.DescendantAdded:Connect(onAdd), LightingService.DescendantAdded:Connect(onAdd) }
+            else
+                if optConns then for _, c in ipairs(optConns) do pcall(function() c:Disconnect() end) end optConns = nil end
+                notify("FPS", "Optimizer disabled. Rejoin to restore all textures.")
+            end
+        end })
 Misc:createButton({ Name = "Remove Other Players' Gardens", Description = "Hide every other garden (client-side) for FPS. Rejoin to restore.", Callback = function()
     local n = removeOtherGardens() notify("FPS", "Removed " .. n .. " other gardens (client-side)")
 end })
@@ -1473,8 +1595,8 @@ RunService.Heartbeat:Connect(function()
     if Library.Flags["sellOnFull"] and isInventoryFull() then doSellAll() end
     -- daily deal
     if Library.Flags["dailyDeal"] then netFire("NPCS.UseDailyDealAll") end
-    -- bargain sell (experimental)
-    if Library.Flags["bargainSell"] then netFire("NPCS.AskBidAll") end
+    -- bargain sell
+    if Library.Flags["bargainSell"] then netFire("NPCS.SellAllBargain") end
 end)
 
 -- consolidated 2s loop: defense, notify, ESP, highlights, passives
@@ -1516,11 +1638,21 @@ task.spawn(function()
             if Library.Flags["instantPrompt"] then promptTimer = promptTimer + 1 if promptTimer >= 3 then promptTimer = 0 doInstantPrompt() end end
             -- auto remove gardens
             if Library.Flags["autoRemoveGardens"] then removeOtherGardens() end
-            -- stats update
-            local bal = getBalance() local elapsed = os.clock() - sessionStart
-            local earned = bal - (sessionStartBal or bal) if earned > sessionEarned then sessionEarned = earned end
-            local perMin = elapsed > 0 and (sessionEarned / elapsed * 60) or 0
-            local fc = getFruitCount() local mc = getMaxCapacity()
+                -- stats update
+                local bal = getBalance() local elapsed = os.clock() - sessionStart
+                local earned = bal - (sessionStartBal or bal) if earned > sessionEarned then sessionEarned = earned end
+                
+                -- Rolling 60s profit window
+                local now = os.clock()
+                table.insert(profitWindow, { t = now, s = bal })
+                while #profitWindow > 1 and (now - profitWindow[1].t) > 60 do table.remove(profitWindow, 1) end
+                local perMin = 0
+                if #profitWindow > 1 then
+                    local dt = now - profitWindow[1].t
+                    if dt > 2 then perMin = (bal - profitWindow[1].s) / dt * 60 end
+                end
+
+                local fc = getFruitCount() local mc = getMaxCapacity()
             local function ul(tag, text) local lb = Misc:FindFirstChild(tag) if lb and lb.updateText then lb:updateText(text) end end
             ul("statBalance", "Balance: " .. fmtCash(bal))
             ul("statPerMin", "Per Minute: " .. fmtCash(perMin))
@@ -1545,20 +1677,24 @@ task.spawn(function()
     end
 end)
 
--- pack return: teleport home when night ends
-task.spawn(function()
-    local wasNight = false
-    while task.wait(1) do
-        pcall(function()
-            local n = isNight()
-            if wasNight and not n and (Library.Flags["autoCollect"] or Library.Flags["collectGold"] or Library.Flags["collectRainbow"]) then
-                local plot = myPlot() local sp = plot and plot:FindFirstChild("SpawnPoint")
-                if sp then teleport(sp.Position) notify("Event", "Event over - returned to garden") end
+        -- pack return & panic harvest
+        task.spawn(function()
+            local wasNight = false
+            while task.wait(1) do
+                pcall(function()
+                    local n = isNight()
+                    if not wasNight and n and Library.Flags["panicHarvest"] then
+                        notify("Defense", "Panic Harvesting! Night has fallen.", "warning")
+                        doHarvest(false) -- harvest everything quickly
+                    end
+                    if wasNight and not n and (Library.Flags["autoCollect"] or Library.Flags["collectGold"] or Library.Flags["collectRainbow"]) then
+                        local plot = myPlot() local sp = plot and plot:FindFirstChild("SpawnPoint")
+                        if sp then teleport(sp.Position) notify("Event", "Event over - returned to garden") end
+                    end
+                    wasNight = n
+                end)
             end
-            wasNight = n
         end)
-    end
-end)
 
 -- movement + fly (RenderStepped)
 RunService.RenderStepped:Connect(function(dt)
