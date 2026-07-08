@@ -347,23 +347,32 @@ local function getStealTargets()
 end
 
 -- filter quintet matcher: checks fruit against rarity/mutation/threshold filters
+-- any of fType/fRarity/fMutation/fThreshMode/fThreshold may be nil (skip that check).
 local function matchesFilter(entry, fType, fRarity, fMutation, fThreshMode, fThreshold)
-    local ft = firstValue(Library.Flags[fType] or {})
-    if ft and ft ~= "" and entry.crop and entry.crop:lower() ~= ft:lower() then return false end
-    local rar = firstValue(Library.Flags[fRarity] or {})
-    if rar and rar ~= "Any" then
-        local entryRar = RARITY_ORDER[entry.rarity or "Common"] or 1
-        local minRar = RARITY_ORDER[rar] or 1
-        if entryRar < minRar then return false end
+    if fType then
+        local ft = firstValue(Library.Flags[fType] or {})
+        if ft and ft ~= "" and ft ~= "Any" and entry.crop and entry.crop:lower() ~= tostring(ft):lower() then return false end
     end
-    local mut = firstValue(Library.Flags[fMutation] or {})
-    if mut == "Mutated Only" and not entry.mutation then return false end
-    if mut == "Non-Mutated" and entry.mutation then return false end
-    local tm = firstValue(Library.Flags[fThreshMode] or {})
-    local th = tonumber(Library.Flags[fThreshold]) or 0
-    if tm and tm ~= "Disabled" and th > 0 then
-        if tm == "Weight" and (entry.weight or 0) < th then return false end
-        if tm == "Value" and (entry.value or 0) < th then return false end
+    if fRarity then
+        local rar = firstValue(Library.Flags[fRarity] or {})
+        if rar and rar ~= "Any" then
+            local entryRar = RARITY_ORDER[entry.rarity or "Common"] or 1
+            local minRar = RARITY_ORDER[rar] or 1
+            if entryRar < minRar then return false end
+        end
+    end
+    if fMutation then
+        local mut = firstValue(Library.Flags[fMutation] or {})
+        if mut == "Mutated Only" and not entry.mutation then return false end
+        if mut == "Non-Mutated" or mut == "Non-Mutated Only" then if entry.mutation then return false end end
+    end
+    if fThreshMode and fThreshold then
+        local tm = firstValue(Library.Flags[fThreshMode] or {})
+        local th = tonumber(Library.Flags[fThreshold]) or 0
+        if tm and tm ~= "Disabled" and th > 0 then
+            if tm == "Weight" and (entry.weight or 0) < th then return false end
+            if tm == "Value" and (entry.value or 0) < th then return false end
+        end
     end
     return true
 end
@@ -614,7 +623,7 @@ local PERSISTENT_FLAGS = {
     "autoCollect", "autoCollectAll", "autoCollectBest", "enableFilters", "collectNoTp", "stopOnFull", "collectDelay",
     "collectFruit", "collectRarity", "collectMutation", "collectThreshMode", "collectThreshold",
     "collectGold", "collectRainbow", "collectDropped",
-    "autoSteal", "autoStealBest", "stealFruit", "stealRarity", "stealMutation",
+    "autoSteal", "autoStealBest", "stealFruit", "stealRarity", "stealMutation", "stealMult",
     "lockNight", "hitStolen",
     "autoSell", "sellOnFull", "sellDelay", "bargainSell", "dailyDeal", "sellInterval",
     "sellFruit", "sellRarity", "sellMutation", "sellThreshMode", "sellThreshold", "autoSellSelective",
@@ -749,8 +758,9 @@ local function doSteal()
         -- verified: BeginSteal(userId, plantId, fruitId) — correct arg order
         netFire("Steal.BeginSteal", t.userId, t.plantId, t.fruitId)
         task.wait(tonumber(Library.Flags["stealDelay"]) or 0.3)
-        -- verified: CompleteSteal() — 0 args
-        netFire("Steal.CompleteSteal")
+        -- verified: CompleteSteal() — 0 args. Fire multiple times to grab multi-fruit crops
+        local mult = math.max(1, tonumber(Library.Flags["stealMult"]) or 1)
+        for _ = 1, mult do netFire("Steal.CompleteSteal") task.wait(0.05) end
         if Library.Flags["autoStealBest"] then break end
     end
     if Library.Flags["stealReturn"] and home then teleport(home - Vector3.new(0, 3, 0)) end
@@ -805,20 +815,34 @@ end
 
 local function doTrowel()
     local plot = myPlot() if not plot then return end
-    
+
     local ref = plot:FindFirstChild("PlotSizeReference") local r = getHRP()
     if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
 
     local plants = plot:FindFirstChild("Plants") if not plants then return end
     local target = firstValue(Library.Flags["trowelPlant"] or {})
+    local mode = firstValue(Library.Flags["trowelPos"] or {}) or "Saved Position"
+    local saved = Library.Flags["savedTrowelPos"]
+    local openSlots = getOpenSlots(plot, "Fill")
+
+    local function pickDest(currentPos)
+        if mode == "Saved Position" and typeof(saved) == "Vector3" then return saved end
+        if mode == "Player Position" then local hrp = getHRP() return hrp and hrp.Position or nil end
+        if mode == "Random" and #openSlots > 0 then return openSlots[math.random(1, #openSlots)] end
+        return nil  -- no valid destination; skip (no-op moves waste server calls)
+    end
+
     for _, pl in ipairs(plants:GetChildren()) do
         local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
         if (not target) or (crop and crop:lower() == target:lower()) then
-            local ok, pos = pcall(function() return pl:GetPivot().Position end)
+            local ok, cur = pcall(function() return pl:GetPivot().Position end)
             if ok then
-                -- verified: Trowel.MovePlant(plantId, position, rotation)
-                netFire("Trowel.MovePlant", pl:GetAttribute("PlantId"), pos, 0)
-                task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
+                local dest = pickDest(cur)
+                if dest and (dest - cur).Magnitude > 2 then
+                    -- verified: Trowel.MovePlant(plantId, position, rotation)
+                    netFire("Trowel.MovePlant", pl:GetAttribute("PlantId"), dest, 0)
+                    task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
+                end
             end
         end
     end
@@ -882,17 +906,55 @@ local function doSprinkler()
         if ref and r and (Vector3.new(r.Position.X, 0, r.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then teleport(ref.Position) task.wait(0.12) end
     end
 
+    -- soft cap: honour server-side sprinkler cap by attribute, else fall back to plot expansion + 2
     local existing = plot:FindFirstChild("Sprinklers") local count = existing and #existing:GetChildren() or 0
-    if count >= 4 then return end
-    local name = firstValue(Library.Flags["sprinklerSelect"] or {})
-    if not name or name == "" then
-        for sname, sval in pairs(d.Inventory.Sprinklers) do if type(sname) == "string" then name = sname break end end
+    local maxCap = tonumber(plot:GetAttribute("MaxSprinklers"))
+    if not maxCap then maxCap = 4 + (tonumber(plot:GetAttribute("GardenExpansion")) or 0) * 2 end
+    if count >= maxCap then return end
+
+    local pickedName = firstValue(Library.Flags["sprinklerSelect"] or {})
+    local function firstOwned()
+        for sname, sval in pairs(d.Inventory.Sprinklers) do
+            local cnt = (type(sval) == "table" and (sval.Count or sval.Amount)) or (tonumber(sval) or 0)
+            if type(sname) == "string" and cnt > 0 then return sname end
+        end
     end
-    if not name then return end
+
+    -- position mode
+    local posMode = firstValue(Library.Flags["sprinklerPos"] or {}) or "Random"
+    local savedPos = Library.Flags["savedSprinklerPos"]
+    local spacing = tonumber(Library.Flags["sprinklerSpacing"]) or 8
     local areas = getSoilAreas(plot) if #areas == 0 then return end
-    local pos = areas[1].Position + Vector3.new(0, 2, 0)
-    -- verified: Place.PlaceSprinkler(pos, name, plot, rotation)
-    netFire("Place.PlaceSprinkler", pos, name, plot, 0)
+
+    local function pickPos()
+        if posMode == "Saved Position" and typeof(savedPos) == "Vector3" then return savedPos + Vector3.new(0, 2, 0) end
+        if posMode == "Player Position" then local h = getHRP() if h then return h.Position + Vector3.new(0, 2, 0) end end
+        if posMode == "Near Fruit" then
+            local ripe = getRipeCrops()
+            if #ripe > 0 then
+                local m = ripe[math.random(1, #ripe)].model
+                local ok, p = pcall(function() return m:GetPivot().Position end)
+                if ok then return p + Vector3.new(math.random(-spacing, spacing), 2, math.random(-spacing, spacing)) end
+            end
+        end
+        -- Random inside the first soil area
+        local a = areas[1] local hx, hz = a.Size.X/2 - 3, a.Size.Z/2 - 3
+        return (a.CFrame * CFrame.new(math.random(-hx, hx), 0, math.random(-hz, hz))).Position + Vector3.new(0, 2, 0)
+    end
+
+    -- If "Auto Place All Sprinklers" is on, place until we run out of inventory or hit the cap
+    local placeAll = Library.Flags["autoSprinklerAll"] == true
+    local placed = 0
+    repeat
+        local name = pickedName ~= "" and pickedName or firstOwned() if not name then return end
+        local pos = pickPos()
+        -- verified: Place.PlaceSprinkler(pos, name, plot, rotation)
+        netFire("Place.PlaceSprinkler", pos, name, plot, 0)
+        placed = placed + 1
+        task.wait(tonumber(Library.Flags["sprinklerDelay"]) or 0.25)
+        d = getData() if not (d and d.Inventory and d.Inventory.Sprinklers) then break end
+        existing = plot:FindFirstChild("Sprinklers") count = existing and #existing:GetChildren() or count + 1
+    until (not placeAll) or count >= maxCap or placed >= 20
 end
 
 local function doWateringCan()
@@ -1054,14 +1116,20 @@ local function doPackGrab()
             local has = loc:GetAttribute("SeedPack") ~= nil or loc:GetAttribute("GoldSeed") == true or loc:GetAttribute("RainbowSeed") == true
             if has then
                 local rare = isRareSeedPack(loc)
-                local grabGold = Library.Flags["collectGold"]
-                local grabRainbow = Library.Flags["collectRainbow"]
+                local grabGold = Library.Flags["collectGold"] == true
+                local grabRainbow = Library.Flags["collectRainbow"] == true
                 local isGold = loc:GetAttribute("GoldSeed") == true
                 local isRainbow = loc:GetAttribute("RainbowSeed") == true
-                -- if gold-only or rainbow-only mode, filter
-                if grabGold and not grabRainbow and not isGold then continue end
-                if grabRainbow and not grabGold and not isRainbow then continue end
-                if not (grabGold or grabRainbow) and Library.Flags["rareSeedOnly"] and not rare then continue end
+                -- Skip logic: pack qualifies if it matches ANY active toggle.
+                -- If both gold+rainbow toggles are on, only gold/rainbow packs pass (no plain).
+                -- If rareSeedOnly is on and neither gold/rainbow is on, restrict to rare packs.
+                local allowed = false
+                if grabGold and isGold then allowed = true end
+                if grabRainbow and isRainbow then allowed = true end
+                if not (grabGold or grabRainbow) then
+                    if Library.Flags["rareSeedOnly"] then allowed = rare else allowed = true end
+                end
+                if not allowed then continue end
                 if Library.Flags["rareNotify"] and rare then notify("Rare Seed Spawned", packType(loc) or "Rare pack - grabbing!") end
                 _grabbingPacks[loc] = true
                 task.spawn(function() pcall(grabPackRobust, loc); _grabbingPacks[loc] = nil end)
@@ -1305,6 +1373,7 @@ Main:createDropdown({ Name = "Select Steal Mutation", flagName = "stealMutation"
 createIntervalToggle(Main, { Name = "Auto Steal Fruit", flagName = "autoSteal", tag = "autoSteal", delay = 3, Step = doSteal })
 Main:createToggle({ Name = "Auto Steal Best Fruit", Flag = false, flagName = "autoStealBest", Description = "Only steal the highest-value fruit available." })
 Main:createToggle({ Name = "Steal Return", Flag = false, flagName = "stealReturn", Description = "Teleport back to your garden each pass." })
+Main:createSlider({ Name = "Fruits Per Steal", flagName = "stealMult", value = 1, minValue = 1, maxValue = 10, Description = "How many CompleteSteal calls to fire per target (grabs multi-fruit crops)." })
 
         Main:createLabel({ Name = "Defense & Locking", Special = true })
         Main:createToggle({ Name = "Panic Harvest At Night", Flag = false, flagName = "panicHarvest", Description = "Instantly harvest all your ready crops the moment night begins to beat thieves." })
@@ -1523,22 +1592,37 @@ Shop:createLabel({ Name = "Shop Seeds", Special = true })
 Shop:createDropdown({ Name = "Select Seed", flagName = "buySeed", List = getSeedList(), Description = "Which seed to auto-purchase." })
 createIntervalToggle(Shop, { Name = "Auto Buy Seeds", flagName = "autoBuySeed", tag = "autoBuySeed", delay = 10, Step = function()
     local name = firstValue(Library.Flags["buySeed"] or {}) if not name or name == "" then return end
-    local price = SeedPrice[name] or math.huge local sprees = tonumber(Library.Flags["buySprees"]) or 5
-    for _ = 1, sprees do if getBalance() < price then break end netFire("SeedShop.PurchaseSeed", name) task.wait(0.08) end
+    local price = SeedPrice[name] or math.huge
+    local sprees = tonumber(Library.Flags["buySprees"]) or 5
+    for _ = 1, sprees do
+        if getBalance() < price then break end
+        if stockCount("SeedShop", name) <= 0 then break end
+        netFire("SeedShop.PurchaseSeed", name) task.wait(0.08)
+    end
 end })
 Shop:createToggle({ Name = "Auto Buy All Seeds", Flag = false, flagName = "autoBuyAllSeeds", Description = "Buy every available seed in stock." })
 
 Shop:createLabel({ Name = "Shop Gear", Special = true })
 Shop:createDropdown({ Name = "Select Gear", flagName = "buyGear", List = getGearList(), Description = "Which gear item to auto-purchase." })
 createIntervalToggle(Shop, { Name = "Auto Buy Gear", flagName = "autoBuyGear", tag = "autoBuyGear", delay = 15, Step = function()
-    local name = firstValue(Library.Flags["buyGear"] or {}) if not name or name == "" then return end netFire("GearShop.PurchaseGear", name)
+    local name = firstValue(Library.Flags["buyGear"] or {}) if not name or name == "" then return end
+    local sprees = tonumber(Library.Flags["buySprees"]) or 1
+    for _ = 1, sprees do
+        if stockCount("GearShop", name) <= 0 then break end
+        netFire("GearShop.PurchaseGear", name) task.wait(0.08)
+    end
 end })
 Shop:createToggle({ Name = "Auto Buy All Gear", Flag = false, flagName = "autoBuyAllGear", Description = "Buy every available gear item." })
 
 Shop:createLabel({ Name = "Shop Crate", Special = true })
 Shop:createDropdown({ Name = "Select Crate", flagName = "buyCrate", List = getCrateList(), Description = "Which crate to auto-purchase." })
 createIntervalToggle(Shop, { Name = "Auto Buy Crate", flagName = "autoBuyCrate", tag = "autoBuyCrate", delay = 12, Step = function()
-    local name = firstValue(Library.Flags["buyCrate"] or {}) if not name or name == "" then return end netFire("CrateShop.PurchaseCrate", name)
+    local name = firstValue(Library.Flags["buyCrate"] or {}) if not name or name == "" then return end
+    local sprees = tonumber(Library.Flags["buySprees"]) or 1
+    for _ = 1, sprees do
+        if stockCount("CrateShop", name) <= 0 then break end
+        netFire("CrateShop.PurchaseCrate", name) task.wait(0.08)
+    end
 end })
 Shop:createToggle({ Name = "Auto Buy All Crate", Flag = false, flagName = "autoBuyAllCrates", Description = "Buy every available crate type." })
 
@@ -1736,8 +1820,11 @@ task.spawn(function()
             if Library.Flags["autoBuyAllSeeds"] then local it = seedStock() if it then for _, sv in ipairs(it:GetChildren()) do if sv:IsA("ValueBase") and sv.Value > 0 and getBalance() >= (SeedPrice[sv.Name] or 0) then netFire("SeedShop.PurchaseSeed", sv.Name) task.wait(0.08) end end end end
             if Library.Flags["autoBuyAllGear"] then local it = gearStock() if it then for _, sv in ipairs(it:GetChildren()) do if sv:IsA("ValueBase") and sv.Value > 0 then netFire("GearShop.PurchaseGear", sv.Name) task.wait(0.08) end end end end
             if Library.Flags["autoBuyAllCrates"] then local it = crateStock() if it then for _, sv in ipairs(it:GetChildren()) do if sv:IsA("ValueBase") and sv.Value > 0 then netFire("CrateShop.PurchaseCrate", sv.Name) task.wait(0.08) end end end end
-            -- auto sprinkler all
-            if Library.Flags["autoSprinklerAll"] then doSprinkler() end
+            -- autoSprinklerAll now handled inside doSprinkler when the flag is on
+            -- (kept as an explicit driver so it works even when 'Auto Place Sprinkler' interval is off)
+            if Library.Flags["autoSprinklerAll"] and not Library.Flags["autoSprinkler"] then doSprinkler() end
+            -- autoPlantAll: driver when the user only toggled the "All Seeds" shortcut
+            if Library.Flags["autoPlantAll"] and not Library.Flags["autoPlant"] then doPlant() end
             -- auto water all
             if Library.Flags["autoWaterAll"] then doWateringCan() end
             -- auto buy pet (experimental)
