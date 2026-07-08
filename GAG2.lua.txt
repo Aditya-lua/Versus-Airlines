@@ -624,7 +624,7 @@ local PERSISTENT_FLAGS = {
     "collectFruit", "collectRarity", "collectMutation", "collectThreshMode", "collectThreshold",
     "collectGold", "collectRainbow", "collectDropped",
     "autoSteal", "autoStealBest", "stealFruit", "stealRarity", "stealMutation", "stealMult",
-    "hitStolen",
+    "hitStolen", "hitThievesOnly", "hitStolenTp", "hitStolenReturn",
     "autoSell", "sellOnFull", "sellDelay", "bargainSell", "dailyDeal", "sellInterval",
     "sellFruit", "sellRarity", "sellMutation", "sellThreshMode", "sellThreshold", "autoSellSelective",
     "sellPet", "sellPetRarity", "sellPetSize", "autoSellPets",
@@ -1016,14 +1016,92 @@ local function doMailboxClaim()
     end
 end
 
-local function doRetaliateShovel()
-    local plot = myPlot() local ref = plot and plot:FindFirstChild("PlotSizeReference") if not ref then return end
-    local center, size = ref.Position, ref.Size
+-- =======================================================
+-- Thief tracker: watch our plot's Plants folder for children being removed
+-- while a non-owner is nearby, and mark that player as a suspected thief
+-- for THIEF_TTL seconds. Powers 'Hit Thieves Only' mode.
+-- =======================================================
+local Thieves = {}          -- [userId] = expiry timestamp (os.clock)
+local THIEF_TTL = 10        -- how long a userId stays flagged
+local THIEF_RADIUS = 30     -- studs from the removed plant to be considered
+
+local function markSuspects(removedPos)
     for _, pl in ipairs(Players:GetPlayers()) do
         if pl ~= client and pl.Character then
             local r = pl.Character:FindFirstChild("HumanoidRootPart")
-            -- verified: Shovel.HitPlayer(userId as NumberF64)
-            if r and math.abs(r.Position.X - center.X) < size.X/2 + 4 and math.abs(r.Position.Z - center.Z) < size.Z/2 + 4 then netFire("Shovel.HitPlayer", pl.UserId) end
+            if r and (r.Position - removedPos).Magnitude < THIEF_RADIUS then
+                Thieves[pl.UserId] = os.clock() + THIEF_TTL
+            end
+        end
+    end
+end
+
+local _thiefWatcher, _thiefPlot
+local function ensureThiefWatcher()
+    local plot = myPlot() if not plot then return end
+    if _thiefPlot == plot and _thiefWatcher then return end
+    if _thiefWatcher then pcall(function() _thiefWatcher:Disconnect() end) end
+    local plants = plot:FindFirstChild("Plants") if not plants then return end
+    _thiefPlot = plot
+    _thiefWatcher = plants.ChildRemoved:Connect(function(child)
+        local ok, pos = pcall(function() return child:GetPivot().Position end)
+        if ok and pos then markSuspects(pos) end
+    end)
+    if Library.TrackConnection then pcall(function() Library:TrackConnection(_thiefWatcher, "thiefWatcher") end) end
+end
+
+local function isThief(userId)
+    local exp = Thieves[userId]
+    if not exp then return false end
+    if os.clock() > exp then Thieves[userId] = nil return false end
+    return true
+end
+
+-- =======================================================
+-- Shovel-hit: fire Shovel.HitPlayer with full tool args (matches UseShovel
+-- signature so the server accepts the call even when tool-arg checks are on).
+-- Optionally teleports to the target first for melee-range plausibility.
+-- =======================================================
+local function shovelHit(targetPlayer)
+    if not (targetPlayer and targetPlayer.Character) then return end
+    local r = targetPlayer.Character:FindFirstChild("HumanoidRootPart") if not r then return end
+    -- Prefer already-equipped shovel; only force-equip if server actually requires the tool arg
+    local sh = findShovel()
+    if sh and sh.Parent ~= client.Character then sh = equipShovel() end
+    local sa = sh and sh:GetAttribute("Shovel") or ""
+
+    if Library.Flags["hitStolenTp"] then
+        local myR = getHRP()
+        if myR then
+            local origin = myR.Position
+            -- park 3 studs in front of the target, facing them
+            teleport(r.Position - (r.CFrame.LookVector * 3))
+            task.wait(0.08)
+            netFire("Shovel.HitPlayer", targetPlayer.UserId, "", sa, sh)
+            task.wait(0.05)
+            -- return to where we were so we don't get stuck on the victim
+            if Library.Flags["hitStolenReturn"] ~= false then teleport(origin) end
+            return
+        end
+    end
+    netFire("Shovel.HitPlayer", targetPlayer.UserId, "", sa, sh)
+end
+
+local function doRetaliateShovel()
+    ensureThiefWatcher()
+    local plot = myPlot() local ref = plot and plot:FindFirstChild("PlotSizeReference") if not ref then return end
+    local center, size = ref.Position, ref.Size
+    local thievesOnly = Library.Flags["hitThievesOnly"] == true
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= client and pl.Character then
+            local r = pl.Character:FindFirstChild("HumanoidRootPart")
+            local inPlot = r and math.abs(r.Position.X - center.X) < size.X/2 + 4
+                             and math.abs(r.Position.Z - center.Z) < size.Z/2 + 4
+            if inPlot then
+                if (not thievesOnly) or isThief(pl.UserId) then
+                    shovelHit(pl)
+                end
+            end
         end
     end
 end
@@ -1378,6 +1456,9 @@ Main:createSlider({ Name = "Fruits Per Steal", flagName = "stealMult", value = 1
         Main:createLabel({ Name = "Defense & Locking", Special = true })
         Main:createToggle({ Name = "Panic Harvest At Night", Flag = false, flagName = "panicHarvest", Description = "Instantly harvest all your ready crops the moment night begins to beat thieves." })
 Main:createToggle({ Name = "Auto Hit Intruders (Shovel)", Flag = false, flagName = "hitStolen", Description = "Shovel players who come onto your plot." })
+Main:createToggle({ Name = "Hit Thieves Only", Flag = false, flagName = "hitThievesOnly", Description = "Only shovel players tagged as thieves (a plant was picked up from your plot while they stood <30 studs away in the last 10s). Reduces collateral hits on visitors." })
+Main:createToggle({ Name = "Teleport To Target Before Hitting", Flag = false, flagName = "hitStolenTp", Description = "Teleport ~3 studs in front of the target before firing Shovel.HitPlayer. Improves server-side hit resolution but makes you visible." })
+Main:createToggle({ Name = "Return After Hit", Flag = true, flagName = "hitStolenReturn", Description = "After a teleport-hit, teleport back to your original position. Only used when 'Teleport To Target' is on." })
 
 Main:createLabel({ Name = "Automation Sell", Special = true })
 Main:createInputBox({ Name = "Delay To Sell Inventory", flagName = "sellDelay", Flag = "0", Description = "Extra delay (seconds) before each auto-sell." })
