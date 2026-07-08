@@ -621,8 +621,10 @@ local function doPlant()
                 local match = false 
                 if type(seedFilter) == "table" then
                     for k, v in pairs(seedFilter) do 
-                        local f = type(k) == "number" and v or k
-                        if type(f) == "string" and name:lower() == f:lower() then match = true break end 
+                        if v == true or type(k) == "number" then
+                            local f = type(k) == "number" and v or k
+                            if type(f) == "string" and name:lower() == f:lower() then match = true break end 
+                        end
                     end 
                 elseif type(seedFilter) == "string" then
                     if name:lower() == seedFilter:lower() then match = true end
