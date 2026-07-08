@@ -517,6 +517,95 @@ local function buildSnapshotFromSource(sourceName)
     return n, "placed " .. n .. " buildings"
 end
 
+-- =======================================================
+-- Bulk garden clearing (plants + buildings)
+-- =======================================================
+local function getPlantedList()
+    local plot = myPlot() if not plot then return {} end
+    local plants = plot:FindFirstChild("Plants") if not plants then return {} end
+    local seen, list = {}, {}
+    for _, pl in ipairs(plants:GetChildren()) do
+        local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
+        if crop and not seen[crop] then seen[crop] = true list[#list + 1] = crop end
+    end
+    table.sort(list) return list
+end
+
+local function removePlants(matchFn)
+    local plot = myPlot() if not plot then return 0 end
+    local plants = plot:FindFirstChild("Plants") if not plants then return 0 end
+    local sh = equipShovel() if not sh then return 0, "equip a shovel first" end
+    local sa = sh:GetAttribute("Shovel") or ""
+    local n, lastPos = 0, nil
+    for _, pl in ipairs(plants:GetChildren()) do
+        local pid = pl:GetAttribute("PlantId")
+        local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
+        if pid and ((not matchFn) or matchFn(crop)) then
+            local ok, pos = pcall(function() return pl:GetPivot().Position end)
+            if ok and (not lastPos or (pos - lastPos).Magnitude > 10) then teleport(pos) lastPos = pos end
+            netFire("Shovel.UseShovel", pid, "", sa, sh)
+            n = n + 1 task.wait(0.05)
+        end
+    end
+    return n
+end
+
+local function removeAllPlants() return removePlants(nil) end
+
+local function removeSelectedPlants()
+    local sel = Library.Flags["removeCrops"]
+    if type(sel) ~= "table" or not next(sel) then return 0, "pick crops first" end
+    return removePlants(function(crop)
+        if not crop then return false end
+        for k, v in pairs(sel) do
+            if v == true or type(k) == "number" then
+                local name = type(k) == "number" and v or k
+                if type(name) == "string" and crop:lower() == name:lower() then return true end
+            end
+        end
+        return false
+    end)
+end
+
+local function removeAllBuildings()
+    local plot = myPlot() if not plot then return 0 end
+    local n = 0
+    for _, fname in ipairs(BUILD_FOLDERS) do
+        local f = plot:FindFirstChild(fname)
+        if f then for _, b in ipairs(f:GetChildren()) do
+            pcall(function() netFire("Prop.PickupProp", b) end)
+            pcall(function() netFire("PotPlacement.PickUpPottedPlant", b) end)
+            if fname == "Gnomes" then pcall(function() netFire("Place.RemoveGnome", b) end) end
+            n = n + 1 task.wait(0.06)
+        end end
+    end
+    return n
+end
+
+-- =======================================================
+-- Timers / weather helpers
+-- =======================================================
+local function fmtClock(s) s = math.max(0, math.floor(tonumber(s) or 0)) return string.format("%d:%02d", s // 60, s % 60) end
+local function currentWeather() return Workspace:GetAttribute("ActiveWeather"), Workspace:GetAttribute("ActivePhase"), tonumber(Workspace:GetAttribute("PhaseDuration")) end
+
+-- =======================================================
+-- Inventory worth (sum of fruit weights * base values)
+-- =======================================================
+local function inventoryValue()
+    local d = getData() if not d then return 0, 0 end
+    local inv = d.Inventory and (d.Inventory.Fruits or d.Inventory.HarvestedFruits or d.Inventory.Crops)
+    if not inv then return 0, 0 end
+    local total, count = 0, 0
+    for _, entry in pairs(inv) do
+        local nm = (type(entry) == "table" and (entry.Name or entry.Type or entry.FruitType)) or tostring(entry)
+        local wt = (type(entry) == "table" and (entry.Weight or entry.Size)) or 1
+        local base = SeedBaseValue and SeedBaseValue[nm] or 0
+        total = total + base * sizeMul(wt)
+        count = count + 1
+    end
+    return total, count
+end
+
 -- settings persistence
 local SAVE_FILE = "GAG2_Settings.json"
 local PERSISTENT_FLAGS = {
@@ -547,7 +636,7 @@ local PERSISTENT_FLAGS = {
     "noclipPlants", "moreFps", "autoHopRare", "autoRemoveGardens",
     "runSpeed", "jumpHeight", "multiJump", "noClip", "freeFlight", "flightSpeed",
     "autoTame", "autoEquip", "equipList", "tameAnimals",
-    "autoBuildSnap", "snapshotSource", "snapName",
+    "autoBuildSnap", "snapshotSource", "snapName", "removeCrops",
     "autoSave",
 }
 local function saveSettings()
@@ -1411,6 +1500,21 @@ Inv:createButton({ Name = "Delete Snapshot", Description = "Remove the selected 
         local dd = Inv:FindFirstChild("snapshotSource") if dd and dd.updateList then dd:updateList(getSnapshotNames()) end notify("Snapshot", "Deleted: " .. src) end
 end })
 
+Inv:createLabel({ Name = "Bulk Garden Clear", Special = true })
+Inv:createDropdown({ Name = "Plants To Remove", flagName = "removeCrops", List = getPlantedList(), multi = true, Description = "Pick crop types to shovel. Leave empty and use 'Remove All Plants' for everything." })
+Inv:createButton({ Name = "Refresh Planted List", Description = "Rescan your plot for crop types.", Callback = function()
+    local dd = Inv:FindFirstChild("removeCrops") if dd and dd.updateList then dd:updateList(getPlantedList()) end notify("Garden", "Planted list refreshed")
+end })
+Inv:createButton({ Name = "Remove Selected Plants", Description = "Shovel only the picked crop types.", Callback = function()
+    notify("Garden", "Removing selected plants…") task.spawn(function() local n, err = removeSelectedPlants() notify("Garden", err or ("Removed " .. n .. " plants")) end)
+end })
+Inv:createButton({ Name = "Remove All Plants", Description = "Shovel every plant on your plot.", Callback = function()
+    notify("Garden", "Removing all plants…", "warning") task.spawn(function() local n, err = removeAllPlants() notify("Garden", err or ("Removed " .. n .. " plants")) end)
+end })
+Inv:createButton({ Name = "Remove All Buildings", Description = "Pick up every building/sprinkler/gnome/pot.", Callback = function()
+    notify("Garden", "Removing all buildings…", "warning") task.spawn(function() local n = removeAllBuildings() notify("Garden", "Removed " .. n .. " buildings") end)
+end })
+
 -- ================================================================
 -- SHOP TAB
 -- ================================================================
@@ -1563,12 +1667,23 @@ Misc:createLabel({ Name = "Stats", Special = true })
 Misc:createLabel({ Name = "Balance: $0", flagName = "statBalance", Special = true })
 Misc:createLabel({ Name = "Per Minute: $0", flagName = "statPerMin", Special = true })
 Misc:createLabel({ Name = "Session Earned: $0", flagName = "statSession", Special = true })
+Misc:createLabel({ Name = "Inventory Worth: $0", flagName = "statInvWorth", Special = true })
 Misc:createLabel({ Name = "Fruit Count: 0/0", flagName = "statFruitCount", Special = true })
 Misc:createLabel({ Name = "Crops Harvested: 0", flagName = "statHarvested", Special = true })
 Misc:createLabel({ Name = "Session Time: 0m", flagName = "statSessionTime", Special = true })
+Misc:createButton({ Name = "Rescan Inventory Worth", Description = "Recalculate backpack worth now.", Callback = function()
+    local v, n = inventoryValue() notify("Stats", "Backpack worth " .. fmtCash(v) .. " (" .. n .. " fruit)")
+end })
 Misc:createButton({ Name = "Reset Session Stats", Description = "Zero out the profit tracker.", Callback = function()
     sessionEarned = 0 sessionHarvests = 0 sessionStart = os.clock() notify("Stats", "Session stats reset")
 end })
+
+Misc:createLabel({ Name = "Timers", Special = true })
+Misc:createLabel({ Name = "Seed Shop: --:--", flagName = "timerSeeds", Special = true })
+Misc:createLabel({ Name = "Gear Shop: --:--", flagName = "timerGears", Special = true })
+Misc:createLabel({ Name = "Crate Shop: --:--", flagName = "timerCrates", Special = true })
+Misc:createLabel({ Name = "Weather: --", flagName = "timerWeather", Special = true })
+Misc:createLabel({ Name = "Phase: -- (0:00)", flagName = "timerPhase", Special = true })
 
 -- ================================================================
 -- SETTINGS TAB
@@ -1659,9 +1774,18 @@ task.spawn(function()
             ul("statBalance", "Balance: " .. fmtCash(bal))
             ul("statPerMin", "Per Minute: " .. fmtCash(perMin))
             ul("statSession", "Session Earned: " .. fmtCash(sessionEarned))
+            local invWorth = select(1, inventoryValue())
+            ul("statInvWorth", "Inventory Worth: " .. fmtCash(invWorth))
             ul("statFruitCount", "Fruit Count: " .. fc .. "/" .. mc)
             ul("statHarvested", "Crops Harvested: " .. sessionHarvests)
             ul("statSessionTime", "Session Time: " .. math.floor(elapsed / 60) .. "m")
+            -- Timers panel: shop restocks + weather
+            local rs = nextRestock("SeedShop") ul("timerSeeds", "Seed Shop: " .. (rs and fmtClock(rs) or "--:--"))
+            local rg = nextRestock("GearShop") ul("timerGears", "Gear Shop: " .. (rg and fmtClock(rg) or "--:--"))
+            local rc = nextRestock("CrateShop") ul("timerCrates", "Crate Shop: " .. (rc and fmtClock(rc) or "--:--"))
+            local wx, ph, pd = currentWeather()
+            ul("timerWeather", "Weather: " .. tostring(wx or "Clear"))
+            ul("timerPhase", "Phase: " .. tostring(ph or "--") .. " (" .. fmtClock(pd or 0) .. ")")
         end)
     end
 end)
