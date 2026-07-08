@@ -624,7 +624,7 @@ local PERSISTENT_FLAGS = {
     "collectFruit", "collectRarity", "collectMutation", "collectThreshMode", "collectThreshold",
     "collectGold", "collectRainbow", "collectDropped",
     "autoSteal", "autoStealBest", "stealFruit", "stealRarity", "stealMutation", "stealMult",
-    "lockNight", "hitStolen",
+    "hitStolen",
     "autoSell", "sellOnFull", "sellDelay", "bargainSell", "dailyDeal", "sellInterval",
     "sellFruit", "sellRarity", "sellMutation", "sellThreshMode", "sellThreshold", "autoSellSelective",
     "sellPet", "sellPetRarity", "sellPetSize", "autoSellPets",
@@ -741,7 +741,7 @@ local function doPlant()
 end
 
 local function doSteal()
-    if Library.Flags["lockNight"] and not isNight() then return end
+    -- Stealing is server-gated to nighttime — no client-side night check needed.
     local targets = getStealTargets() if #targets == 0 then return end
     local mode = firstValue(Library.Flags["stealFilter"] or {}) or "All"
     if Library.Flags["autoStealBest"] then
@@ -1377,7 +1377,6 @@ Main:createSlider({ Name = "Fruits Per Steal", flagName = "stealMult", value = 1
 
         Main:createLabel({ Name = "Defense & Locking", Special = true })
         Main:createToggle({ Name = "Panic Harvest At Night", Flag = false, flagName = "panicHarvest", Description = "Instantly harvest all your ready crops the moment night begins to beat thieves." })
-Main:createToggle({ Name = "Only Steal At Night", Flag = true, flagName = "lockNight", Description = "Wait for nightfall to begin stealing (safest method)." })
 Main:createToggle({ Name = "Auto Hit Intruders (Shovel)", Flag = false, flagName = "hitStolen", Description = "Shovel players who come onto your plot." })
 
 Main:createLabel({ Name = "Automation Sell", Special = true })
