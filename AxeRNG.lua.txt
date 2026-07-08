@@ -1,0 +1,1116 @@
+local request = (syn and syn.request) or (http and http.request) or http_request;
+
+local RunService = game:GetService("RunService")
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local VirtualUser = game:GetService("VirtualUser")
+local CoreGui = game:GetService("CoreGui")
+local StarterPlayer = game:GetService("StarterPlayer")
+
+client = Players.LocalPlayer
+
+print("Loading Library...")
+
+Library = loadstring(game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua"))()
+
+ui = Library:Setup({
+    Location = client.PlayerGui,
+    OpenCloseLocation = "Top Center",
+})
+
+client.Idled:Connect(function()
+    VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+    wait(1)
+    VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+end)
+
+-----------------------------------------------------------------
+
+unpackArgs = table.unpack or unpack
+
+function interval(tag, flag, delayTime, callback)
+    if not Library then return end
+    Library:CleanupConnectionsByTag(tag)
+    delayTime = math.max(tonumber(delayTime) or 0.1, 0.05)
+    if not Library.Flags or not Library.Flags[flag] then
+        return
+    end
+
+    local last = 0
+    local running = false
+    local conn = RunService.Heartbeat:Connect(function()
+        if not Library.Flags or not Library.Flags[flag] then
+            Library:CleanupConnectionsByTag(tag)
+            return
+        end
+
+        local current = os.clock()
+        if running or current - last < delayTime then
+            return
+        end
+
+        last = current
+        running = true
+
+        local spawnFn = task and task.spawn or spawn
+        spawnFn(function()
+            local startedAt = os.clock()
+            local ok, err = pcall(callback)
+            local elapsed = os.clock() - startedAt
+
+            if not ok then
+                warn("[interval:" .. tostring(tag) .. "]", err)
+            elseif elapsed > 10 and os.clock() - (tag .. "_slowWarn"):len() < 0 then
+                warn(string.format("[AxeRNG] slow interval %s took %.3fs", tostring(tag), elapsed))
+            end
+
+            local waitFn = task and task.wait or wait
+            waitFn()
+            running = false
+        end)
+    end)
+
+    Library:TrackConnection(conn, tag)
+end
+
+function notify(title, desc, style)
+    Library:createDisplayMessage(title, desc, {
+        { text = "OK" },
+    }, style or "info")
+end
+
+function prettyPrint(data, indent)
+    indent = indent or 0
+    local prefix = string.rep("    ", indent)
+    if type(data) ~= "table" then
+        print(prefix .. tostring(data))
+        return
+    end
+    for k, v in pairs(data) do
+        if type(v) == "table" then
+            print(prefix .. tostring(k) .. " = {")
+            prettyPrint(v, indent + 1)
+            print(prefix .. "}")
+        else
+            print(prefix .. tostring(k) .. " = " .. tostring(v))
+        end
+    end
+end
+
+function addLog(msg)
+    print("[AxeRNG] " .. os.date("[%H:%M:%S] ") .. tostring(msg))
+end
+
+function formatNumber(n)
+    if type(n) ~= "number" then return "0" end
+    if n >= 1e15 then return string.format("%.2fQ", n / 1e15)
+    elseif n >= 1e12 then return string.format("%.2fT", n / 1e12)
+    elseif n >= 1e9 then return string.format("%.2fB", n / 1e9)
+    elseif n >= 1e6 then return string.format("%.2fM", n / 1e6)
+    elseif n >= 1e3 then return string.format("%.1fK", n / 1e3)
+    else return tostring(math.floor(n)) end
+end
+
+function formatTime(s)
+    if s < 60 then return math.floor(s) .. "s"
+    elseif s < 3600 then return math.floor(s / 60) .. "m " .. math.floor(s % 60) .. "s"
+    else return math.floor(s / 3600) .. "h " .. math.floor((s % 3600) / 60) .. "m" end
+end
+
+----------------------------------------------------------------- https://versusairlines.top/developers.html
+
+----------------------------------------------------------------------
+-- Core game bootstrap / safe wrappers
+----------------------------------------------------------------------
+
+function safeRequire(module, label)
+    if not module then
+        warn("[AxeRNG] Missing module:", tostring(label or module))
+        return nil
+    end
+
+    local ok, result = pcall(require, module)
+    if not ok then
+        warn("[AxeRNG] Failed to require", tostring(label or module), result)
+        return nil
+    end
+
+    return result
+end
+
+function findPath(root, path)
+    local node = root
+    for _, name in ipairs(path) do
+        if not node then return nil end
+        node = node:FindFirstChild(name)
+    end
+    return node
+end
+
+function safeRequirePath(root, path, label)
+    return safeRequire(findPath(root, path), label or table.concat(path, "."))
+end
+
+function findDeep(parent, name)
+    if not parent then return nil end
+    for _, child in ipairs(parent:GetChildren()) do
+        if child.Name == name then return child end
+        local found = findDeep(child, name)
+        if found then return found end
+    end
+    return nil
+end
+
+RemotesFolder = findDeep(ReplicatedStorage, "_remotes") or ReplicatedStorage:FindFirstChild("_remotes", true)
+
+function getRemote(name)
+    if not RemotesFolder then return nil, nil end
+    local folder = RemotesFolder:FindFirstChild(name)
+    if not folder then return nil, nil end
+    return folder:FindFirstChildWhichIsA("RemoteFunction", true), folder:FindFirstChildWhichIsA("RemoteEvent", true)
+end
+
+function remoteFetch(name, method, ...)
+    local rf = getRemote(name)
+    if not rf then return nil end
+    local args = { ... }
+    local ok, result = pcall(function() return rf:InvokeServer(method, unpackArgs(args)) end)
+    if ok then return result end
+    return nil
+end
+
+ChopTreeRF, ChopTreeRE = getRemote("ChopTree")
+LogDropRF, LogDropRE = getRemote("LogDrop")
+
+ChopNet = safeRequirePath(ReplicatedStorage, { "Chop", "Net" }, "Chop.Net")
+ZoneData = safeRequirePath(ReplicatedStorage, { "Config", "ZoneData" }, "Config.ZoneData")
+AxeData = safeRequirePath(ReplicatedStorage, { "Config", "AxeData" }, "Config.AxeData")
+BeeData = safeRequirePath(ReplicatedStorage, { "Config", "BeeData" }, "Config.BeeData")
+ItemData = safeRequirePath(ReplicatedStorage, { "Config", "ItemData" }, "Config.ItemData")
+SkillTreeData = safeRequirePath(ReplicatedStorage, { "Config", "SkillTreeData" }, "Config.SkillTreeData")
+CodesData = safeRequirePath(ReplicatedStorage, { "Config", "CodesData" }, "Config.CodesData")
+DropData = safeRequirePath(ReplicatedStorage, { "Config", "DropData" }, "Config.DropData")
+RebirthState = safeRequirePath(ReplicatedStorage, { "Rebirth", "State" }, "Rebirth.State")
+PlayerDataModule = safeRequirePath(game:GetService("StarterPlayer"), { "StarterPlayerScripts", "State", "PlayerData" }, "State.PlayerData")
+LogDropNetwork = safeRequirePath(game:GetService("StarterPlayer"), { "StarterPlayerScripts", "Chop", "LogDropNetwork" }, "Chop.LogDropNetwork")
+
+if PlayerDataModule and PlayerDataModule.bind then
+    pcall(function() PlayerDataModule.bind() end)
+end
+
+POTION_KEYS = {
+    "luck_potion_2x_15m",
+    "reel_speed_potion_2x_15m",
+    "logs_potion_1_5x_15m",
+    "honey_potion_1_5x_15m",
+    "super_luck_potion_3x_15m",
+}
+
+----------------------------------------------------------------------
+-- Data cache
+----------------------------------------------------------------------
+
+DataCache = { axes = {}, bees = {}, zones = {}, potions = {}, skillCategories = {}, codes = {}, axeCount = 0, beeCount = 0, zoneCount = 0, potionCount = 0 }
+
+if AxeData and AxeData.AXES then
+    for id, data in AxeData.AXES do
+        DataCache.axes[id] = data
+        DataCache.axeCount = DataCache.axeCount + 1
+    end
+end
+
+if BeeData and BeeData.BEES then
+    for id, data in BeeData.BEES do
+        DataCache.bees[id] = data
+        DataCache.beeCount = DataCache.beeCount + 1
+    end
+end
+
+if ZoneData and ZoneData.ZONES and ZoneData.ZONE_ORDER then
+    for _, zoneId in ipairs(ZoneData.ZONE_ORDER) do
+        local zone = ZoneData.ZONES[zoneId]
+        if zone then
+            DataCache.zones[zoneId] = zone
+            DataCache.zoneCount = DataCache.zoneCount + 1
+        end
+    end
+end
+
+if ItemData and ItemData.ORDER and ItemData.ITEMS then
+    for _, itemKey in ipairs(ItemData.ORDER) do
+        for _, pk in ipairs(POTION_KEYS) do
+            if itemKey == pk then
+                table.insert(DataCache.potions, itemKey)
+                DataCache.potionCount = DataCache.potionCount + 1
+                break
+            end
+        end
+    end
+end
+
+if SkillTreeData and SkillTreeData.trees then
+    for catId, catData in SkillTreeData.trees do
+        if catData.nodes then
+            table.insert(DataCache.skillCategories, catId)
+        end
+    end
+    table.sort(DataCache.skillCategories)
+end
+
+if CodesData and CodesData.CODES then
+    for _, entry in ipairs(CodesData.CODES) do
+        if entry.code then
+            table.insert(DataCache.codes, entry.code)
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- Player state helpers
+----------------------------------------------------------------------
+
+function getStat(name)
+    if not PlayerDataModule then return 0 end
+    local ok, result = pcall(function()
+        local num = PlayerDataModule.number(name)
+        return num and num.get() or 0
+    end)
+    return (ok and result) or 0
+end
+
+function getTableStat(name)
+    if not PlayerDataModule then return {} end
+    local ok, result = pcall(function()
+        local t = PlayerDataModule.table(name)
+        return t and t.get() or {}
+    end)
+    return (ok and result) or {}
+end
+
+function getLogs()
+    return getStat("logs")
+end
+
+function getHoney()
+    return getStat("honey") or 0
+end
+
+function getCrystals()
+    return getStat("crystals") or 0
+end
+
+function getRebirths()
+    return getStat("rebirthCount") or 0
+end
+
+function hasItem(key)
+    local inv = getTableStat("items")
+    return type(inv) == "table" and inv[key] and inv[key] > 0
+end
+
+function getRarityDenom(axeId)
+    local axe = DataCache.axes[axeId]
+    return axe and axe.weight and math.max(1, math.round(1 / axe.weight)) or 0
+end
+
+function getZones()
+    return getTableStat("zones")
+end
+
+function isZoneUnlocked(zoneId)
+    if not ZoneData or not ZoneData.ZONES then return false end
+    local zone = ZoneData.ZONES[zoneId]
+    if not zone then return false end
+    if not zone.cost then return true end
+    local zones = getZones()
+    return type(zones) == "table" and zones[zoneId] == true
+end
+
+function getNextUnlockableZone()
+    if not ZoneData or not ZoneData.ZONES or not ZoneData.ZONE_ORDER then return nil end
+    for _, zoneId in ipairs(ZoneData.ZONE_ORDER) do
+        local zone = ZoneData.ZONES[zoneId]
+        if zone and zone.cost and zone.cost.logs and not isZoneUnlocked(zoneId) then
+            if not zone.requires or isZoneUnlocked(zone.requires) then
+                if getLogs() >= zone.cost.logs then
+                    return zoneId
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function getBestAffordableZone()
+    if not ZoneData or not ZoneData.ZONES or not ZoneData.ZONE_ORDER then return nil end
+    for i = #ZoneData.ZONE_ORDER, 1, -1 do
+        local zoneId = ZoneData.ZONE_ORDER[i]
+        if isZoneUnlocked(zoneId) then
+            return zoneId
+        end
+    end
+    return nil
+end
+
+function getRebirthHoneyCost()
+    local r = getRebirths()
+    if RebirthState and RebirthState.honeyCost then
+        local ok, cost = pcall(function() return RebirthState.honeyCost(r) end)
+        if ok and cost then return cost end
+    end
+    return math.floor(1000 * 2^math.max(0, r) + 0.5)
+end
+
+function isSkillNodePurchased(nodeId)
+    local st = getTableStat("skillTree")
+    return type(st) == "table" and st[nodeId] ~= nil
+end
+
+----------------------------------------------------------------------
+-- Character helpers
+----------------------------------------------------------------------
+
+CachedCharacter = nil
+CachedHumanoid = nil
+CachedRoot = nil
+
+function onCharacterChanged()
+    CachedCharacter = client.Character
+    CachedHumanoid = CachedCharacter and CachedCharacter:FindFirstChildWhichIsA("Humanoid")
+    CachedRoot = CachedCharacter and CachedCharacter:FindFirstChild("HumanoidRootPart")
+    FarmCenter = nil
+end
+
+client.CharacterAdded:Connect(onCharacterChanged)
+onCharacterChanged()
+
+function getCharacter()
+    return CachedCharacter or client.Character
+end
+
+function getHumanoid()
+    return CachedHumanoid or (CachedCharacter and CachedCharacter:FindFirstChildWhichIsA("Humanoid"))
+end
+
+function getHRP()
+    return CachedRoot or (CachedCharacter and CachedCharacter:FindFirstChild("HumanoidRootPart"))
+end
+
+function getPart(inst)
+    if not inst or typeof(inst) ~= "Instance" then return nil end
+    if inst:IsA("BasePart") then return inst end
+    if inst:IsA("Model") then
+        return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if inst.FindFirstChildWhichIsA then
+        return inst:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return nil
+end
+
+function moveTo(target)
+    local hrp = getHRP()
+    local hum = getHumanoid()
+    if not hrp or not hum then return end
+    local dist = (target - hrp.Position).magnitude
+    if dist < 3 then return end
+    local moveMode = (Library and Library.Flags and Library.Flags["MoveMode"]) or "Walk"
+    if moveMode == "TP" then
+        hrp.CFrame = CFrame.new(target)
+        return
+    end
+    local timeLimit = math.min(dist / 16, 8)
+    hum:MoveTo(target)
+    local start = os.clock()
+    while os.clock() - start < timeLimit do
+        local r = getHRP()
+        if not r then break end
+        if (target - r.Position).magnitude < 5 then break end
+        if moveMode == "Tween" then
+            r.CFrame = r.CFrame:Lerp(CFrame.new(target), 0.1)
+        end
+        task.wait()
+    end
+end
+
+function teleportNear(pos, yOffset)
+    local hrp = getHRP()
+    if not hrp then return false end
+    hrp.CFrame = CFrame.new(pos + Vector3.new(0, yOffset or 4, 0))
+    return true
+end
+
+----------------------------------------------------------------------
+-- Farm helpers
+----------------------------------------------------------------------
+
+DepletedTrees = {}
+
+if ChopTreeRE then
+    ChopTreeRE.OnClientEvent:Connect(function(msg, id)
+        if msg == "r" and id then DepletedTrees[id] = nil end
+        if (msg == "sd" or msg == "d") and id then DepletedTrees[id] = true end
+    end)
+end
+
+FarmZoneId = nil
+FarmCenter = nil
+CurrentTree = nil
+
+function getTreeZone(treeModel)
+    if not treeModel then return nil end
+    if ZoneData and ZoneData.zoneForInstance then
+        local ok, zoneId = pcall(function() return ZoneData.zoneForInstance(treeModel) end)
+        if ok and zoneId then return zoneId end
+    end
+    local attr = treeModel:GetAttribute("Zone") or treeModel:GetAttribute("zoneId") or treeModel:GetAttribute("zone")
+    if attr then return tostring(attr) end
+    for _, tag in ipairs(CollectionService:GetTags(treeModel)) do
+        local zid = tag:match("^zone:(.+)$")
+        if zid then return zid end
+    end
+    return nil
+end
+
+function getCurrentZone()
+    local hrp = getHRP()
+    if not hrp then return nil end
+    return getTreeZone(hrp)
+end
+
+function ensureFarmCenter()
+    if not FarmCenter then
+        local hrp = getHRP()
+        if hrp then FarmCenter = hrp.Position end
+    end
+    if not FarmZoneId then
+        local useBestZone = Library and Library.Flags and Library.Flags["FarmInBestZone"]
+        if useBestZone then
+            FarmZoneId = getBestAffordableZone()
+        else
+            FarmZoneId = getCurrentZone()
+        end
+    end
+end
+
+function doChop(tree)
+    if not tree or not tree.chopId or not ChopTreeRE then return end
+    pcall(function() firesignal(ChopTreeRE.OnClientEvent, "d", tree.chopId) end)
+    pcall(function()
+        if LogDropRE then
+            local amt = math.random(1, 3)
+            firesignal(LogDropRE.OnClientEvent, "ls", tree.chopId, "Log", amt)
+        end
+    end)
+end
+
+function scanFarmTrees()
+    local hrp = getHRP()
+    if not hrp then return {} end
+    ensureFarmCenter()
+    local trees = {}
+    for _, obj in ipairs(CollectionService:GetTagged("Choppable")) do
+        local rootModel = ChopNet and ChopNet.resolveChoppableRoot and ChopNet.resolveChoppableRoot(obj) or obj:FindFirstAncestorWhichIsA("Model")
+        local chopId = ChopNet and ChopNet.getChopNetIdFromInstance and ChopNet.getChopNetIdFromInstance(obj) or obj:GetAttribute("ChopNetId")
+        if rootModel and chopId and rootModel.PrimaryPart and not DepletedTrees[chopId] then
+            local treePos = rootModel.PrimaryPart.Position
+            local dist = (treePos - hrp.Position).magnitude
+            if dist <= 300 then
+                local treeZone = getTreeZone(rootModel)
+                local zoneOk = not FarmZoneId or not treeZone or treeZone == FarmZoneId
+                local leashOk = not FarmCenter or (treePos - FarmCenter).magnitude <= 300
+                if zoneOk and leashOk then
+                    table.insert(trees, { model = rootModel, chopId = chopId, pos = treePos, dist = dist })
+                end
+            end
+        end
+    end
+    table.sort(trees, function(a, b) return a.dist < b.dist end)
+    return trees
+end
+
+function guessDropId(part)
+    if not part then return "Log" end
+    if part.Size and part.Size.X >= 4 then return "Honeycomb" end
+    if DropData and DropData.DROPS then
+        local bb = part:FindFirstChildWhichIsA("BillboardGui")
+        if bb then
+            local icon = bb:FindFirstChild("DropIcon")
+            if icon and icon:IsA("ImageLabel") then
+                local img = icon.Image
+                for did, dd in pairs(DropData.DROPS) do
+                    if dd.imageKey and img:find(dd.imageKey, 1, true) then return did end
+                end
+            end
+        end
+    end
+    return "Log"
+end
+
+function scanDrops()
+    local hrp = getHRP()
+    if not hrp then return {} end
+    local drops = {}
+    for _, part in ipairs(CollectionService:GetTagged("LogDrop")) do
+        local dist = (part.Position - hrp.Position).magnitude
+        if dist <= 30 then
+            local dropId = guessDropId(part)
+            local count = 1
+            local bb = part:FindFirstChildWhichIsA("BillboardGui")
+            if bb then
+                local label = bb:FindFirstChildWhichIsA("TextLabel")
+                if label then count = tonumber(label.Text:match("x(%d+)")) or 1 end
+            end
+            table.insert(drops, { part = part, dropId = dropId, count = count, pos = part.Position, dist = dist })
+        end
+    end
+    table.sort(drops, function(a, b) return a.dist < b.dist end)
+    return drops
+end
+
+function tryChop(tree)
+    if not tree or not tree.chopId then return end
+    doChop(tree)
+    DepletedTrees[tree.chopId] = true
+    if tree.model then
+        local cd = tree.model:FindFirstChildWhichIsA("ClickDetector", true)
+        if cd then pcall(function() fireclickdetector(cd) end); return end
+        local pp = tree.model:FindFirstChildWhichIsA("ProximityPrompt", true)
+        if pp then pcall(function() fireproximityprompt(pp) end); return end
+    end
+end
+
+function tryCollectDrop(drop)
+    if not drop then return end
+    if LogDropNetwork and LogDropNetwork.collectDrop then
+        pcall(function() LogDropNetwork.collectDrop(drop.dropId, drop.count) end)
+    else
+        pcall(function() remoteFetch("LogDrop", "collectDrop", drop.dropId, drop.count) end)
+    end
+end
+
+----------------------------------------------------------------------
+-- Automation step functions
+----------------------------------------------------------------------
+
+Stats = {
+    totalChops = 0,
+    totalRolls = 0,
+    bestRollRarity = 0,
+    bestRollAxe = nil,
+    startTime = os.clock(),
+}
+
+RedeemedCodes = {}
+
+function processRollResult(result)
+    if not result or type(result) ~= "table" then return end
+    local axes = result.axes or result.rolledAxes or {}
+    local rarestId = result.rarest or result.best or (type(axes) == "table" and #axes > 0 and axes[1])
+    if not rarestId then return end
+    local denom = getRarityDenom(rarestId)
+    if denom > Stats.bestRollRarity then
+        Stats.bestRollRarity = denom
+        Stats.bestRollAxe = rarestId
+    end
+end
+
+function stepRoll()
+    local result = remoteFetch("Roll", "requestRoll")
+    if result then
+        Stats.totalRolls = Stats.totalRolls + 1
+        processRollResult(result)
+    end
+end
+
+function stepEquipBestAxes()
+    pcall(function() remoteFetch("Bag", "equipBestAxes") end)
+end
+
+function stepEquipBestBees()
+    pcall(function() remoteFetch("Bag", "equipBestBees") end)
+end
+
+function stepFarm()
+    if CurrentTree and (not CurrentTree.model or not CurrentTree.model.Parent) then
+        CurrentTree = nil
+    end
+    local trees = scanFarmTrees()
+    if #trees > 0 then
+        local target = trees[1]
+        CurrentTree = target
+        if target.dist > 8 then moveTo(target.pos) end
+        tryChop(target)
+        Stats.totalChops = Stats.totalChops + 1
+    end
+end
+
+function stepCollectDrops()
+    local drops = scanDrops()
+    if #drops > 0 then
+        local target = drops[1]
+        if target.dist > 5 then moveTo(target.pos) end
+        tryCollectDrop(target)
+    end
+end
+
+function stepRebirth()
+    local cost = getRebirthHoneyCost()
+    if getHoney() >= cost then
+        pcall(function() remoteFetch("Rebirth", "performRebirth") end)
+        addLog("Rebirth attempted (cost: " .. formatNumber(cost) .. " honey)")
+    end
+end
+
+function stepClaimQuests()
+    for _, period in ipairs({"hourly", "daily", "weekly"}) do
+        local data = remoteFetch("Quests", "getState", period)
+        if data and type(data) == "table" then
+            local slots = data.slots or data
+            if type(slots) == "table" then
+                for idx, slot in ipairs(slots) do
+                    if type(slot) == "table" and slot.canClaim then
+                        pcall(function() remoteFetch("Quests", "claim", period, idx) end)
+                        addLog("Claimed " .. period .. " quest " .. idx)
+                    end
+                end
+            end
+        end
+    end
+end
+
+function stepSocialReward()
+    pcall(function() remoteFetch("SocialReward", "claimSocialReward") end)
+end
+
+function stepUsePotion()
+    local key = DataCache.potions[1] or "luck_potion_2x_15m"
+    if hasItem(key) then
+        pcall(function() remoteFetch("Items", "useItem", key) end)
+        addLog("Used potion: " .. key)
+    end
+end
+
+function stepUseAllPotions()
+    for _, k in ipairs(DataCache.potions) do
+        if hasItem(k) then
+            pcall(function() remoteFetch("Items", "useItem", k) end)
+            addLog("Used potion: " .. k)
+            return
+        end
+    end
+end
+
+function stepUseHoneycomb()
+    if hasItem("honeycomb") then
+        pcall(function() remoteFetch("Items", "useItem", "honeycomb") end)
+    end
+end
+
+function stepHatchBee()
+    if hasItem("honeycomb") then
+        pcall(function() remoteFetch("Bee", "requestHatchItem", "honeycomb") end)
+    end
+end
+
+function stepSkillTree()
+    if not SkillTreeData or not SkillTreeData.trees then return end
+    for _, catId in ipairs(DataCache.skillCategories) do
+        local catData = SkillTreeData.trees[catId]
+        if catData and catData.nodes then
+            for nodeId, node in catData.nodes do
+                if node.cost and not node.gate and not isSkillNodePurchased(nodeId) then
+                    if not node.requires or isSkillNodePurchased(node.requires) then
+                        local costLogs = node.cost.logs or 0
+                        local costRebirths = node.cost.rebirths or 0
+                        if getLogs() >= costLogs and getRebirths() >= costRebirths then
+                            pcall(function() remoteFetch("SkillTree", "purchaseNode", nodeId) end)
+                            addLog("Skill purchased: " .. nodeId)
+                            return
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function stepAxeIndex()
+    for _, r in ipairs({"common", "uncommon", "rare", "epic", "legendary", "mythic", "shiny"}) do
+        pcall(function() remoteFetch("AxeIndexRewards", "claim", r) end)
+    end
+end
+
+function stepHourlyMarket()
+    local result = remoteFetch("HourlyMarket", "getState")
+    if not result or type(result) ~= "table" or result.open == false then return end
+    local slots = result.slots
+    if type(slots) ~= "table" then return end
+    local count = 0
+    for idx, slot in pairs(slots) do
+        if type(slot) == "table" and slot.stock and slot.stock > 0 then
+            pcall(function() remoteFetch("HourlyMarket", "purchase", idx) end)
+            count = count + 1
+            task.wait(0.3)
+        end
+    end
+    if count > 0 then
+        addLog("Hourly market: bought " .. count .. " items")
+    end
+end
+
+function stepClaimOffline()
+    pcall(function()
+        local result = remoteFetch("Offline", "claimOffline")
+        if result and type(result) == "table" then
+            local logs = result.logs or 0
+            local honey = result.honey or 0
+            if logs > 0 or honey > 0 then
+                addLog("Offline claimed: +" .. formatNumber(logs) .. " logs, +" .. formatNumber(honey) .. " honey")
+            end
+        end
+    end)
+end
+
+function stepBuyNextZone()
+    local zoneId = getNextUnlockableZone()
+    if zoneId then
+        pcall(function() remoteFetch("Zone", "purchaseZone", zoneId) end)
+        addLog("Bought zone: " .. zoneId)
+        if Library and Library.Flags and Library.Flags["AutoGoToNewZone"] then
+            task.wait(0.5)
+            pcall(function() remoteFetch("Zone", "teleportToZone", zoneId) end)
+            addLog("TP'd to: " .. zoneId)
+        end
+    end
+end
+
+function stepFarmInBestZone()
+    local zoneId = getBestAffordableZone()
+    if zoneId then
+        pcall(function() remoteFetch("Zone", "teleportToZone", zoneId) end)
+        task.wait(0.5)
+        FarmZoneId = zoneId
+        local hrp = getHRP()
+        if hrp then FarmCenter = hrp.Position end
+        addLog("TP'd to best zone: " .. zoneId)
+    end
+end
+
+function stepAntiAfk()
+    local hum = getHumanoid()
+    local hrp = getHRP()
+    if hum and hrp then hum:MoveTo(hrp.Position) end
+    pcall(function() VirtualUser:CaptureController() end)
+end
+
+function redeemCodes()
+    for _, code in ipairs(DataCache.codes) do
+        if not RedeemedCodes[code] then
+            RedeemedCodes[code] = true
+            pcall(function() remoteFetch("Codes", "redeem", code) end)
+            addLog("Redeemed: " .. code)
+            task.wait(0.3)
+        end
+    end
+end
+
+----------------------------------------------------------------------
+-- UI helpers
+----------------------------------------------------------------------
+
+AllToggles = {}
+
+function createAxeToggle(section, cfg)
+    table.insert(AllToggles, cfg)
+    local tag = cfg.tag or ("AxeRNG_" .. cfg.flagName)
+    section:createToggle({
+        Name = cfg.Name,
+        Flag = cfg.Flag or false,
+        flagName = cfg.flagName,
+        Callback = function(enabled)
+            Library:CleanupConnectionsByTag(tag)
+            if not enabled then return end
+            interval(tag, cfg.flagName, cfg.delay or 1, cfg.Step)
+        end,
+    })
+end
+
+----------------------------------------------------------------------
+-- UI
+----------------------------------------------------------------------
+
+Main = ui:CreateSection("Main")
+
+createAxeToggle(Main, {
+    Name = "Auto Roll",
+    flagName = "AutoRoll",
+    tag = "AxeRNG_AutoRoll",
+    delay = 0.1,
+    Step = stepRoll,
+})
+
+createAxeToggle(Main, {
+    Name = "Auto Equip Best Axes",
+    flagName = "AutoEquipBestAxes",
+    tag = "AxeRNG_AutoEquipBestAxes",
+    delay = 5,
+    Step = stepEquipBestAxes,
+})
+
+createAxeToggle(Main, {
+    Name = "Auto Equip Best Bees",
+    flagName = "AutoEquipBestBees",
+    tag = "AxeRNG_AutoEquipBestBees",
+    delay = 5,
+    Step = stepEquipBestBees,
+})
+
+createAxeToggle(Main, {
+    Name = "Auto Farm",
+    flagName = "AutoFarm",
+    tag = "AxeRNG_AutoFarm",
+    delay = 0.4,
+    Step = stepFarm,
+})
+
+createAxeToggle(Main, {
+    Name = "Auto Collect Drops",
+    flagName = "AutoCollectDrops",
+    tag = "AxeRNG_AutoCollectDrops",
+    delay = 1,
+    Step = stepCollectDrops,
+})
+
+createAxeToggle(Main, {
+    Name = "Auto Rebirth",
+    flagName = "AutoRebirth",
+    tag = "AxeRNG_AutoRebirth",
+    delay = 5,
+    Step = stepRebirth,
+})
+
+createAxeToggle(Main, {
+    Name = "Auto Claim Quests",
+    flagName = "AutoClaimQuests",
+    tag = "AxeRNG_AutoClaimQuests",
+    delay = 30,
+    Step = stepClaimQuests,
+})
+
+createAxeToggle(Main, {
+    Name = "Auto Social Reward",
+    flagName = "AutoSocialReward",
+    tag = "AxeRNG_AutoSocialReward",
+    delay = 60,
+    Step = stepSocialReward,
+})
+
+Main:createDropdown({
+    Name = "Move Mode",
+    Flag = "Walk",
+    flagName = "MoveMode",
+    List = {"Walk", "Tween", "TP"},
+    Callback = function(v)
+        Library.Flags["MoveMode"] = type(v) == "table" and v[1] or v
+        addLog("Move: " .. tostring(Library.Flags["MoveMode"]))
+    end,
+})
+
+Items = ui:CreateSection("Items")
+
+createAxeToggle(Items, {
+    Name = "Auto Use Potions",
+    flagName = "AutoUsePotions",
+    tag = "AxeRNG_AutoUsePotions",
+    delay = 15,
+    Step = stepUsePotion,
+})
+
+createAxeToggle(Items, {
+    Name = "Auto Use All Potions",
+    flagName = "AutoUseAllPotions",
+    tag = "AxeRNG_AutoUseAllPotions",
+    delay = 15,
+    Step = stepUseAllPotions,
+})
+
+createAxeToggle(Items, {
+    Name = "Auto Honeycomb",
+    flagName = "AutoHoneycomb",
+    tag = "AxeRNG_AutoHoneycomb",
+    delay = 5,
+    Step = stepUseHoneycomb,
+})
+
+createAxeToggle(Items, {
+    Name = "Auto Hatch Bee",
+    flagName = "AutoHatchBee",
+    tag = "AxeRNG_AutoHatchBee",
+    delay = 10,
+    Step = stepHatchBee,
+})
+
+createAxeToggle(Items, {
+    Name = "Auto Skill Tree",
+    flagName = "AutoSkillTree",
+    tag = "AxeRNG_AutoSkillTree",
+    delay = 1,
+    Step = stepSkillTree,
+})
+
+createAxeToggle(Items, {
+    Name = "Auto Axe Index",
+    flagName = "AutoAxeIndex",
+    tag = "AxeRNG_AutoAxeIndex",
+    delay = 10,
+    Step = stepAxeIndex,
+})
+
+createAxeToggle(Items, {
+    Name = "Auto Hourly Market",
+    flagName = "AutoHourlyMarket",
+    tag = "AxeRNG_AutoHourlyMarket",
+    delay = 60,
+    Step = stepHourlyMarket,
+})
+
+createAxeToggle(Items, {
+    Name = "Auto Claim Offline",
+    flagName = "AutoClaimOffline",
+    tag = "AxeRNG_AutoClaimOffline",
+    delay = 120,
+    Step = stepClaimOffline,
+})
+
+Zones = ui:CreateSection("Zones")
+
+createAxeToggle(Zones, {
+    Name = "Auto Buy Zone",
+    flagName = "AutoBuyNextZone",
+    tag = "AxeRNG_AutoBuyNextZone",
+    delay = 8,
+    Step = stepBuyNextZone,
+})
+
+createAxeToggle(Zones, {
+    Name = "Auto TP to New Zone",
+    flagName = "AutoGoToNewZone",
+    tag = "AxeRNG_AutoGoToNewZone",
+    delay = 999999,
+    Step = function() end,
+})
+
+createAxeToggle(Zones, {
+    Name = "Farm in Best Zone",
+    flagName = "FarmInBestZone",
+    tag = "AxeRNG_FarmInBestZone",
+    delay = 30,
+    Step = stepFarmInBestZone,
+})
+
+Misc = ui:CreateSection("Misc")
+
+createAxeToggle(Misc, {
+    Name = "Anti-AFK",
+    flagName = "AntiAfk",
+    tag = "AxeRNG_AntiAfk",
+    delay = 60,
+    Step = stepAntiAfk,
+})
+
+Misc:createButton({
+    Name = "Redeem Codes",
+    Callback = function()
+        task.spawn(function()
+            redeemCodes()
+            addLog("Codes redeemed")
+        end)
+    end,
+})
+
+Misc:createButton({
+    Name = "Enable All",
+    Callback = function()
+        for _, cfg in ipairs(AllToggles) do
+            local t = cfg.tag or ("AxeRNG_" .. cfg.flagName)
+            Library.Flags[cfg.flagName] = true
+            interval(t, cfg.flagName, cfg.delay or 1, cfg.Step)
+        end
+        addLog("All ON")
+    end,
+})
+
+Misc:createButton({
+    Name = "Disable All",
+    Callback = function()
+        for _, cfg in ipairs(AllToggles) do
+            local t = cfg.tag or ("AxeRNG_" .. cfg.flagName)
+            Library.Flags[cfg.flagName] = false
+            Library:CleanupConnectionsByTag(t)
+        end
+        addLog("All OFF")
+    end,
+})
+
+StatsSection = ui:CreateSection("Stats")
+
+Sl = {}
+Sl.logs = StatsSection:createLabel({ Name = "Logs: 0" })
+Sl.honey = StatsSection:createLabel({ Name = "Honey: 0" })
+Sl.crystals = StatsSection:createLabel({ Name = "Crystals: 0" })
+Sl.rebirths = StatsSection:createLabel({ Name = "Rebirths: 0" })
+Sl.uptime = StatsSection:createLabel({ Name = "Uptime: 0s" })
+Sl.bestRoll = StatsSection:createLabel({ Name = "Best: none" })
+Sl.chops = StatsSection:createLabel({ Name = "Chops: 0" })
+Sl.rolls = StatsSection:createLabel({ Name = "Rolls: 0" })
+Sl.fps = StatsSection:createLabel({ Name = "FPS: 0" })
+
+----------------------------------------------------------------------
+-- Stats updater (always-on interval)
+----------------------------------------------------------------------
+
+local fpsValue = 0
+local statsConn = RunService.Heartbeat:Connect(function(dt)
+    fpsValue = math.floor(1 / dt)
+end)
+Library:TrackConnection(statsConn, "AxeRNG_StatsFPS")
+
+interval("AxeRNG_StatsUpdate", "AxeRNG_StatsUpdate", 1, function()
+    local logs = getLogs()
+    local honey = getHoney()
+    local crystals = getCrystals()
+    local rebirths = getRebirths()
+    local uptime = os.clock() - Stats.startTime
+
+    Sl.logs:Set("Logs: " .. formatNumber(logs))
+    Sl.honey:Set("Honey: " .. formatNumber(honey))
+    Sl.crystals:Set("Crystals: " .. formatNumber(crystals))
+    Sl.rebirths:Set("Rebirths: " .. formatNumber(rebirths))
+    Sl.uptime:Set("Uptime: " .. formatTime(uptime))
+    Sl.chops:Set("Chops: " .. formatNumber(Stats.totalChops))
+    Sl.rolls:Set("Rolls: " .. Stats.totalRolls)
+
+    if Stats.bestRollAxe then
+        local a = DataCache.axes[Stats.bestRollAxe]
+        Sl.bestRoll:Set("Best: " .. (a and a.name or Stats.bestRollAxe) .. " (1 in " .. Stats.bestRollRarity .. ")")
+    end
+
+    Sl.fps:Set("FPS: " .. fpsValue)
+end)
+
+Library.Flags["AxeRNG_StatsUpdate"] = true
+
+----------------------------------------------------------------------
+-- Init
+----------------------------------------------------------------------
+
+addLog("Script loaded | " .. tostring(client.DisplayName or client.Name))
+addLog("Axes: " .. DataCache.axeCount .. " | Zones: " .. DataCache.zoneCount .. " | Bees: " .. DataCache.beeCount)
+addLog("Potions: " .. DataCache.potionCount .. " | Codes: " .. #DataCache.codes)
+addLog("Remotes: " .. (RemotesFolder and "found" or "NOT FOUND"))
+addLog("=== Script Ready ===")
+
+print("AxeRNG: Done")
