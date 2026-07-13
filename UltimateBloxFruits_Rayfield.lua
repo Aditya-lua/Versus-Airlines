@@ -23,63 +23,6 @@ local Teams = game:GetService("Teams")
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until client and client.Character and client.Character:FindFirstChild("HumanoidRootPart")
 
-local Library = loadstring(game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua"))()
-
-local ui = Library:Setup({
-    Location = CoreGui,
-    OpenCloseLocation = "Top Center"
-})
-
-local function NewTab(name)
-    local section = ui:CreateSection(name)
-    local function wrapSection(sec)
-        local w = {}
-        function w:AddSection(n)
-            local childSec = ui:CreateSection(n)
-            local child = {}
-            function child:AddToggle(flag, args)
-                args = args or {}
-                childSec:createToggle({Name = args.text, flagName = flag, Flag = args.default or false, Callback = args.callback or function(v) Library.Flags[flag] = v end})
-            end
-            function child:AddButton(args)
-                childSec:createButton({Name = args.text, Description = args.desc or args.description, Callback = args.callback or function() end})
-            end
-            function child:AddLabel(text)
-                childSec:createLabel({Name = tostring(text)})
-            end
-            function child:AddDropdown(flag, args)
-                args = args or {}
-                local dd = childSec:createDropdown({Name = args.text, flagName = flag, List = args.values or {}, Flag = args.default or ""})
-                if dd then
-                    dd.Values = args.values or {}
-                    local u = dd.updateList
-                    dd.Update = function(self, list)
-                        dd.Values = list
-                        if u then pcall(u, dd, list) end
-                    end
-                end
-                return dd
-            end
-            function child:AddTextBox(args)
-                childSec:createInputBox({Name = args.text, Callback = args.callback or function() end, flagName = args.flag or args.text})
-            end
-            function child:AddSlider(flag, args)
-                args = args or {}
-                childSec:createSlider({Name = args.text, flagName = flag, minValue = args.min or 0, maxValue = args.max or 100, value = args.default or 50})
-            end
-            return child
-        end
-        function w:AddToggle(flag, args)
-            args = args or {}
-            sec:createToggle({Name = args.text, flagName = flag, Flag = args.default or false, Callback = args.callback or function(v) Library.Flags[flag] = v end})
-        end
-        function w:AddButton(args)
-            sec:createButton({Name = args.text, Description = args.desc or args.description, Callback = args.callback or function() end})
-        end
-        function w:AddLabel(text)
-            sec:createLabel({Name = tostring(text)})
-        end
-        function w:AddDropdown(flag, args)
             args = args or {}
             local dd = sec:createDropdown({Name = args.text, flagName = flag, List = args.values or {}, Flag = args.default or ""})
             if dd then
@@ -356,6 +299,8 @@ do
         if DeathMod then pcall(function() hookfunction(require(DeathMod), function() end) end) end
         if RespawnMod then pcall(function() hookfunction(require(RespawnMod), function() end) end) end
         if GuideModuleMod then pcall(function() hookfunction(GuideModuleMod.ChangeDisplayedNPC, function() end) end) end
+        pcall(function() hookfunction(error, function() end) end)
+        pcall(function() hookfunction(warn, function() end) end)
     end
 end
 
