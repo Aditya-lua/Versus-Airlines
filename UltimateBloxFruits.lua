@@ -180,6 +180,9 @@ do
         if ok and mt then
             setRO(mt, false)
             local oldNamecall = mt.__namecall
+            if type(oldNamecall) ~= "function" then
+                setRO(mt, true)
+            else
             -- Exact remote names used by Blox Fruits anti-cheat
             local blockedNames = {
                 TeleportDetect = true, CHECKER_1 = true, CHECKER = true, GUI_CHECK = true,
@@ -223,6 +226,7 @@ do
                 return oldNamecall(self, ...)
             end)
             setRO(mt, true)
+            end
         end
     end
 
@@ -241,6 +245,9 @@ do
             if pmt then
                 setRO(pmt, false)
                 local oldIdx = pmt.__index
+                if type(oldIdx) ~= "function" then
+                    setRO(pmt, true)
+                else
                 pmt.__index = secure(function(self, key)
                     if key == "Kick" or key == "kick" then
                         return function() warn("[UltimateHub] Blocked local Kick call") end
@@ -248,6 +255,7 @@ do
                     return oldIdx(self, key)
                 end)
                 setRO(pmt, true)
+                end
             end
         end)
     end
