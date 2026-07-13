@@ -26,8 +26,8 @@ repeat task.wait() until client and client.Character and client.Character:FindFi
 local Library = loadstring(game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua"))()
 
 local ui = Library:Setup({
-    Location = CoreGui,
-    OpenCloseLocation = "Top Center"
+    Location = client.PlayerGui,
+    OpenCloseLocation = "Bottom Right"
 })
 
 local function NewTab(name)
@@ -113,18 +113,24 @@ end)
 
 local function interval(tag, flag, delayTime, callback)
     Library:CleanupConnectionsByTag(tag)
+    delayTime = math.max(tonumber(delayTime) or 0.1, 0.05)
     if not Library.Flags[flag] then return end
     local last = 0
+    local running = false
     local conn = RunService.Heartbeat:Connect(function()
         if not Library.Flags[flag] then
             Library:CleanupConnectionsByTag(tag)
             return
         end
         local now = os.clock()
-        if now - last >= delayTime then
-            last = now
+        if running or now - last < delayTime then return end
+        last = now
+        running = true
+        task.spawn(function()
             pcall(callback)
-        end
+            task.wait()
+            running = false
+        end)
     end)
     Library:TrackConnection(conn, tag)
 end
