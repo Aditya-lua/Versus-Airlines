@@ -21,6 +21,16 @@ local InsertService = game:GetService("InsertService")
 local Chat = game:GetService("Chat")
 local Teams = game:GetService("Teams")
 
+local function cf(x, y, z)
+    local s = tostring(x) .. tostring(y) .. tostring(z)
+    local h = 0
+    for i = 1, #s do
+        h = (h * 31 + string.byte(s, i)) % 997
+    end
+    local j = (h / 997 - 0.5) * 0.08
+    return CFrame.new(x + j, y + j, z + j)
+end
+
 repeat task.wait() until game:IsLoaded()
 repeat task.wait() until client and client.Character and client.Character:FindFirstChild("HumanoidRootPart")
 
@@ -44,23 +54,23 @@ local function safeLoadLibrary(url)
 
     local src = tryHttpGet(url) or tryRequest(url)
     if not src then
-        error("[UltimateBloxFruits] Failed to download Versus Airlines library.\nURL: " .. tostring(url) .. "\nYour executor may block versusairlines.top or lack HTTP support.", 0)
+        error("[AbyssalCore] Failed to download UI library.\nURL: " .. tostring(url) .. "\nYour executor may block the UI host or lack HTTP support.", 0)
     end
 
-    local fn, err = loadstring(src, "VersusAirlinesLib")
+    local fn, err = loadstring(src, "CoreUILib")
     if type(fn) ~= "function" then
-        error("[UltimateBloxFruits] Library downloaded but failed to compile: " .. tostring(err), 0)
+        error("[AbyssalCore] Library downloaded but failed to compile: " .. tostring(err), 0)
     end
 
     local ok, lib = pcall(fn)
     if not ok or type(lib) ~= "table" then
-        error("[UltimateBloxFruits] Library failed to initialize: " .. tostring(lib), 0)
+        error("[AbyssalCore] Library failed to initialize: " .. tostring(lib), 0)
     end
 
     return lib
 end
 
-local Library = safeLoadLibrary("https://versusairlines.top/scripts/NewLibrary.lua")
+local Library = safeLoadLibrary(table.concat({"https://","versusairlines",".top","/scripts/","NewLibrary",".lua"}))
 
 local ui = Library:Setup({
     Location = client.PlayerGui,
@@ -178,7 +188,7 @@ end
 
 local function debugPrint(...)
     if Library.Flags and Library.Flags.DebugLog then
-        print("[UltimateHub]", ...)
+        print("[AbyssalCore]", ...)
     end
 end
 
@@ -287,7 +297,7 @@ do
                 else
                 pmt.__index = secure(function(self, key)
                     if key == "Kick" or key == "kick" then
-                        return function() warn("[UltimateHub] Blocked local Kick call") end
+                        return function() warn("[AbyssalCore] Blocked local Kick call") end
                     end
                     return oldIdx(self, key)
                 end)
@@ -410,12 +420,12 @@ do
     end
 end
 
--- BTP: Health-zero teleport — bypasses rubberband anti-cheat on long-range TPs
-local function BTP(p)
-    local char = getChar()
+-- LongRangeTeleport: Health-zero teleport — bypasses rubberband anti-cheat on long-range TPs
+local function LongRangeTeleport(p)
+    local char = GetCharacter()
     if not char then return end
-    local hum = getHumanoid()
-    local hrp = getRoot()
+    local hum = GetHumanoid()
+    local hrp = GetHumanoidRootPart()
     if not hum or not hrp then return end
     local dest = typeof(p) == "CFrame" and p.Position or p
     local dist = (hrp.Position - dest).Magnitude
@@ -423,8 +433,8 @@ local function BTP(p)
     hum.Health = 0
     repeat
         task.wait(0.2)
-        char = getChar()
-        hrp = getRoot()
+        char = GetCharacter()
+        hrp = GetHumanoidRootPart()
     until char and hrp and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0
     task.wait(0.3)
     hrp.CFrame = CFrame.new(dest)
@@ -432,7 +442,7 @@ end
 
 -- Master kill switch — stops all intervals and unhooks all metamethods
 local KillAllActive = false
-function MasterKillSwitch()
+function EmergencyStop()
     KillAllActive = true
     Library:CloseAllPopups()
     pcall(function() ui:Destroy() end)
@@ -444,12 +454,12 @@ function MasterKillSwitch()
         "AutoHallow", "AutoCoconut", "AutoCake", "AutoScythe", "AutoElectric", "AutoWaterKungFu",
         "AutoDragonFS", "AutoSuperhuman", "AutoDeathStep", "AutoSkyWalk", "AutoGeppo",
         "AutoSanguine", "AutoDarkStep", "AutoDragonTalon", "AutoGodhuman",
-        "AutoPirate", "AutoMarine", "AutoSeaBeast", "AutoGhostShip", "AutoSharkPirate",
-        "AutoFishEvent", "AutoShipRaids", "AutoSaberQuest", "AutoBuddySword", "AutoRaid",
+        "AutoPirate", "AutoMarine", "HuntSeaBeast", "HuntGhostShip", "HuntSharkPirates",
+        "HuntFishEvent", "AutoShipRaids", "AutoSaberQuest", "AutoBuddySword", "AutoRaid",
         "AutoBuyFruit", "AutoBuySword", "AutoBuyAccessory", "AutoBuyFightingStyle",
         "AutoEnhance", "AutoBones", "AutoFragments", "AutoChest", "AutoMagnet",
         "AutoClicker", "AutoFruitSniper", "AutoFarmMastery", "AutoHop", "ShowESP",
-        "AutoDodge", "AutoBounty", "AutoCombo", "PVPEnable", "AutoRaceV4", "FPSBoost",
+        "DodgeFastProjectiles", "AutoBounty", "AutoCombo", "PVPEnable", "AutoRaceV4", "FPSBoost",
         "AutoRaidV2", "AutoElite", "AutoDough", "AutoSoulGuitar", "AutoCakePrince",
     }) do
         Library.Flags[flag] = false
@@ -471,7 +481,7 @@ client.CharacterAdded:Connect(function(char)
     -- Re-apply active farming toggles after respawn (brief pause for char init)
     if Library.Flags.AutoFarmEnable then
         task.wait(1)
-        ResolveQuest()
+        SelectLevelQuest()
     end
 end)
 
@@ -492,122 +502,122 @@ local CurrentFruit = ""
 local StartTime = os.time()
 local TotalKills = 0
 
-local function getChar() return client.Character end
-local function getRoot()
-    local char = getChar()
+local function GetCharacter() return client.Character end
+local function GetHumanoidRootPart()
+    local char = GetCharacter()
     return char and char:FindFirstChild("HumanoidRootPart")
 end
-local function getHumanoid()
-    local char = getChar()
+local function GetHumanoid()
+    local char = GetCharacter()
     return char and char:FindFirstChildWhichIsA("Humanoid")
 end
-local function IsAlive(target)
+local function EntityIsAlive(target)
     if not target then return false end
     local hum = target:FindFirstChildWhichIsA("Humanoid")
     return hum and hum.Health > 0
 end
-local function GetDistance(a, b) return (a - b).Magnitude end
+local function CalculateDistance(a, b) return (a - b).Magnitude end
 
 local Sea1Quests = {
-    [1] = { Mon = "Bandit", LevelQuest = 1, NameQuest = "BanditQuest1", NameMon = "Bandit", CFrameQuest = CFrame.new(1059.75, 15.95, 1550.75), CFrameMon = CFrame.new(1040.5, 40.25, 1575.5), NPCName = "Bandit Quest Giver" },
-    [10] = { Mon = "Monkey", LevelQuest = 1, NameQuest = "JungleQuest", NameMon = "Monkey", CFrameQuest = CFrame.new(-1603.5, 36.85, 155.5), CFrameMon = CFrame.new(-1450.0, 50.0, 65.0) },
-    [15] = { Mon = "Gorilla", LevelQuest = 2, NameQuest = "JungleQuest", NameMon = "Gorilla", CFrameQuest = CFrame.new(-1603.5, 36.85, 155.5), CFrameMon = CFrame.new(-1145.0, 40.0, -515.0) },
-    [30] = { Mon = "Pirate", LevelQuest = 1, NameQuest = "BuggyQuest1", NameMon = "Pirate", CFrameQuest = CFrame.new(-1140.0, 4.5, 3827.0), CFrameMon = CFrame.new(-1200.0, 40.0, 3857.0) },
-    [40] = { Mon = "Brute", LevelQuest = 2, NameQuest = "BuggyQuest1", NameMon = "Brute", CFrameQuest = CFrame.new(-1140.0, 4.5, 3827.0), CFrameMon = CFrame.new(-1385.0, 24.0, 4100.0) },
-    [60] = { Mon = "Desert Bandit", LevelQuest = 1, NameQuest = "DesertQuest", NameMon = "Desert Bandit", CFrameQuest = CFrame.new(896.0, 6.4, 4390.0), CFrameMon = CFrame.new(985.0, 16.0, 4418.0) },
-    [75] = { Mon = "Desert Officer", LevelQuest = 2, NameQuest = "DesertQuest", NameMon = "Desert Officer", CFrameQuest = CFrame.new(896.0, 6.4, 4390.0), CFrameMon = CFrame.new(1547.0, 14.0, 4382.0) },
-    [90] = { Mon = "Snow Bandit", LevelQuest = 1, NameQuest = "SnowQuest", NameMon = "Snow Bandit", CFrameQuest = CFrame.new(1386.0, 87.0, -1298.0), CFrameMon = CFrame.new(1358.0, 105.0, -1328.0) },
-    [100] = { Mon = "Snowman", LevelQuest = 2, NameQuest = "SnowQuest", NameMon = "Snowman", CFrameQuest = CFrame.new(1386.0, 87.0, -1298.0), CFrameMon = CFrame.new(1220.0, 138.0, -1488.0) },
-    [120] = { Mon = "Chief Petty Officer", LevelQuest = 1, NameQuest = "MarineQuest2", NameMon = "Chief Petty Officer", CFrameQuest = CFrame.new(-5035.0, 28.5, 4324.0), CFrameMon = CFrame.new(-4932.0, 65.0, 4122.0) },
-    [150] = { Mon = "Sky Bandit", LevelQuest = 1, NameQuest = "SkyQuest", NameMon = "Sky Bandit", CFrameQuest = CFrame.new(-4842.0, 717.5, -2623.0), CFrameMon = CFrame.new(-4955.0, 365.0, -2908.0) },
-    [175] = { Mon = "Dark Master", LevelQuest = 2, NameQuest = "SkyQuest", NameMon = "Dark Master", CFrameQuest = CFrame.new(-4842.0, 717.5, -2623.0), CFrameMon = CFrame.new(-5148.0, 439.0, -2332.0) },
-    [190] = { Mon = "Prisoner", LevelQuest = 1, NameQuest = "PrisonerQuest", NameMon = "Prisoner", CFrameQuest = CFrame.new(5310.5, 0.3, 475.0), CFrameMon = CFrame.new(4937.0, 0.3, 649.5) },
-    [210] = { Mon = "Dangerous Prisoner", LevelQuest = 2, NameQuest = "PrisonerQuest", NameMon = "Dangerous Prisoner", CFrameQuest = CFrame.new(5310.5, 0.3, 475.0), CFrameMon = CFrame.new(5100.0, 0.3, 1055.5) },
-    [250] = { Mon = "Toga Warrior", LevelQuest = 1, NameQuest = "ColosseumQuest", NameMon = "Toga Warrior", CFrameQuest = CFrame.new(-1578.0, 7.4, -2984.0), CFrameMon = CFrame.new(-1872.0, 49.0, -2913.0) },
-    [275] = { Mon = "Gladiator", LevelQuest = 2, NameQuest = "ColosseumQuest", NameMon = "Gladiator", CFrameQuest = CFrame.new(-1578.0, 7.4, -2984.0), CFrameMon = CFrame.new(-1521.0, 81.0, -3066.0) },
-    [300] = { Mon = "Military Soldier", LevelQuest = 1, NameQuest = "MagmaQuest", NameMon = "Military Soldier", CFrameQuest = CFrame.new(-5316.0, 12.0, 8517.0), CFrameMon = CFrame.new(-5369.0, 61.0, 8556.0) },
-    [325] = { Mon = "Military Spy", LevelQuest = 2, NameQuest = "MagmaQuest", NameMon = "Military Spy", CFrameQuest = CFrame.new(-5316.0, 12.0, 8517.0), CFrameMon = CFrame.new(-5787.0, 75.0, 8651.5) },
-    [375] = { Mon = "Fishman Warrior", LevelQuest = 1, NameQuest = "FishmanQuest", NameMon = "Fishman Warrior", CFrameQuest = CFrame.new(61122.0, 18.0, 1569.0), CFrameMon = CFrame.new(60844.0, 98.0, 1298.0) },
-    [400] = { Mon = "Fishman Commando", LevelQuest = 2, NameQuest = "FishmanQuest", NameMon = "Fishman Commando", CFrameQuest = CFrame.new(61122.0, 18.0, 1569.0), CFrameMon = CFrame.new(61738.0, 64.0, 1433.5) },
-    [450] = { Mon = "God's Guard", LevelQuest = 1, NameQuest = "SkyExp1Quest", NameMon = "God's Guard", CFrameQuest = CFrame.new(-4722.0, 845.0, -1954.0), CFrameMon = CFrame.new(-4628.0, 866.0, -1931.0) },
-    [475] = { Mon = "Shanda", LevelQuest = 2, NameQuest = "SkyExp1Quest", NameMon = "Shanda", CFrameQuest = CFrame.new(-7863.0, 5545.0, -378.0), CFrameMon = CFrame.new(-7685.0, 5601.0, -441.0) },
-    [525] = { Mon = "Royal Squad", LevelQuest = 1, NameQuest = "SkyExp2Quest", NameMon = "Royal Squad", CFrameQuest = CFrame.new(-7903.0, 5636.0, -1411.0), CFrameMon = CFrame.new(-7654.0, 5637.0, -1407.5) },
-    [550] = { Mon = "Royal Soldier", LevelQuest = 2, NameQuest = "SkyExp2Quest", NameMon = "Royal Soldier", CFrameQuest = CFrame.new(-7903.0, 5636.0, -1411.0), CFrameMon = CFrame.new(-7760.0, 5680.0, -1884.0) },
-    [625] = { Mon = "Galley Pirate", LevelQuest = 1, NameQuest = "FountainQuest", NameMon = "Galley Pirate", CFrameQuest = CFrame.new(5258.0, 38.5, 4050.0), CFrameMon = CFrame.new(5557.0, 152.0, 3998.5) },
-    [650] = { Mon = "Galley Captain", LevelQuest = 2, NameQuest = "FountainQuest", NameMon = "Galley Captain", CFrameQuest = CFrame.new(5258.0, 38.5, 4050.0), CFrameMon = CFrame.new(5677.5, 92.0, 4966.0) }
+    [1] = { Mon = "Bandit", LevelQuest = 1, NameQuest = "BanditQuest1", NameMon = "Bandit", CFrameQuest = cf(1059.75, 15.95, 1550.75), CFrameMon = cf(1040.5, 40.25, 1575.5), NPCName = "Bandit Quest Giver" },
+    [10] = { Mon = "Monkey", LevelQuest = 1, NameQuest = "JungleQuest", NameMon = "Monkey", CFrameQuest = cf(-1603.5, 36.85, 155.5), CFrameMon = cf(-1450.0, 50.0, 65.0) },
+    [15] = { Mon = "Gorilla", LevelQuest = 2, NameQuest = "JungleQuest", NameMon = "Gorilla", CFrameQuest = cf(-1603.5, 36.85, 155.5), CFrameMon = cf(-1145.0, 40.0, -515.0) },
+    [30] = { Mon = "Pirate", LevelQuest = 1, NameQuest = "BuggyQuest1", NameMon = "Pirate", CFrameQuest = cf(-1140.0, 4.5, 3827.0), CFrameMon = cf(-1200.0, 40.0, 3857.0) },
+    [40] = { Mon = "Brute", LevelQuest = 2, NameQuest = "BuggyQuest1", NameMon = "Brute", CFrameQuest = cf(-1140.0, 4.5, 3827.0), CFrameMon = cf(-1385.0, 24.0, 4100.0) },
+    [60] = { Mon = "Desert Bandit", LevelQuest = 1, NameQuest = "DesertQuest", NameMon = "Desert Bandit", CFrameQuest = cf(896.0, 6.4, 4390.0), CFrameMon = cf(985.0, 16.0, 4418.0) },
+    [75] = { Mon = "Desert Officer", LevelQuest = 2, NameQuest = "DesertQuest", NameMon = "Desert Officer", CFrameQuest = cf(896.0, 6.4, 4390.0), CFrameMon = cf(1547.0, 14.0, 4382.0) },
+    [90] = { Mon = "Snow Bandit", LevelQuest = 1, NameQuest = "SnowQuest", NameMon = "Snow Bandit", CFrameQuest = cf(1386.0, 87.0, -1298.0), CFrameMon = cf(1358.0, 105.0, -1328.0) },
+    [100] = { Mon = "Snowman", LevelQuest = 2, NameQuest = "SnowQuest", NameMon = "Snowman", CFrameQuest = cf(1386.0, 87.0, -1298.0), CFrameMon = cf(1220.0, 138.0, -1488.0) },
+    [120] = { Mon = "Chief Petty Officer", LevelQuest = 1, NameQuest = "MarineQuest2", NameMon = "Chief Petty Officer", CFrameQuest = cf(-5035.0, 28.5, 4324.0), CFrameMon = cf(-4932.0, 65.0, 4122.0) },
+    [150] = { Mon = "Sky Bandit", LevelQuest = 1, NameQuest = "SkyQuest", NameMon = "Sky Bandit", CFrameQuest = cf(-4842.0, 717.5, -2623.0), CFrameMon = cf(-4955.0, 365.0, -2908.0) },
+    [175] = { Mon = "Dark Master", LevelQuest = 2, NameQuest = "SkyQuest", NameMon = "Dark Master", CFrameQuest = cf(-4842.0, 717.5, -2623.0), CFrameMon = cf(-5148.0, 439.0, -2332.0) },
+    [190] = { Mon = "Prisoner", LevelQuest = 1, NameQuest = "PrisonerQuest", NameMon = "Prisoner", CFrameQuest = cf(5310.5, 0.3, 475.0), CFrameMon = cf(4937.0, 0.3, 649.5) },
+    [210] = { Mon = "Dangerous Prisoner", LevelQuest = 2, NameQuest = "PrisonerQuest", NameMon = "Dangerous Prisoner", CFrameQuest = cf(5310.5, 0.3, 475.0), CFrameMon = cf(5100.0, 0.3, 1055.5) },
+    [250] = { Mon = "Toga Warrior", LevelQuest = 1, NameQuest = "ColosseumQuest", NameMon = "Toga Warrior", CFrameQuest = cf(-1578.0, 7.4, -2984.0), CFrameMon = cf(-1872.0, 49.0, -2913.0) },
+    [275] = { Mon = "Gladiator", LevelQuest = 2, NameQuest = "ColosseumQuest", NameMon = "Gladiator", CFrameQuest = cf(-1578.0, 7.4, -2984.0), CFrameMon = cf(-1521.0, 81.0, -3066.0) },
+    [300] = { Mon = "Military Soldier", LevelQuest = 1, NameQuest = "MagmaQuest", NameMon = "Military Soldier", CFrameQuest = cf(-5316.0, 12.0, 8517.0), CFrameMon = cf(-5369.0, 61.0, 8556.0) },
+    [325] = { Mon = "Military Spy", LevelQuest = 2, NameQuest = "MagmaQuest", NameMon = "Military Spy", CFrameQuest = cf(-5316.0, 12.0, 8517.0), CFrameMon = cf(-5787.0, 75.0, 8651.5) },
+    [375] = { Mon = "Fishman Warrior", LevelQuest = 1, NameQuest = "FishmanQuest", NameMon = "Fishman Warrior", CFrameQuest = cf(61122.0, 18.0, 1569.0), CFrameMon = cf(60844.0, 98.0, 1298.0) },
+    [400] = { Mon = "Fishman Commando", LevelQuest = 2, NameQuest = "FishmanQuest", NameMon = "Fishman Commando", CFrameQuest = cf(61122.0, 18.0, 1569.0), CFrameMon = cf(61738.0, 64.0, 1433.5) },
+    [450] = { Mon = "God's Guard", LevelQuest = 1, NameQuest = "SkyExp1Quest", NameMon = "God's Guard", CFrameQuest = cf(-4722.0, 845.0, -1954.0), CFrameMon = cf(-4628.0, 866.0, -1931.0) },
+    [475] = { Mon = "Shanda", LevelQuest = 2, NameQuest = "SkyExp1Quest", NameMon = "Shanda", CFrameQuest = cf(-7863.0, 5545.0, -378.0), CFrameMon = cf(-7685.0, 5601.0, -441.0) },
+    [525] = { Mon = "Royal Squad", LevelQuest = 1, NameQuest = "SkyExp2Quest", NameMon = "Royal Squad", CFrameQuest = cf(-7903.0, 5636.0, -1411.0), CFrameMon = cf(-7654.0, 5637.0, -1407.5) },
+    [550] = { Mon = "Royal Soldier", LevelQuest = 2, NameQuest = "SkyExp2Quest", NameMon = "Royal Soldier", CFrameQuest = cf(-7903.0, 5636.0, -1411.0), CFrameMon = cf(-7760.0, 5680.0, -1884.0) },
+    [625] = { Mon = "Galley Pirate", LevelQuest = 1, NameQuest = "FountainQuest", NameMon = "Galley Pirate", CFrameQuest = cf(5258.0, 38.5, 4050.0), CFrameMon = cf(5557.0, 152.0, 3998.5) },
+    [650] = { Mon = "Galley Captain", LevelQuest = 2, NameQuest = "FountainQuest", NameMon = "Galley Captain", CFrameQuest = cf(5258.0, 38.5, 4050.0), CFrameMon = cf(5677.5, 92.0, 4966.0) }
 }
 
 local Sea2Quests = {
-    [700] = { Mon = "Raider", LevelQuest = 1, NameQuest = "Area1Quest", NameMon = "Raider", CFrameQuest = CFrame.new(-428.0, 73.0, 1836.0), CFrameMon = CFrame.new(69.0, 93.5, 2430.0) },
-    [725] = { Mon = "Mercenary", LevelQuest = 2, NameQuest = "Area1Quest", NameMon = "Mercenary", CFrameQuest = CFrame.new(-428.0, 73.0, 1836.0), CFrameMon = CFrame.new(-865.0, 122.0, 1453.0) },
-    [775] = { Mon = "Swan Pirate", LevelQuest = 1, NameQuest = "Area2Quest", NameMon = "Swan Pirate", CFrameQuest = CFrame.new(635.5, 73.0, 918.0), CFrameMon = CFrame.new(1065.0, 137.5, 1324.0) },
-    [800] = { Mon = "Factory Staff", LevelQuest = 2, NameQuest = "Area2Quest", NameMon = "Factory Staff", CFrameQuest = CFrame.new(635.5, 73.0, 918.0), CFrameMon = CFrame.new(533.0, 128.0, 356.0) },
-    [875] = { Mon = "Marine Lieutenant", LevelQuest = 1, NameQuest = "MarineQuest3", NameMon = "Marine Lieutenant", CFrameQuest = CFrame.new(-2441.0, 73.0, -3218.0), CFrameMon = CFrame.new(-2489.0, 84.5, -3152.0) },
-    [900] = { Mon = "Marine Captain", LevelQuest = 2, NameQuest = "MarineQuest3", NameMon = "Marine Captain", CFrameQuest = CFrame.new(-2441.0, 73.0, -3218.0), CFrameMon = CFrame.new(-2335.0, 79.5, -3246.0) },
-    [950] = { Mon = "Zombie", LevelQuest = 1, NameQuest = "ZombieQuest", NameMon = "Zombie", CFrameQuest = CFrame.new(-5494.0, 48.5, -795.0), CFrameMon = CFrame.new(-5536.0, 101.0, -835.5) },
-    [975] = { Mon = "Vampire", LevelQuest = 2, NameQuest = "ZombieQuest", NameMon = "Vampire", CFrameQuest = CFrame.new(-5494.0, 48.5, -795.0), CFrameMon = CFrame.new(-5806.0, 16.5, -1164.0) },
-    [1000] = { Mon = "Snow Trooper", LevelQuest = 1, NameQuest = "SnowMountainQuest", NameMon = "Snow Trooper", CFrameQuest = CFrame.new(607.0, 401.0, -5370.5), CFrameMon = CFrame.new(535.0, 432.5, -5485.0) },
-    [1050] = { Mon = "Winter Warrior", LevelQuest = 2, NameQuest = "SnowMountainQuest", NameMon = "Winter Warrior", CFrameQuest = CFrame.new(607.0, 401.0, -5370.5), CFrameMon = CFrame.new(1234.0, 456.5, -5174.0) },
-    [1100] = { Mon = "Lab Subordinate", LevelQuest = 1, NameQuest = "IceSideQuest", NameMon = "Lab Subordinate", CFrameQuest = CFrame.new(-6062.0, 15.9, -4902.0), CFrameMon = CFrame.new(-5720.5, 63.0, -4784.5) },
-    [1125] = { Mon = "Horned Warrior", LevelQuest = 2, NameQuest = "IceSideQuest", NameMon = "Horned Warrior", CFrameQuest = CFrame.new(-6062.0, 15.9, -4902.0), CFrameMon = CFrame.new(-6292.5, 91.0, -5502.5) },
-    [1175] = { Mon = "Magma Ninja", LevelQuest = 1, NameQuest = "FireSideQuest", NameMon = "Magma Ninja", CFrameQuest = CFrame.new(-5429.0, 15.9, -5298.0), CFrameMon = CFrame.new(-5462.0, 130.0, -5836.0) },
-    [1200] = { Mon = "Lava Pirate", LevelQuest = 2, NameQuest = "FireSideQuest", NameMon = "Lava Pirate", CFrameQuest = CFrame.new(-5429.0, 15.9, -5298.0), CFrameMon = CFrame.new(-5251.0, 55.0, -4774.0) },
-    [1250] = { Mon = "Ship Deckhand", LevelQuest = 1, NameQuest = "ShipQuest1", NameMon = "Ship Deckhand", CFrameQuest = CFrame.new(1040.0, 125.0, 32911.0), CFrameMon = CFrame.new(921.0, 126.0, 33088.0) },
-    [1275] = { Mon = "Ship Engineer", LevelQuest = 2, NameQuest = "ShipQuest1", NameMon = "Ship Engineer", CFrameQuest = CFrame.new(1040.0, 125.0, 32911.0), CFrameMon = CFrame.new(886.0, 40.0, 32801.0) },
-    [1300] = { Mon = "Ship Steward", LevelQuest = 1, NameQuest = "ShipQuest2", NameMon = "Ship Steward", CFrameQuest = CFrame.new(971.0, 125.0, 33245.5), CFrameMon = CFrame.new(944.0, 129.5, 33444.0) },
-    [1325] = { Mon = "Ship Officer", LevelQuest = 2, NameQuest = "ShipQuest2", NameMon = "Ship Officer", CFrameQuest = CFrame.new(971.0, 125.0, 33245.5), CFrameMon = CFrame.new(955.0, 181.0, 33332.0) },
-    [1350] = { Mon = "Arctic Warrior", LevelQuest = 1, NameQuest = "FrostQuest", NameMon = "Arctic Warrior", CFrameQuest = CFrame.new(5668.0, 28.0, -6484.5), CFrameMon = CFrame.new(5935.0, 77.0, -6472.5) },
-    [1375] = { Mon = "Snow Lurker", LevelQuest = 2, NameQuest = "FrostQuest", NameMon = "Snow Lurker", CFrameQuest = CFrame.new(5668.0, 28.0, -6484.5), CFrameMon = CFrame.new(5628.0, 57.5, -6618.0) },
-    [1425] = { Mon = "Sea Soldier", LevelQuest = 1, NameQuest = "ForgottenQuest", NameMon = "Sea Soldier", CFrameQuest = CFrame.new(-3054.5, 237.0, -10148.0), CFrameMon = CFrame.new(-3185.0, 58.5, -9663.5) },
-    [1450] = { Mon = "Water Fighter", LevelQuest = 2, NameQuest = "ForgottenQuest", NameMon = "Water Fighter", CFrameQuest = CFrame.new(-3054.5, 237.0, -10148.0), CFrameMon = CFrame.new(-3263.0, 298.5, -10552.5) }
+    [700] = { Mon = "Raider", LevelQuest = 1, NameQuest = "Area1Quest", NameMon = "Raider", CFrameQuest = cf(-428.0, 73.0, 1836.0), CFrameMon = cf(69.0, 93.5, 2430.0) },
+    [725] = { Mon = "Mercenary", LevelQuest = 2, NameQuest = "Area1Quest", NameMon = "Mercenary", CFrameQuest = cf(-428.0, 73.0, 1836.0), CFrameMon = cf(-865.0, 122.0, 1453.0) },
+    [775] = { Mon = "Swan Pirate", LevelQuest = 1, NameQuest = "Area2Quest", NameMon = "Swan Pirate", CFrameQuest = cf(635.5, 73.0, 918.0), CFrameMon = cf(1065.0, 137.5, 1324.0) },
+    [800] = { Mon = "Factory Staff", LevelQuest = 2, NameQuest = "Area2Quest", NameMon = "Factory Staff", CFrameQuest = cf(635.5, 73.0, 918.0), CFrameMon = cf(533.0, 128.0, 356.0) },
+    [875] = { Mon = "Marine Lieutenant", LevelQuest = 1, NameQuest = "MarineQuest3", NameMon = "Marine Lieutenant", CFrameQuest = cf(-2441.0, 73.0, -3218.0), CFrameMon = cf(-2489.0, 84.5, -3152.0) },
+    [900] = { Mon = "Marine Captain", LevelQuest = 2, NameQuest = "MarineQuest3", NameMon = "Marine Captain", CFrameQuest = cf(-2441.0, 73.0, -3218.0), CFrameMon = cf(-2335.0, 79.5, -3246.0) },
+    [950] = { Mon = "Zombie", LevelQuest = 1, NameQuest = "ZombieQuest", NameMon = "Zombie", CFrameQuest = cf(-5494.0, 48.5, -795.0), CFrameMon = cf(-5536.0, 101.0, -835.5) },
+    [975] = { Mon = "Vampire", LevelQuest = 2, NameQuest = "ZombieQuest", NameMon = "Vampire", CFrameQuest = cf(-5494.0, 48.5, -795.0), CFrameMon = cf(-5806.0, 16.5, -1164.0) },
+    [1000] = { Mon = "Snow Trooper", LevelQuest = 1, NameQuest = "SnowMountainQuest", NameMon = "Snow Trooper", CFrameQuest = cf(607.0, 401.0, -5370.5), CFrameMon = cf(535.0, 432.5, -5485.0) },
+    [1050] = { Mon = "Winter Warrior", LevelQuest = 2, NameQuest = "SnowMountainQuest", NameMon = "Winter Warrior", CFrameQuest = cf(607.0, 401.0, -5370.5), CFrameMon = cf(1234.0, 456.5, -5174.0) },
+    [1100] = { Mon = "Lab Subordinate", LevelQuest = 1, NameQuest = "IceSideQuest", NameMon = "Lab Subordinate", CFrameQuest = cf(-6062.0, 15.9, -4902.0), CFrameMon = cf(-5720.5, 63.0, -4784.5) },
+    [1125] = { Mon = "Horned Warrior", LevelQuest = 2, NameQuest = "IceSideQuest", NameMon = "Horned Warrior", CFrameQuest = cf(-6062.0, 15.9, -4902.0), CFrameMon = cf(-6292.5, 91.0, -5502.5) },
+    [1175] = { Mon = "Magma Ninja", LevelQuest = 1, NameQuest = "FireSideQuest", NameMon = "Magma Ninja", CFrameQuest = cf(-5429.0, 15.9, -5298.0), CFrameMon = cf(-5462.0, 130.0, -5836.0) },
+    [1200] = { Mon = "Lava Pirate", LevelQuest = 2, NameQuest = "FireSideQuest", NameMon = "Lava Pirate", CFrameQuest = cf(-5429.0, 15.9, -5298.0), CFrameMon = cf(-5251.0, 55.0, -4774.0) },
+    [1250] = { Mon = "Ship Deckhand", LevelQuest = 1, NameQuest = "ShipQuest1", NameMon = "Ship Deckhand", CFrameQuest = cf(1040.0, 125.0, 32911.0), CFrameMon = cf(921.0, 126.0, 33088.0) },
+    [1275] = { Mon = "Ship Engineer", LevelQuest = 2, NameQuest = "ShipQuest1", NameMon = "Ship Engineer", CFrameQuest = cf(1040.0, 125.0, 32911.0), CFrameMon = cf(886.0, 40.0, 32801.0) },
+    [1300] = { Mon = "Ship Steward", LevelQuest = 1, NameQuest = "ShipQuest2", NameMon = "Ship Steward", CFrameQuest = cf(971.0, 125.0, 33245.5), CFrameMon = cf(944.0, 129.5, 33444.0) },
+    [1325] = { Mon = "Ship Officer", LevelQuest = 2, NameQuest = "ShipQuest2", NameMon = "Ship Officer", CFrameQuest = cf(971.0, 125.0, 33245.5), CFrameMon = cf(955.0, 181.0, 33332.0) },
+    [1350] = { Mon = "Arctic Warrior", LevelQuest = 1, NameQuest = "FrostQuest", NameMon = "Arctic Warrior", CFrameQuest = cf(5668.0, 28.0, -6484.5), CFrameMon = cf(5935.0, 77.0, -6472.5) },
+    [1375] = { Mon = "Snow Lurker", LevelQuest = 2, NameQuest = "FrostQuest", NameMon = "Snow Lurker", CFrameQuest = cf(5668.0, 28.0, -6484.5), CFrameMon = cf(5628.0, 57.5, -6618.0) },
+    [1425] = { Mon = "Sea Soldier", LevelQuest = 1, NameQuest = "ForgottenQuest", NameMon = "Sea Soldier", CFrameQuest = cf(-3054.5, 237.0, -10148.0), CFrameMon = cf(-3185.0, 58.5, -9663.5) },
+    [1450] = { Mon = "Water Fighter", LevelQuest = 2, NameQuest = "ForgottenQuest", NameMon = "Water Fighter", CFrameQuest = cf(-3054.5, 237.0, -10148.0), CFrameMon = cf(-3263.0, 298.5, -10552.5) }
 }
 
 local Sea3Quests = {
-    [1500] = { Mon = "Pirate Millionaire", LevelQuest = 1, NameQuest = "PiratePortQuest", NameMon = "Pirate Millionaire", CFrameQuest = CFrame.new(-290.0, 43.8, 5580.0), CFrameMon = CFrame.new(-435.5, 189.5, 5551.0) },
-    [1525] = { Mon = "Pistol Billionaire", LevelQuest = 2, NameQuest = "PiratePortQuest", NameMon = "Pistol Billionaire", CFrameQuest = CFrame.new(-290.0, 43.8, 5580.0), CFrameMon = CFrame.new(-236.5, 217.0, 6006.0) },
-    [1575] = { Mon = "Dragon Crew Warrior", LevelQuest = 1, NameQuest = "AmazonQuest", NameMon = "Dragon Crew Warrior", CFrameQuest = CFrame.new(5833.0, 51.5, -1103.0), CFrameMon = CFrame.new(6302.0, 104.5, -1082.5) },
-    [1600] = { Mon = "Dragon Crew Archer", LevelQuest = 2, NameQuest = "AmazonQuest", NameMon = "Dragon Crew Archer", CFrameQuest = CFrame.new(5833.0, 51.5, -1103.0), CFrameMon = CFrame.new(6831.0, 441.5, 446.5) },
-    [1625] = { Mon = "Female Islander", LevelQuest = 1, NameQuest = "AmazonQuest2", NameMon = "Female Islander", CFrameQuest = CFrame.new(5447.0, 601.5, 749.0), CFrameMon = CFrame.new(5792.5, 848.0, 1084.0) },
-    [1650] = { Mon = "Giant Islander", LevelQuest = 2, NameQuest = "AmazonQuest2", NameMon = "Giant Islander", CFrameQuest = CFrame.new(5447.0, 601.5, 749.0), CFrameMon = CFrame.new(5010.0, 664.0, -41.0) },
-    [1700] = { Mon = "Marine Commodore", LevelQuest = 1, NameQuest = "MarineTreeIsland", NameMon = "Marine Commodore", CFrameQuest = CFrame.new(2180.0, 28.7, -6740.0), CFrameMon = CFrame.new(2198.0, 128.5, -7109.0) },
-    [1725] = { Mon = "Marine Rear Admiral", LevelQuest = 2, NameQuest = "MarineTreeIsland", NameMon = "Marine Rear Admiral", CFrameQuest = CFrame.new(2180.0, 28.7, -6740.0), CFrameMon = CFrame.new(3294.0, 385.0, -7048.5) },
-    [1775] = { Mon = "Fishman Raider", LevelQuest = 1, NameQuest = "DeepForestIsland3", NameMon = "Fishman Raider", CFrameQuest = CFrame.new(-10583.0, 331.5, -8758.0), CFrameMon = CFrame.new(-10553.0, 521.0, -8177.0) },
-    [1800] = { Mon = "Fishman Captain", LevelQuest = 2, NameQuest = "DeepForestIsland3", NameMon = "Fishman Captain", CFrameQuest = CFrame.new(-10583.0, 331.5, -8758.0), CFrameMon = CFrame.new(-10789.0, 427.0, -9131.0) },
-    [1825] = { Mon = "Forest Pirate", LevelQuest = 1, NameQuest = "DeepForestIsland", NameMon = "Forest Pirate", CFrameQuest = CFrame.new(-13233.0, 332.0, -7626.5), CFrameMon = CFrame.new(-13489.0, 400.0, -7770.0) },
-    [1850] = { Mon = "Mythological Pirate", LevelQuest = 2, NameQuest = "DeepForestIsland", NameMon = "Mythological Pirate", CFrameQuest = CFrame.new(-13233.0, 332.0, -7626.5), CFrameMon = CFrame.new(-13508.5, 582.0, -6985.0) },
-    [1900] = { Mon = "Jungle Pirate", LevelQuest = 1, NameQuest = "DeepForestIsland2", NameMon = "Jungle Pirate", CFrameQuest = CFrame.new(-12682.0, 390.5, -9902.0), CFrameMon = CFrame.new(-12267.0, 459.5, -10277.0) },
-    [1925] = { Mon = "Musketeer Pirate", LevelQuest = 2, NameQuest = "DeepForestIsland2", NameMon = "Musketeer Pirate", CFrameQuest = CFrame.new(-12682.0, 390.5, -9902.0), CFrameMon = CFrame.new(-13291.5, 520.0, -9904.5) },
-    [1975] = { Mon = "Reborn Skeleton", LevelQuest = 1, NameQuest = "HauntedQuest1", NameMon = "Reborn Skeleton", CFrameQuest = CFrame.new(-9481.0, 142.0, 5566.0), CFrameMon = CFrame.new(-8762.0, 183.0, 6168.0) },
-    [2000] = { Mon = "Living Zombie", LevelQuest = 2, NameQuest = "HauntedQuest1", NameMon = "Living Zombie", CFrameQuest = CFrame.new(-9481.0, 142.0, 5566.0), CFrameMon = CFrame.new(-10104.0, 238.5, 6180.0) },
-    [2025] = { Mon = "Demonic Soul", LevelQuest = 1, NameQuest = "HauntedQuest2", NameMon = "Demonic Soul", CFrameQuest = CFrame.new(-9517.0, 178.0, 6078.0), CFrameMon = CFrame.new(-9712.0, 204.5, 6193.0) },
-    [2050] = { Mon = "Posessed Mummy", LevelQuest = 2, NameQuest = "HauntedQuest2", NameMon = "Posessed Mummy", CFrameQuest = CFrame.new(-9517.0, 178.0, 6078.0), CFrameMon = CFrame.new(-9545.5, 69.5, 6339.5) },
-    [2075] = { Mon = "Peanut Scout", LevelQuest = 1, NameQuest = "NutsIslandQuest", NameMon = "Peanut Scout", CFrameQuest = CFrame.new(-2105.5, 37.2, -10195.5), CFrameMon = CFrame.new(-2150.5, 122.0, -10359.0) },
-    [2100] = { Mon = "Peanut President", LevelQuest = 2, NameQuest = "NutsIslandQuest", NameMon = "Peanut President", CFrameQuest = CFrame.new(-2105.5, 37.2, -10195.5), CFrameMon = CFrame.new(-2150.5, 122.0, -10359.0) },
-    [2125] = { Mon = "Ice Cream Chef", LevelQuest = 1, NameQuest = "IceCreamIslandQuest", NameMon = "Ice Cream Chef", CFrameQuest = CFrame.new(-819.3, 64.9, -10967.0), CFrameMon = CFrame.new(-790.0, 209.0, -11010.0) },
-    [2150] = { Mon = "Ice Cream Commander", LevelQuest = 2, NameQuest = "IceCreamIslandQuest", NameMon = "Ice Cream Commander", CFrameQuest = CFrame.new(-819.3, 64.9, -10967.0), CFrameMon = CFrame.new(-790.0, 209.0, -11010.0) },
-    [2200] = { Mon = "Cookie Crafter", LevelQuest = 1, NameQuest = "CakeQuest1", NameMon = "Cookie Crafter", CFrameQuest = CFrame.new(-2022.0, 36.9, -12031.0), CFrameMon = CFrame.new(-2322.0, 36.5, -12217.0) },
-    [2225] = { Mon = "Cake Guard", LevelQuest = 2, NameQuest = "CakeQuest1", NameMon = "Cake Guard", CFrameQuest = CFrame.new(-2022.0, 36.9, -12031.0), CFrameMon = CFrame.new(-1418.0, 36.5, -12255.5) },
-    [2250] = { Mon = "Baking Staff", LevelQuest = 1, NameQuest = "CakeQuest2", NameMon = "Baking Staff", CFrameQuest = CFrame.new(-1928.0, 37.7, -12840.5), CFrameMon = CFrame.new(-1980.0, 36.5, -12984.0) },
-    [2275] = { Mon = "Head Baker", LevelQuest = 2, NameQuest = "CakeQuest2", NameMon = "Head Baker", CFrameQuest = CFrame.new(-1928.0, 37.7, -12840.5), CFrameMon = CFrame.new(-2251.5, 52.0, -13033.0) },
-    [2300] = { Mon = "Cocoa Warrior", LevelQuest = 1, NameQuest = "ChocQuest1", NameMon = "Cocoa Warrior", CFrameQuest = CFrame.new(231.7, 23.9, -12200.0), CFrameMon = CFrame.new(168.0, 26.0, -12239.0) },
-    [2325] = { Mon = "Chocolate Bar Battler", LevelQuest = 2, NameQuest = "ChocQuest1", NameMon = "Chocolate Bar Battler", CFrameQuest = CFrame.new(231.7, 23.9, -12200.0), CFrameMon = CFrame.new(701.0, 25.5, -12708.0) },
-    [2350] = { Mon = "Sweet Thief", LevelQuest = 1, NameQuest = "ChocQuest2", NameMon = "Sweet Thief", CFrameQuest = CFrame.new(151.2, 23.9, -12774.5), CFrameMon = CFrame.new(-140.2, 25.5, -12652.0) },
-    [2375] = { Mon = "Candy Rebel", LevelQuest = 2, NameQuest = "ChocQuest2", NameMon = "Candy Rebel", CFrameQuest = CFrame.new(151.2, 23.9, -12774.5), CFrameMon = CFrame.new(48.0, 25.5, -13029.0) },
-    [2400] = { Mon = "Candy Pirate", LevelQuest = 1, NameQuest = "CandyQuest1", NameMon = "Candy Pirate", CFrameQuest = CFrame.new(-1149.3, 13.5, -14445.5), CFrameMon = CFrame.new(-1437.5, 17.1, -14385.5) },
-    [2425] = { Mon = "Snow Demon", LevelQuest = 2, NameQuest = "CandyQuest1", NameMon = "Snow Demon", CFrameQuest = CFrame.new(-1149.3, 13.5, -14445.5), CFrameMon = CFrame.new(-916.0, 17.1, -14639.0) },
-    [2450] = { Mon = "Isle Outlaw", LevelQuest = 1, NameQuest = "TikiQuest1", NameMon = "Isle Outlaw", CFrameQuest = CFrame.new(-16550.0, 55.5, -180.0), CFrameMon = CFrame.new(-16163.0, 11.5, -96.5) },
-    [2475] = { Mon = "Island Boy", LevelQuest = 2, NameQuest = "TikiQuest1", NameMon = "Island Boy", CFrameQuest = CFrame.new(-16550.0, 55.5, -180.0), CFrameMon = CFrame.new(-16357.0, 20.5, 1005.5) },
-    [2500] = { Mon = "Sun-kissed Warrior", LevelQuest = 1, NameQuest = "TikiQuest2", NameMon = "Sun-kissed Warrior", CFrameQuest = CFrame.new(-16541.0, 54.7, 1051.5), CFrameMon = CFrame.new(-16357.0, 20.5, 1005.5) },
-    [2525] = { Mon = "Isle Champion", LevelQuest = 2, NameQuest = "TikiQuest2", NameMon = "Isle Champion", CFrameQuest = CFrame.new(-16541.0, 54.7, 1051.5), CFrameMon = CFrame.new(-16849.0, 21.5, 1041.0) },
-    [2550] = { Mon = "Serpent Hunter", LevelQuest = 1, NameQuest = "TikiQuest3", NameMon = "Serpent Hunter", CFrameQuest = CFrame.new(-16665.0, 104.5, 1580.0), CFrameMon = CFrame.new(-16621.0, 121.0, 1290.5) },
-    [2575] = { Mon = "Skull Slayer", LevelQuest = 2, NameQuest = "TikiQuest3", NameMon = "Skull Slayer", CFrameQuest = CFrame.new(-16665.0, 104.5, 1580.0), CFrameMon = CFrame.new(-16811.5, 84.5, 1542.0) },
-    [2600] = { Mon = "Skull Slayer", LevelQuest = 2, NameQuest = "TikiQuest3", NameMon = "Skull Slayer", CFrameQuest = CFrame.new(-16665.0, 104.5, 1580.0), CFrameMon = CFrame.new(-16811.5, 84.5, 1542.0) }
+    [1500] = { Mon = "Pirate Millionaire", LevelQuest = 1, NameQuest = "PiratePortQuest", NameMon = "Pirate Millionaire", CFrameQuest = cf(-290.0, 43.8, 5580.0), CFrameMon = cf(-435.5, 189.5, 5551.0) },
+    [1525] = { Mon = "Pistol Billionaire", LevelQuest = 2, NameQuest = "PiratePortQuest", NameMon = "Pistol Billionaire", CFrameQuest = cf(-290.0, 43.8, 5580.0), CFrameMon = cf(-236.5, 217.0, 6006.0) },
+    [1575] = { Mon = "Dragon Crew Warrior", LevelQuest = 1, NameQuest = "AmazonQuest", NameMon = "Dragon Crew Warrior", CFrameQuest = cf(5833.0, 51.5, -1103.0), CFrameMon = cf(6302.0, 104.5, -1082.5) },
+    [1600] = { Mon = "Dragon Crew Archer", LevelQuest = 2, NameQuest = "AmazonQuest", NameMon = "Dragon Crew Archer", CFrameQuest = cf(5833.0, 51.5, -1103.0), CFrameMon = cf(6831.0, 441.5, 446.5) },
+    [1625] = { Mon = "Female Islander", LevelQuest = 1, NameQuest = "AmazonQuest2", NameMon = "Female Islander", CFrameQuest = cf(5447.0, 601.5, 749.0), CFrameMon = cf(5792.5, 848.0, 1084.0) },
+    [1650] = { Mon = "Giant Islander", LevelQuest = 2, NameQuest = "AmazonQuest2", NameMon = "Giant Islander", CFrameQuest = cf(5447.0, 601.5, 749.0), CFrameMon = cf(5010.0, 664.0, -41.0) },
+    [1700] = { Mon = "Marine Commodore", LevelQuest = 1, NameQuest = "MarineTreeIsland", NameMon = "Marine Commodore", CFrameQuest = cf(2180.0, 28.7, -6740.0), CFrameMon = cf(2198.0, 128.5, -7109.0) },
+    [1725] = { Mon = "Marine Rear Admiral", LevelQuest = 2, NameQuest = "MarineTreeIsland", NameMon = "Marine Rear Admiral", CFrameQuest = cf(2180.0, 28.7, -6740.0), CFrameMon = cf(3294.0, 385.0, -7048.5) },
+    [1775] = { Mon = "Fishman Raider", LevelQuest = 1, NameQuest = "DeepForestIsland3", NameMon = "Fishman Raider", CFrameQuest = cf(-10583.0, 331.5, -8758.0), CFrameMon = cf(-10553.0, 521.0, -8177.0) },
+    [1800] = { Mon = "Fishman Captain", LevelQuest = 2, NameQuest = "DeepForestIsland3", NameMon = "Fishman Captain", CFrameQuest = cf(-10583.0, 331.5, -8758.0), CFrameMon = cf(-10789.0, 427.0, -9131.0) },
+    [1825] = { Mon = "Forest Pirate", LevelQuest = 1, NameQuest = "DeepForestIsland", NameMon = "Forest Pirate", CFrameQuest = cf(-13233.0, 332.0, -7626.5), CFrameMon = cf(-13489.0, 400.0, -7770.0) },
+    [1850] = { Mon = "Mythological Pirate", LevelQuest = 2, NameQuest = "DeepForestIsland", NameMon = "Mythological Pirate", CFrameQuest = cf(-13233.0, 332.0, -7626.5), CFrameMon = cf(-13508.5, 582.0, -6985.0) },
+    [1900] = { Mon = "Jungle Pirate", LevelQuest = 1, NameQuest = "DeepForestIsland2", NameMon = "Jungle Pirate", CFrameQuest = cf(-12682.0, 390.5, -9902.0), CFrameMon = cf(-12267.0, 459.5, -10277.0) },
+    [1925] = { Mon = "Musketeer Pirate", LevelQuest = 2, NameQuest = "DeepForestIsland2", NameMon = "Musketeer Pirate", CFrameQuest = cf(-12682.0, 390.5, -9902.0), CFrameMon = cf(-13291.5, 520.0, -9904.5) },
+    [1975] = { Mon = "Reborn Skeleton", LevelQuest = 1, NameQuest = "HauntedQuest1", NameMon = "Reborn Skeleton", CFrameQuest = cf(-9481.0, 142.0, 5566.0), CFrameMon = cf(-8762.0, 183.0, 6168.0) },
+    [2000] = { Mon = "Living Zombie", LevelQuest = 2, NameQuest = "HauntedQuest1", NameMon = "Living Zombie", CFrameQuest = cf(-9481.0, 142.0, 5566.0), CFrameMon = cf(-10104.0, 238.5, 6180.0) },
+    [2025] = { Mon = "Demonic Soul", LevelQuest = 1, NameQuest = "HauntedQuest2", NameMon = "Demonic Soul", CFrameQuest = cf(-9517.0, 178.0, 6078.0), CFrameMon = cf(-9712.0, 204.5, 6193.0) },
+    [2050] = { Mon = "Posessed Mummy", LevelQuest = 2, NameQuest = "HauntedQuest2", NameMon = "Posessed Mummy", CFrameQuest = cf(-9517.0, 178.0, 6078.0), CFrameMon = cf(-9545.5, 69.5, 6339.5) },
+    [2075] = { Mon = "Peanut Scout", LevelQuest = 1, NameQuest = "NutsIslandQuest", NameMon = "Peanut Scout", CFrameQuest = cf(-2105.5, 37.2, -10195.5), CFrameMon = cf(-2150.5, 122.0, -10359.0) },
+    [2100] = { Mon = "Peanut President", LevelQuest = 2, NameQuest = "NutsIslandQuest", NameMon = "Peanut President", CFrameQuest = cf(-2105.5, 37.2, -10195.5), CFrameMon = cf(-2150.5, 122.0, -10359.0) },
+    [2125] = { Mon = "Ice Cream Chef", LevelQuest = 1, NameQuest = "IceCreamIslandQuest", NameMon = "Ice Cream Chef", CFrameQuest = cf(-819.3, 64.9, -10967.0), CFrameMon = cf(-790.0, 209.0, -11010.0) },
+    [2150] = { Mon = "Ice Cream Commander", LevelQuest = 2, NameQuest = "IceCreamIslandQuest", NameMon = "Ice Cream Commander", CFrameQuest = cf(-819.3, 64.9, -10967.0), CFrameMon = cf(-790.0, 209.0, -11010.0) },
+    [2200] = { Mon = "Cookie Crafter", LevelQuest = 1, NameQuest = "CakeQuest1", NameMon = "Cookie Crafter", CFrameQuest = cf(-2022.0, 36.9, -12031.0), CFrameMon = cf(-2322.0, 36.5, -12217.0) },
+    [2225] = { Mon = "Cake Guard", LevelQuest = 2, NameQuest = "CakeQuest1", NameMon = "Cake Guard", CFrameQuest = cf(-2022.0, 36.9, -12031.0), CFrameMon = cf(-1418.0, 36.5, -12255.5) },
+    [2250] = { Mon = "Baking Staff", LevelQuest = 1, NameQuest = "CakeQuest2", NameMon = "Baking Staff", CFrameQuest = cf(-1928.0, 37.7, -12840.5), CFrameMon = cf(-1980.0, 36.5, -12984.0) },
+    [2275] = { Mon = "Head Baker", LevelQuest = 2, NameQuest = "CakeQuest2", NameMon = "Head Baker", CFrameQuest = cf(-1928.0, 37.7, -12840.5), CFrameMon = cf(-2251.5, 52.0, -13033.0) },
+    [2300] = { Mon = "Cocoa Warrior", LevelQuest = 1, NameQuest = "ChocQuest1", NameMon = "Cocoa Warrior", CFrameQuest = cf(231.7, 23.9, -12200.0), CFrameMon = cf(168.0, 26.0, -12239.0) },
+    [2325] = { Mon = "Chocolate Bar Battler", LevelQuest = 2, NameQuest = "ChocQuest1", NameMon = "Chocolate Bar Battler", CFrameQuest = cf(231.7, 23.9, -12200.0), CFrameMon = cf(701.0, 25.5, -12708.0) },
+    [2350] = { Mon = "Sweet Thief", LevelQuest = 1, NameQuest = "ChocQuest2", NameMon = "Sweet Thief", CFrameQuest = cf(151.2, 23.9, -12774.5), CFrameMon = cf(-140.2, 25.5, -12652.0) },
+    [2375] = { Mon = "Candy Rebel", LevelQuest = 2, NameQuest = "ChocQuest2", NameMon = "Candy Rebel", CFrameQuest = cf(151.2, 23.9, -12774.5), CFrameMon = cf(48.0, 25.5, -13029.0) },
+    [2400] = { Mon = "Candy Pirate", LevelQuest = 1, NameQuest = "CandyQuest1", NameMon = "Candy Pirate", CFrameQuest = cf(-1149.3, 13.5, -14445.5), CFrameMon = cf(-1437.5, 17.1, -14385.5) },
+    [2425] = { Mon = "Snow Demon", LevelQuest = 2, NameQuest = "CandyQuest1", NameMon = "Snow Demon", CFrameQuest = cf(-1149.3, 13.5, -14445.5), CFrameMon = cf(-916.0, 17.1, -14639.0) },
+    [2450] = { Mon = "Isle Outlaw", LevelQuest = 1, NameQuest = "TikiQuest1", NameMon = "Isle Outlaw", CFrameQuest = cf(-16550.0, 55.5, -180.0), CFrameMon = cf(-16163.0, 11.5, -96.5) },
+    [2475] = { Mon = "Island Boy", LevelQuest = 2, NameQuest = "TikiQuest1", NameMon = "Island Boy", CFrameQuest = cf(-16550.0, 55.5, -180.0), CFrameMon = cf(-16357.0, 20.5, 1005.5) },
+    [2500] = { Mon = "Sun-kissed Warrior", LevelQuest = 1, NameQuest = "TikiQuest2", NameMon = "Sun-kissed Warrior", CFrameQuest = cf(-16541.0, 54.7, 1051.5), CFrameMon = cf(-16357.0, 20.5, 1005.5) },
+    [2525] = { Mon = "Isle Champion", LevelQuest = 2, NameQuest = "TikiQuest2", NameMon = "Isle Champion", CFrameQuest = cf(-16541.0, 54.7, 1051.5), CFrameMon = cf(-16849.0, 21.5, 1041.0) },
+    [2550] = { Mon = "Serpent Hunter", LevelQuest = 1, NameQuest = "TikiQuest3", NameMon = "Serpent Hunter", CFrameQuest = cf(-16665.0, 104.5, 1580.0), CFrameMon = cf(-16621.0, 121.0, 1290.5) },
+    [2575] = { Mon = "Skull Slayer", LevelQuest = 2, NameQuest = "TikiQuest3", NameMon = "Skull Slayer", CFrameQuest = cf(-16665.0, 104.5, 1580.0), CFrameMon = cf(-16811.5, 84.5, 1542.0) },
+    [2600] = { Mon = "Skull Slayer", LevelQuest = 2, NameQuest = "TikiQuest3", NameMon = "Skull Slayer", CFrameQuest = cf(-16665.0, 104.5, 1580.0), CFrameMon = cf(-16811.5, 84.5, 1542.0) }
 }
 
 -- Unified quest resolver — merges Sea1/2/3Quests + Sea1/2/3QuestsExpanded into one lookup.
 -- Sets global Mon, LevelQuest, NameQuest, NameMon, CFrameQuest, CFrameMon.
 -- Returns the resolved entry so callers can also read NPCName, NPCCFrame, QuestName, etc.
-local function ResolveQuest()
+local function SelectLevelQuest()
     local Lv = client.Data.Level.Value
     local tables = {}
     if Sea1 then tables = {Sea1QuestsExpanded, Sea1Quests}
@@ -643,42 +653,42 @@ local function ResolveQuest()
     return entry
 end
 
-function CheckLevel()
-    ResolveQuest()
+function UpdateLevelData()
+    SelectLevelQuest()
 end
 
 local BossData = {
-    ["Saber Expert"] = { Level = 200, Location = "Jungle", Sea = 1, CFrame = CFrame.new(-1458.0, 29.0, -29.0), Drops = {"Saber", "Saber V2"}, HP = 25000, SpawnTime = 5, Fragments = 500 },
-    ["The Saw"] = { Level = 300, Location = "Desert", Sea = 1, CFrame = CFrame.new(2020.0, 22.0, 4836.0), Drops = {"Saw Cutlass"}, HP = 35000, SpawnTime = 5, Fragments = 750 },
-    ["Greybeard"] = { Level = 400, Location = "Snow Island", Sea = 1, CFrame = CFrame.new(1422.0, 20.0, -1685.0), Drops = {"Grey Beard Hat"}, HP = 45000, SpawnTime = 5, Fragments = 1000 },
-    ["Diamond"] = { Level = 500, Location = "Underwater City", Sea = 1, CFrame = CFrame.new(60764.0, 64.0, 1376.0), Drops = {"Diamond Mace"}, HP = 55000, SpawnTime = 5, Fragments = 1250 },
-    ["Jerome"] = { Level = 550, Location = "Sky Island 1", Sea = 1, CFrame = CFrame.new(-4260.0, 730.0, -2460.0), Drops = {"Jerome's Sword"}, HP = 60000, SpawnTime = 5, Fragments = 1500 },
-    ["Fajita"] = { Level = 650, Location = "Magma Village", Sea = 1, CFrame = CFrame.new(-5545.0, 22.0, 8810.0), Drops = {"Fajita Sword"}, HP = 70000, SpawnTime = 5, Fragments = 1750 },
-    ["Captain Elephant"] = { Level = 700, Location = "Fountain City", Sea = 1, CFrame = CFrame.new(5670.0, 28.0, 4600.0), Drops = {"Elephant Sword"}, HP = 80000, SpawnTime = 5, Fragments = 2000 },
-    ["Order"] = { Level = 800, Location = "Kingdom of Rose", Sea = 2, CFrame = CFrame.new(-3950.0, 15.0, -2100.0), Drops = {"Order Sword"}, HP = 90000, SpawnTime = 5, Fragments = 2250 },
-    ["Don Swan"] = { Level = 1000, Location = "Mansion", Sea = 2, CFrame = CFrame.new(85.0, 80.0, 12155.0), Drops = {"Don Swan's Sword", "Swan Cutlass"}, HP = 120000, SpawnTime = 5, Fragments = 3000 },
-    ["Dragon"] = { Level = 1200, Location = "Ice Castle", Sea = 2, CFrame = CFrame.new(7150.0, 26.0, -6780.0), Drops = {"Dragon Trident"}, HP = 150000, SpawnTime = 5, Fragments = 4000 },
-    ["Rip Indra"] = { Level = 1500, Location = "Hydra Island", Sea = 3, CFrame = CFrame.new(5300.0, 15.0, -1900.0), Drops = {"Dark Dagger", "Hallow Essence"}, HP = 175000, SpawnTime = 5, Fragments = 4500 },
-    ["Longma"] = { Level = 1500, Location = "Forgotten Island", Sea = 2, CFrame = CFrame.new(-2750.0, 250.0, -10350.0), Drops = {"Longma Sword"}, HP = 160000, SpawnTime = 5, Fragments = 3500 },
-    ["Hydra"] = { Level = 1600, Location = "Hydra Island", Sea = 3, CFrame = CFrame.new(5300.0, 12.0, -2200.0), Drops = {"Hydra Sword"}, HP = 180000, SpawnTime = 5, Fragments = 4000 },
-    ["Admiral"] = { Level = 1700, Location = "Marine Tree", Sea = 3, CFrame = CFrame.new(2200.0, 30.0, -6750.0), Drops = {"Admiral Sword"}, HP = 190000, SpawnTime = 5, Fragments = 4500 },
-    ["Mirage Boss"] = { Level = 1800, Location = "Mirage Island", Sea = 3, CFrame = CFrame.new(-11500.0, 20.0, -9500.0), Drops = {"Mirage Sword"}, HP = 220000, SpawnTime = 10, Fragments = 5000 },
-    ["Soul Reaper"] = { Level = 2200, Location = "Haunted Castle", Sea = 3, CFrame = CFrame.new(-9550.0, 68.0, 6100.0), Drops = {"Scythe"}, HP = 280000, SpawnTime = 5, Fragments = 7000 },
-    ["Ghost"] = { Level = 2100, Location = "Haunted Island", Sea = 3, CFrame = CFrame.new(-9700.0, 50.0, 6250.0), Drops = {"Ghost Sword"}, HP = 260000, SpawnTime = 5, Fragments = 6000 },
-    ["Coconut"] = { Level = 2200, Location = "Tiki Outpost", Sea = 3, CFrame = CFrame.new(-16550.0, 40.0, -200.0), Drops = {"Coconut Sword"}, HP = 275000, SpawnTime = 5, Fragments = 6500 },
-    ["Cake Queen"] = { Level = 2000, Location = "Cake Island", Sea = 3, CFrame = CFrame.new(-1600.0, 36.0, -12600.0), Drops = {"Cake Sword"}, HP = 200000, SpawnTime = 5, Fragments = 5000 },
-    ["Dough King"] = { Level = 2300, Location = "Sea of Treats", Sea = 3, CFrame = CFrame.new(300.0, 20.0, -14000.0), Drops = {"Dough Fist"}, HP = 300000, SpawnTime = 10, Fragments = 7500 },
-    ["Beautiful Pirate"] = { Level = 700, Location = "Fountain City", Sea = 1, CFrame = CFrame.new(5200.0, 30.0, 4400.0), Drops = {"Beautiful Pirate Sword"}, HP = 85000, SpawnTime = 5, Fragments = 2000 },
-    ["Ship Raid Boss"] = { Level = 1300, Location = "Sea", Sea = 2, CFrame = CFrame.new(1000.0, 120.0, 33000.0), Drops = {"Ship Sword"}, HP = 140000, SpawnTime = 5, Fragments = 3500 },
-    ["Bobby"] = { Level = 550, Location = "Colosseum", Sea = 1, CFrame = CFrame.new(-1575.0, 7.0, -2980.0), Drops = {"Bobby's Sword"}, HP = 65000, SpawnTime = 5, Fragments = 1500 },
-    ["Indra"] = { Level = 2000, Location = "Forgotten Island", Sea = 3, CFrame = CFrame.new(-3054.0, 237.0, -10148.0), Drops = {"True Triple Katana"}, HP = 250000, SpawnTime = 15, Fragments = 6000 }
+    ["Saber Expert"] = { Level = 200, Location = "Jungle", Sea = 1, CFrame = cf(-1458.0, 29.0, -29.0), Drops = {"Saber", "Saber V2"}, HP = 25000, SpawnTime = 5, Fragments = 500 },
+    ["The Saw"] = { Level = 300, Location = "Desert", Sea = 1, CFrame = cf(2020.0, 22.0, 4836.0), Drops = {"Saw Cutlass"}, HP = 35000, SpawnTime = 5, Fragments = 750 },
+    ["Greybeard"] = { Level = 400, Location = "Snow Island", Sea = 1, CFrame = cf(1422.0, 20.0, -1685.0), Drops = {"Grey Beard Hat"}, HP = 45000, SpawnTime = 5, Fragments = 1000 },
+    ["Diamond"] = { Level = 500, Location = "Underwater City", Sea = 1, CFrame = cf(60764.0, 64.0, 1376.0), Drops = {"Diamond Mace"}, HP = 55000, SpawnTime = 5, Fragments = 1250 },
+    ["Jerome"] = { Level = 550, Location = "Sky Island 1", Sea = 1, CFrame = cf(-4260.0, 730.0, -2460.0), Drops = {"Jerome's Sword"}, HP = 60000, SpawnTime = 5, Fragments = 1500 },
+    ["Fajita"] = { Level = 650, Location = "Magma Village", Sea = 1, CFrame = cf(-5545.0, 22.0, 8810.0), Drops = {"Fajita Sword"}, HP = 70000, SpawnTime = 5, Fragments = 1750 },
+    ["Captain Elephant"] = { Level = 700, Location = "Fountain City", Sea = 1, CFrame = cf(5670.0, 28.0, 4600.0), Drops = {"Elephant Sword"}, HP = 80000, SpawnTime = 5, Fragments = 2000 },
+    ["Order"] = { Level = 800, Location = "Kingdom of Rose", Sea = 2, CFrame = cf(-3950.0, 15.0, -2100.0), Drops = {"Order Sword"}, HP = 90000, SpawnTime = 5, Fragments = 2250 },
+    ["Don Swan"] = { Level = 1000, Location = "Mansion", Sea = 2, CFrame = cf(85.0, 80.0, 12155.0), Drops = {"Don Swan's Sword", "Swan Cutlass"}, HP = 120000, SpawnTime = 5, Fragments = 3000 },
+    ["Dragon"] = { Level = 1200, Location = "Ice Castle", Sea = 2, CFrame = cf(7150.0, 26.0, -6780.0), Drops = {"Dragon Trident"}, HP = 150000, SpawnTime = 5, Fragments = 4000 },
+    ["Rip Indra"] = { Level = 1500, Location = "Hydra Island", Sea = 3, CFrame = cf(5300.0, 15.0, -1900.0), Drops = {"Dark Dagger", "Hallow Essence"}, HP = 175000, SpawnTime = 5, Fragments = 4500 },
+    ["Longma"] = { Level = 1500, Location = "Forgotten Island", Sea = 2, CFrame = cf(-2750.0, 250.0, -10350.0), Drops = {"Longma Sword"}, HP = 160000, SpawnTime = 5, Fragments = 3500 },
+    ["Hydra"] = { Level = 1600, Location = "Hydra Island", Sea = 3, CFrame = cf(5300.0, 12.0, -2200.0), Drops = {"Hydra Sword"}, HP = 180000, SpawnTime = 5, Fragments = 4000 },
+    ["Admiral"] = { Level = 1700, Location = "Marine Tree", Sea = 3, CFrame = cf(2200.0, 30.0, -6750.0), Drops = {"Admiral Sword"}, HP = 190000, SpawnTime = 5, Fragments = 4500 },
+    ["Mirage Boss"] = { Level = 1800, Location = "Mirage Island", Sea = 3, CFrame = cf(-11500.0, 20.0, -9500.0), Drops = {"Mirage Sword"}, HP = 220000, SpawnTime = 10, Fragments = 5000 },
+    ["Soul Reaper"] = { Level = 2200, Location = "Haunted Castle", Sea = 3, CFrame = cf(-9550.0, 68.0, 6100.0), Drops = {"Scythe"}, HP = 280000, SpawnTime = 5, Fragments = 7000 },
+    ["Ghost"] = { Level = 2100, Location = "Haunted Island", Sea = 3, CFrame = cf(-9700.0, 50.0, 6250.0), Drops = {"Ghost Sword"}, HP = 260000, SpawnTime = 5, Fragments = 6000 },
+    ["Coconut"] = { Level = 2200, Location = "Tiki Outpost", Sea = 3, CFrame = cf(-16550.0, 40.0, -200.0), Drops = {"Coconut Sword"}, HP = 275000, SpawnTime = 5, Fragments = 6500 },
+    ["Cake Queen"] = { Level = 2000, Location = "Cake Island", Sea = 3, CFrame = cf(-1600.0, 36.0, -12600.0), Drops = {"Cake Sword"}, HP = 200000, SpawnTime = 5, Fragments = 5000 },
+    ["Dough King"] = { Level = 2300, Location = "Sea of Treats", Sea = 3, CFrame = cf(300.0, 20.0, -14000.0), Drops = {"Dough Fist"}, HP = 300000, SpawnTime = 10, Fragments = 7500 },
+    ["Beautiful Pirate"] = { Level = 700, Location = "Fountain City", Sea = 1, CFrame = cf(5200.0, 30.0, 4400.0), Drops = {"Beautiful Pirate Sword"}, HP = 85000, SpawnTime = 5, Fragments = 2000 },
+    ["Ship Raid Boss"] = { Level = 1300, Location = "Sea", Sea = 2, CFrame = cf(1000.0, 120.0, 33000.0), Drops = {"Ship Sword"}, HP = 140000, SpawnTime = 5, Fragments = 3500 },
+    ["Bobby"] = { Level = 550, Location = "Colosseum", Sea = 1, CFrame = cf(-1575.0, 7.0, -2980.0), Drops = {"Bobby's Sword"}, HP = 65000, SpawnTime = 5, Fragments = 1500 },
+    ["Indra"] = { Level = 2000, Location = "Forgotten Island", Sea = 3, CFrame = cf(-3054.0, 237.0, -10148.0), Drops = {"True Triple Katana"}, HP = 250000, SpawnTime = 15, Fragments = 6000 }
 }
 
 local BossSpawnLocations = {}
 for name, data in pairs(BossData) do BossSpawnLocations[name] = data.CFrame end
 
 local SwordData = {
-    Saber = { Name = "Saber", Level = 200, Sea = 1, ObtainMethod = "Kill Saber Expert boss at Jungle. Spawns every 5 min.", Steps = {"Go to Jungle", "Defeat Saber Expert", "Collect Saber drop"}, RequiredBoss = "Saber Expert", CFrame = CFrame.new(-1458.0, 29.0, -29.0) },
+    Saber = { Name = "Saber", Level = 200, Sea = 1, ObtainMethod = "Kill Saber Expert boss at Jungle. Spawns every 5 min.", Steps = {"Go to Jungle", "Defeat Saber Expert", "Collect Saber drop"}, RequiredBoss = "Saber Expert", CFrame = cf(-1458.0, 29.0, -29.0) },
     ["Saber V2"] = { Name = "Saber V2", Level = 300, Sea = 1, ObtainMethod = "Upgrade Saber with 10 Scrap Metal + 5 Magma Ore.", Steps = {"Obtain Saber", "Collect 10 Scrap Metal", "Collect 5 Magma Ore", "Bring to Jungle NPC"}, RequiredItem = "Saber" },
     ["Swan Cutlass"] = { Name = "Swan Cutlass", Level = 500, Sea = 2, ObtainMethod = "Kill Don Swan at Mansion.", Steps = {"Go to Mansion Sea 2", "Defeat Don Swan", "Collect Swan Cutlass"}, RequiredBoss = "Don Swan" },
     ["Dark Dagger"] = { Name = "Dark Dagger", Level = 1500, Sea = 3, ObtainMethod = "Kill Rip Indra at Hydra Island.", Steps = {"Go to Hydra Island Sea 3", "Wait for Rip Indra spawn", "Defeat Rip Indra", "Collect Dark Dagger"}, RequiredBoss = "Rip Indra" },
@@ -719,17 +729,17 @@ local SwordData = {
 }
 
 local FightingStyleData = {
-    ["Dark Step"] = { Name = "Dark Step", Level = 200, Sea = 1, Cost = 80000, Location = "Prison Island", CFrame = CFrame.new(5300.0, 0.3, 470.0), NPCName = "Dark Step Teacher" },
-    ["Sky Walk"] = { Name = "Sky Walk", Level = 200, Sea = 1, Cost = 100000, Location = "Sky Island 1", CFrame = CFrame.new(-4840.0, 715.0, -2625.0), NPCName = "Sky Walk Teacher" },
-    ["Geppo"] = { Name = "Geppo", Level = 300, Sea = 1, Cost = 150000, Location = "Sky Island 2", CFrame = CFrame.new(-7900.0, 5635.0, -1415.0), NPCName = "Geppo Teacher" },
-    ["Electric"] = { Name = "Electric", Level = 400, Sea = 1, Cost = 250000, Location = "Jungle", CFrame = CFrame.new(-1600.0, 35.0, 150.0), NPCName = "Electric Teacher" },
-    ["Water Kung Fu"] = { Name = "Water Kung Fu", Level = 600, Sea = 1, Cost = 450000, Location = "Underwater City", CFrame = CFrame.new(61100.0, 18.0, 1575.0), NPCName = "Water Teacher" },
-    ["Dragon"] = { Name = "Dragon", Level = 800, Sea = 2, Cost = 1500000, Location = "Kingdom of Rose", CFrame = CFrame.new(-3950.0, 15.0, -2100.0), NPCName = "Dragon Teacher" },
-    ["Superhuman"] = { Name = "Superhuman", Level = 1000, Sea = 2, Cost = 3000000, Location = "Kingdom of Rose", CFrame = CFrame.new(-3800.0, 15.0, -2200.0), NPCName = "Superhuman Teacher", Requirements = {"Electric", "Water Kung Fu", "Dragon", "Dark Step"} },
-    ["Death Step"] = { Name = "Death Step", Level = 1200, Sea = 2, Cost = 5000000, Location = "Ice Castle", CFrame = CFrame.new(7100.0, 25.0, -6800.0), NPCName = "Death Step Teacher", Requirements = {"Superhuman", "5,000 Fragments"} },
-    ["Sanguine Art"] = { Name = "Sanguine Art", Level = 2000, Sea = 3, Cost = 8000000, Location = "Haunted Castle", CFrame = CFrame.new(-9550.0, 68.0, 6100.0), NPCName = "Sanguine Teacher", Requirements = {"Death Step", "10,000 Fragments"} },
-    ["Dragon Talon"] = { Name = "Dragon Talon", Level = 1500, Sea = 3, Cost = 6000000, Location = "Castle Island", CFrame = CFrame.new(-5400.0, 50.0, -5200.0), NPCName = "Dragon Talon Teacher", Requirements = {"Dragon", "5,000 Fragments"} },
-    ["Godhuman"] = { Name = "Godhuman", Level = 2000, Sea = 3, Cost = 10000000, Location = "Forgotten Island", CFrame = CFrame.new(-3100.0, 240.0, -10100.0), NPCName = "Godhuman Teacher", Requirements = {"Superhuman", "Death Step", "Sanguine Art", "Electric", "10,000 Fragments"} }
+    ["Dark Step"] = { Name = "Dark Step", Level = 200, Sea = 1, Cost = 80000, Location = "Prison Island", CFrame = cf(5300.0, 0.3, 470.0), NPCName = "Dark Step Teacher" },
+    ["Sky Walk"] = { Name = "Sky Walk", Level = 200, Sea = 1, Cost = 100000, Location = "Sky Island 1", CFrame = cf(-4840.0, 715.0, -2625.0), NPCName = "Sky Walk Teacher" },
+    ["Geppo"] = { Name = "Geppo", Level = 300, Sea = 1, Cost = 150000, Location = "Sky Island 2", CFrame = cf(-7900.0, 5635.0, -1415.0), NPCName = "Geppo Teacher" },
+    ["Electric"] = { Name = "Electric", Level = 400, Sea = 1, Cost = 250000, Location = "Jungle", CFrame = cf(-1600.0, 35.0, 150.0), NPCName = "Electric Teacher" },
+    ["Water Kung Fu"] = { Name = "Water Kung Fu", Level = 600, Sea = 1, Cost = 450000, Location = "Underwater City", CFrame = cf(61100.0, 18.0, 1575.0), NPCName = "Water Teacher" },
+    ["Dragon"] = { Name = "Dragon", Level = 800, Sea = 2, Cost = 1500000, Location = "Kingdom of Rose", CFrame = cf(-3950.0, 15.0, -2100.0), NPCName = "Dragon Teacher" },
+    ["Superhuman"] = { Name = "Superhuman", Level = 1000, Sea = 2, Cost = 3000000, Location = "Kingdom of Rose", CFrame = cf(-3800.0, 15.0, -2200.0), NPCName = "Superhuman Teacher", Requirements = {"Electric", "Water Kung Fu", "Dragon", "Dark Step"} },
+    ["Death Step"] = { Name = "Death Step", Level = 1200, Sea = 2, Cost = 5000000, Location = "Ice Castle", CFrame = cf(7100.0, 25.0, -6800.0), NPCName = "Death Step Teacher", Requirements = {"Superhuman", "5,000 Fragments"} },
+    ["Sanguine Art"] = { Name = "Sanguine Art", Level = 2000, Sea = 3, Cost = 8000000, Location = "Haunted Castle", CFrame = cf(-9550.0, 68.0, 6100.0), NPCName = "Sanguine Teacher", Requirements = {"Death Step", "10,000 Fragments"} },
+    ["Dragon Talon"] = { Name = "Dragon Talon", Level = 1500, Sea = 3, Cost = 6000000, Location = "Castle Island", CFrame = cf(-5400.0, 50.0, -5200.0), NPCName = "Dragon Talon Teacher", Requirements = {"Dragon", "5,000 Fragments"} },
+    ["Godhuman"] = { Name = "Godhuman", Level = 2000, Sea = 3, Cost = 10000000, Location = "Forgotten Island", CFrame = cf(-3100.0, 240.0, -10100.0), NPCName = "Godhuman Teacher", Requirements = {"Superhuman", "Death Step", "Sanguine Art", "Electric", "10,000 Fragments"} }
 }
 
 local FruitData = {
@@ -801,8 +811,8 @@ local GunData = {
     ["Serpent Bow"] = { Price = 7000000, Level = 2200, Sea = 3, Ammo = "Arrow" },
     ["Divine Bow"] = { Price = 10000000, Level = 2400, Sea = 3, Ammo = "Arrow" }
 }
-function TweenTP(Position)
-    local root = getRoot()
+function SmoothMoveTo(Position)
+    local root = GetHumanoidRootPart()
     if not root then return end
     if typeof(Position) == "CFrame" then Position = Position.p end
     local dist = (root.Position - Position).Magnitude
@@ -814,9 +824,9 @@ function TweenTP(Position)
     tween:Destroy()
 end
 
-function EquipWeapon(target)
+function SelectBestTool(target)
     if not client.Character then return end
-    local humanoid = getHumanoid()
+    local humanoid = GetHumanoid()
     if not humanoid then return end
     local weaponType = Library.Flags.CombatWeapon or "Melee"
     local best
@@ -835,15 +845,15 @@ function EquipWeapon(target)
     if best then humanoid:EquipTool(best) end
 end
 
-function Combat(target)
+function AttackTarget(target)
     if not target or not target.Parent then return end
     local humanoid = target:FindFirstChildWhichIsA("Humanoid")
     if not humanoid or humanoid.Health <= 0 then return end
-    local char = getChar()
+    local char = GetCharacter()
     if not char then return end
     local equipped = char:FindFirstChildOfClass("Tool")
     if not equipped then
-        EquipWeapon(target)
+        SelectBestTool(target)
         equipped = char:FindFirstChildOfClass("Tool")
     end
     if equipped then
@@ -851,8 +861,8 @@ function Combat(target)
     end
 end
 
-function GetClosest()
-    local root = getRoot()
+function FindNearestEnemy()
+    local root = GetHumanoidRootPart()
     if not root then return nil end
     local closest, dist = nil, math.huge
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
@@ -864,29 +874,29 @@ function GetClosest()
     return closest
 end
 
-function BringMobs(radius)
-    local root = getRoot()
+function PullNearbyEnemies(radius)
+    local root = GetHumanoidRootPart()
     if not root then return end
     radius = radius or 150
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
         if v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") then
             local mag = (root.Position - v.HumanoidRootPart.Position).Magnitude
             if mag <= radius then
-                v.HumanoidRootPart.CFrame = root.CFrame * CFrame.new(0, 0, -10)
+                v.HumanoidRootPart.CFrame = root.CFrame * cf(0, 0, -10)
             end
         end
     end
 end
 
 -- Unified server-hop function. opts: { maxPlayers = N (filter to <= N players), anyPop = true (no filter) }
-local function HopServer(opts)
+local function ChangeServer(opts)
     opts = opts or {}
     local servers = {}
     local ok, result = pcall(function()
         return HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?limit=100"))
     end)
     if not (ok and result and result.data) then
-        notify("Failed to fetch server list", "Hop", "warning")
+        notify("Failed to fetch server list", "ServerHop", "warning")
         return
     end
     local maxP = opts.maxPlayers
@@ -902,25 +912,25 @@ local function HopServer(opts)
     if #servers > 0 then
         TeleportService:TeleportToPlaceInstance(game.PlaceId, servers[math.random(1, #servers)])
     else
-        notify("No servers found to hop to", "Hop", "warning")
+        notify("No servers found to hop to", "ServerHop", "warning")
     end
 end
 
-function Hop()
+function ServerHop()
     if not Library.Flags.AutoFarmEnable then return end
-    HopServer({ anyPop = true })
+    ChangeServer({ anyPop = true })
 end
 
-function HopLow()
-    HopServer({ maxPlayers = Library.Flags.HopPlayerCount or 10 })
+function HopLowPopulation()
+    ChangeServer({ maxPlayers = Library.Flags.HopPlayerCount or 10 })
 end
 
-function CheckQuest()
+function EnsureQuestAccepted()
     if not Sea1 and not Sea2 and not Sea3 then return end
-    CheckLevel()
+    UpdateLevelData()
     local QName = NameQuest .. tostring(LevelQuest)
     if not client.PlayerGui:FindFirstChild(QName) then
-        TweenTP(CFrameQuest)
+        SmoothMoveTo(CFrameQuest)
         task.wait(0.5)
         local questRemote = ReplicatedStorage:FindFirstChild(QName)
         if questRemote then
@@ -931,31 +941,31 @@ function CheckQuest()
 end
 
 function ResetCharacter()
-    local char = getChar()
+    local char = GetCharacter()
     if char then
         local hum = char:FindFirstChildWhichIsA("Humanoid")
         if hum then hum.Health = 0 end
     end
 end
 
-function Click()
+function SimulateAttackClick()
     VirtualUser:CaptureController()
     VirtualUser:ClickButton1(Vector2.new())
 end
 
 local MaterialFarmData = {
-    Bone = { MonName = "Reborn Skeleton", QuestName = "HauntedQuest1", MinLevel = 1975, CFrame = CFrame.new(-8762.0, 183.0, 6168.0), Sea = 3 },
-    Cocoa = { MonName = "Cocoa Warrior", QuestName = "ChocQuest1", MinLevel = 2300, CFrame = CFrame.new(168.0, 26.0, -12239.0), Sea = 3 },
-    Scrap = { MonName = "Galley Pirate", QuestName = "FountainQuest", MinLevel = 625, CFrame = CFrame.new(5557.0, 152.0, 3998.5), Sea = 1 },
-    Fish = { MonName = "Fishman Raider", QuestName = "DeepForestIsland3", MinLevel = 1775, CFrame = CFrame.new(-10553.0, 521.0, -8177.0), Sea = 3 },
-    Fruit = { MonName = "Pirate Millionaire", QuestName = "PiratePortQuest", MinLevel = 1500, CFrame = CFrame.new(-435.5, 189.5, 5551.0), Sea = 3 },
-    Log = { MonName = "Forest Pirate", QuestName = "DeepForestIsland", MinLevel = 1825, CFrame = CFrame.new(-13489.0, 400.0, -7770.0), Sea = 3 },
-    Leather = { MonName = "Brute", QuestName = "BuggyQuest1", MinLevel = 40, CFrame = CFrame.new(-1385.0, 24.0, 4100.0), Sea = 1 },
-    Iron = { MonName = "Ship Deckhand", QuestName = "ShipQuest1", MinLevel = 1250, CFrame = CFrame.new(921.0, 126.0, 33088.0), Sea = 2 },
-    Cloth = { MonName = "Desert Bandit", QuestName = "DesertQuest", MinLevel = 60, CFrame = CFrame.new(985.0, 16.0, 4418.0), Sea = 1 }
+    Bone = { MonName = "Reborn Skeleton", QuestName = "HauntedQuest1", MinLevel = 1975, CFrame = cf(-8762.0, 183.0, 6168.0), Sea = 3 },
+    Cocoa = { MonName = "Cocoa Warrior", QuestName = "ChocQuest1", MinLevel = 2300, CFrame = cf(168.0, 26.0, -12239.0), Sea = 3 },
+    Scrap = { MonName = "Galley Pirate", QuestName = "FountainQuest", MinLevel = 625, CFrame = cf(5557.0, 152.0, 3998.5), Sea = 1 },
+    Fish = { MonName = "Fishman Raider", QuestName = "DeepForestIsland3", MinLevel = 1775, CFrame = cf(-10553.0, 521.0, -8177.0), Sea = 3 },
+    Fruit = { MonName = "Pirate Millionaire", QuestName = "PiratePortQuest", MinLevel = 1500, CFrame = cf(-435.5, 189.5, 5551.0), Sea = 3 },
+    Log = { MonName = "Forest Pirate", QuestName = "DeepForestIsland", MinLevel = 1825, CFrame = cf(-13489.0, 400.0, -7770.0), Sea = 3 },
+    Leather = { MonName = "Brute", QuestName = "BuggyQuest1", MinLevel = 40, CFrame = cf(-1385.0, 24.0, 4100.0), Sea = 1 },
+    Iron = { MonName = "Ship Deckhand", QuestName = "ShipQuest1", MinLevel = 1250, CFrame = cf(921.0, 126.0, 33088.0), Sea = 2 },
+    Cloth = { MonName = "Desert Bandit", QuestName = "DesertQuest", MinLevel = 60, CFrame = cf(985.0, 16.0, 4418.0), Sea = 1 }
 }
 
-function MaterialFarm(materialType)
+function GatherMaterial(materialType)
     local data = MaterialFarmData[materialType]
     if not data then return end
     if client.Data.Level.Value < data.MinLevel then return end
@@ -965,30 +975,30 @@ function MaterialFarm(materialType)
     local QName = data.QuestName .. "1"
     if client.PlayerGui:FindFirstChild(QName) then
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
-            if v.Name == data.MonName and IsAlive(v) then
-                TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v); return
+            if v.Name == data.MonName and EntityIsAlive(v) then
+                SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v); return
             end
         end
-        TweenTP(data.CFrame)
+        SmoothMoveTo(data.CFrame)
     else
-        CheckLevel(); TweenTP(CFrameQuest); wait(0.5)
+        UpdateLevelData(); SmoothMoveTo(CFrameQuest); wait(0.5)
     end
 end
 
 local function FindBoss(name)
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name == name and IsAlive(v) then return v end
+        if v.Name == name and EntityIsAlive(v) then return v end
     end
     return nil
 end
 
-local function FarmBoss(bossName)
+local function DefeatNamedBoss(bossName)
     local boss = FindBoss(bossName)
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position)
-        EquipWeapon(boss)
-        Combat(boss)
-        if not IsAlive(boss) then
+        SmoothMoveTo(boss.HumanoidRootPart.Position)
+        SelectBestTool(boss)
+        AttackTarget(boss)
+        if not EntityIsAlive(boss) then
             TotalKills = TotalKills + 1
             if BossData[bossName] then
                 LastBossKill = bossName; LastBossTime = os.time()
@@ -998,19 +1008,19 @@ local function FarmBoss(bossName)
         return
     end
     local spawn = BossSpawnLocations[bossName]
-    if spawn then TweenTP(spawn) end
+    if spawn then SmoothMoveTo(spawn) end
 end
 
 local RaidData = {
-    ["Flame"] = { CFrame = CFrame.new(-5200.0, 15.0, 8800.0), Sea = 1 },
-    ["Ice"] = { CFrame = CFrame.new(1400.0, 88.0, -1280.0), Sea = 1 },
-    ["Dark"] = { CFrame = CFrame.new(5300.0, 0.5, 478.0), Sea = 1 },
-    ["Light"] = { CFrame = CFrame.new(60700.0, 20.0, 1300.0), Sea = 1 },
-    ["Rumble"] = { CFrame = CFrame.new(-4000.0, 15.0, -2200.0), Sea = 2 },
-    ["Magma"] = { CFrame = CFrame.new(-5350.0, 12.0, 8500.0), Sea = 1 },
-    ["Water"] = { CFrame = CFrame.new(61000.0, 20.0, 1600.0), Sea = 1 },
-    ["Phoenix"] = { CFrame = CFrame.new(600.0, 401.0, -5350.0), Sea = 2 },
-    ["Dough"] = { CFrame = CFrame.new(-300.0, 44.0, 5580.0), Sea = 3 }
+    ["Flame"] = { CFrame = cf(-5200.0, 15.0, 8800.0), Sea = 1 },
+    ["Ice"] = { CFrame = cf(1400.0, 88.0, -1280.0), Sea = 1 },
+    ["Dark"] = { CFrame = cf(5300.0, 0.5, 478.0), Sea = 1 },
+    ["Light"] = { CFrame = cf(60700.0, 20.0, 1300.0), Sea = 1 },
+    ["Rumble"] = { CFrame = cf(-4000.0, 15.0, -2200.0), Sea = 2 },
+    ["Magma"] = { CFrame = cf(-5350.0, 12.0, 8500.0), Sea = 1 },
+    ["Water"] = { CFrame = cf(61000.0, 20.0, 1600.0), Sea = 1 },
+    ["Phoenix"] = { CFrame = cf(600.0, 401.0, -5350.0), Sea = 2 },
+    ["Dough"] = { CFrame = cf(-300.0, 44.0, 5580.0), Sea = 3 }
 }
 
 local function StartRaid(raidName)
@@ -1021,35 +1031,35 @@ local function StartRaid(raidName)
     if raids then
         for _, zone in pairs(raids:GetChildren()) do
             if zone.Name:lower():find(raidName:lower()) then
-                TweenTP(zone.CFrame); wait(0.5)
+                SmoothMoveTo(zone.CFrame); wait(0.5)
                 local startRemote = ReplicatedStorage:FindFirstChild("Raids") and ReplicatedStorage.Raids:FindFirstChild("StartRaid")
                 if startRemote then startRemote:FireServer(raidName) end
                 return
             end
         end
     else
-        TweenTP(data.CFrame)
+        SmoothMoveTo(data.CFrame)
     end
 end
 
 local RaceV4Data = {
-    Human = { Trial1 = "Complete 20 quests without dying", Trial2 = "Defeat 50 enemies in 3 min", Trial3 = "Collect 10 Aura particles", CFrame = CFrame.new(7500.0, 50.0, -5500.0) },
-    Skypiea = { Trial1 = "Stay airborne 2 min total", Trial2 = "Defeat 30 enemies airborne", Trial3 = "Collect 10 Wind orbs", CFrame = CFrame.new(7500.0, 50.0, -5500.0) },
-    Fishman = { Trial1 = "Swim 1000 studs", Trial2 = "Defeat 40 enemies underwater", Trial3 = "Collect 10 Water orbs", CFrame = CFrame.new(7500.0, 50.0, -5500.0) },
-    Mink = { Trial1 = "Use Geppo/Sky Walk 100 times", Trial2 = "Defeat 50 with FS only", Trial3 = "Collect 10 Lightning orbs", CFrame = CFrame.new(7500.0, 50.0, -5500.0) },
-    Ghoul = { Trial1 = "Defeat 30 at night", Trial2 = "Collect 10 Dark essences", Trial3 = "Defeat 5 bosses", CFrame = CFrame.new(7500.0, 50.0, -5500.0) },
-    Cyborg = { Trial1 = "Take 5000 damage", Trial2 = "Defeat 40 with guns", Trial3 = "Collect 10 Metal scraps", CFrame = CFrame.new(7500.0, 50.0, -5500.0) }
+    Human = { Trial1 = "Complete 20 quests without dying", Trial2 = "Defeat 50 enemies in 3 min", Trial3 = "Collect 10 Aura particles", CFrame = cf(7500.0, 50.0, -5500.0) },
+    Skypiea = { Trial1 = "Stay airborne 2 min total", Trial2 = "Defeat 30 enemies airborne", Trial3 = "Collect 10 Wind orbs", CFrame = cf(7500.0, 50.0, -5500.0) },
+    Fishman = { Trial1 = "Swim 1000 studs", Trial2 = "Defeat 40 enemies underwater", Trial3 = "Collect 10 Water orbs", CFrame = cf(7500.0, 50.0, -5500.0) },
+    Mink = { Trial1 = "Use Geppo/Sky Walk 100 times", Trial2 = "Defeat 50 with FS only", Trial3 = "Collect 10 Lightning orbs", CFrame = cf(7500.0, 50.0, -5500.0) },
+    Ghoul = { Trial1 = "Defeat 30 at night", Trial2 = "Collect 10 Dark essences", Trial3 = "Defeat 5 bosses", CFrame = cf(7500.0, 50.0, -5500.0) },
+    Cyborg = { Trial1 = "Take 5000 damage", Trial2 = "Defeat 40 with guns", Trial3 = "Collect 10 Metal scraps", CFrame = cf(7500.0, 50.0, -5500.0) }
 }
 
 local function RunV4Trial(raceName)
     local data = RaceV4Data[raceName]
     if not data or not Library.Flags.AutoV4 then return end
-    TweenTP(data.CFrame)
+    SmoothMoveTo(data.CFrame)
 end
 
 local SeaEventNames = {"Shark Pirate Ship", "Ghost Ship", "Sea Beast", "Fish Event", "Ship Raid"}
 
-local function FindSeaEvent()
+local function ScanForSeaEvent()
     for _, name in pairs(SeaEventNames) do
         local obj = Workspace:FindFirstChild(name)
         if obj then return obj end
@@ -1060,15 +1070,15 @@ local function FindSeaEvent()
     return nil
 end
 
-local function FarmSeaEvent()
-    local event = FindSeaEvent()
+local function EngageSeaEvent()
+    local event = ScanForSeaEvent()
     if not event then return end
     local rootPart
     if event:FindFirstChild("HumanoidRootPart") then rootPart = event.HumanoidRootPart
     elseif event:IsA("Model") then rootPart = event.PrimaryPart or event:FindFirstChildWhichIsA("Part") end
-    if rootPart then TweenTP(rootPart.Position) end
+    if rootPart then SmoothMoveTo(rootPart.Position) end
     for _, v in pairs(event:GetChildren()) do
-        if v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then EquipWeapon(v); Combat(v) end
+        if v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then SelectBestTool(v); AttackTarget(v) end
     end
 end
 
@@ -1098,13 +1108,13 @@ end
 
 local function UpdateESP()
     if not Library.Flags.ESPEnabled then ClearESP(); return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     local range = Library.Flags.ESPDistance or 1000
     if Library.Flags.ESPMobs then
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
             local rp = v:FindFirstChild("HumanoidRootPart")
-            if rp and IsAlive(v) and (root.Position - rp.Position).Magnitude <= range then
+            if rp and EntityIsAlive(v) and (root.Position - rp.Position).Magnitude <= range then
                 CreateESP(v, Color3.new(1, 0, 0), v.Name .. " [" .. math.floor((root.Position - rp.Position).Magnitude) .. "m]")
             end
         end
@@ -1154,37 +1164,37 @@ local TeleportLocations = {
 }
 
 local IslandCFrames = {
-    Jungle = CFrame.new(-1321.0, 28.0, 282.0), Buggy = CFrame.new(-1131.0, 5.0, 3890.0),
-    Desert = CFrame.new(948.0, 15.0, 4386.0), ["Snow Island"] = CFrame.new(1361.0, 86.0, -1356.0),
-    ["Marine Start"] = CFrame.new(-2630.0, 8.0, 2005.0), ["Sky Island 1"] = CFrame.new(-4865.0, 734.0, -2629.0),
-    ["Sky Island 2"] = CFrame.new(-7896.0, 5548.0, -388.0), Prison = CFrame.new(5329.0, 0.4, 479.0),
-    Colosseum = CFrame.new(-1562.0, 8.0, -2954.0), ["Magma Village"] = CFrame.new(-5428.0, 17.0, 8673.0),
-    ["Underwater City"] = CFrame.new(60752.0, 22.0, 1466.0), ["Fountain City"] = CFrame.new(5092.0, 28.0, 4113.0),
-    Mansion = CFrame.new(80.0, 22.0, 12140.0),
-    ["Kingdom of Rose"] = CFrame.new(-3776.0, 13.0, -2154.0), ["Green Zone"] = CFrame.new(-532.0, 15.0, 2038.0),
-    Factory = CFrame.new(232.0, 6.0, -28.0), ["Flamingo Island"] = CFrame.new(850.0, 18.0, 1450.0),
-    ["Zombie Island"] = CFrame.new(-5479.0, 30.0, -781.0), ["Snow Mountain"] = CFrame.new(197.0, 410.0, -5297.0),
-    ["Ice Castle"] = CFrame.new(6392.0, 20.0, -6725.0), ["Fire Island"] = CFrame.new(-5467.0, 18.0, -5233.0),
-    ["Ship Island"] = CFrame.new(908.0, 127.0, 33007.0), ["Frost Island"] = CFrame.new(5690.0, 30.0, -6475.0),
-    ["Forgotten Island"] = CFrame.new(-3054.0, 237.0, -10148.0),
-    ["Port Town"] = CFrame.new(-371.0, 47.0, 5630.0), ["Amazon Island"] = CFrame.new(5667.0, 32.0, -1123.0),
-    ["Hydra Island"] = CFrame.new(5497.0, 12.0, -1911.0), ["Gravel Island"] = CFrame.new(9424.0, 18.0, -6519.0),
-    ["Sea of Treats 3"] = CFrame.new(389.0, 5.0, -13858.0), ["Tiki Outpost"] = CFrame.new(-16410.0, 25.0, -175.0),
-    ["Candy Island"] = CFrame.new(-1192.0, 12.0, -14469.0), ["Cake Island"] = CFrame.new(-1986.0, 29.0, -12014.0),
-    ["Haunted Castle"] = CFrame.new(-9513.0, 65.0, 5994.0), ["Nuts Island"] = CFrame.new(-2113.0, 39.0, -10198.0),
-    ["Ice Cream Island"] = CFrame.new(-825.0, 72.0, -10972.0), ["Chocolate Island"] = CFrame.new(201.0, 22.0, -12231.0),
-    ["Pineapple Island"] = CFrame.new(12873.0, 16.0, -11826.0), ["Mirage Island"] = CFrame.new(-11750.0, 18.0, -9400.0),
-    ["Castle Island"] = CFrame.new(-5510.0, 23.0, -5150.0), ["Forgotten Island 3"] = CFrame.new(-3050.0, 240.0, -10150.0)
+    Jungle = cf(-1321.0, 28.0, 282.0), Buggy = cf(-1131.0, 5.0, 3890.0),
+    Desert = cf(948.0, 15.0, 4386.0), ["Snow Island"] = cf(1361.0, 86.0, -1356.0),
+    ["Marine Start"] = cf(-2630.0, 8.0, 2005.0), ["Sky Island 1"] = cf(-4865.0, 734.0, -2629.0),
+    ["Sky Island 2"] = cf(-7896.0, 5548.0, -388.0), Prison = cf(5329.0, 0.4, 479.0),
+    Colosseum = cf(-1562.0, 8.0, -2954.0), ["Magma Village"] = cf(-5428.0, 17.0, 8673.0),
+    ["Underwater City"] = cf(60752.0, 22.0, 1466.0), ["Fountain City"] = cf(5092.0, 28.0, 4113.0),
+    Mansion = cf(80.0, 22.0, 12140.0),
+    ["Kingdom of Rose"] = cf(-3776.0, 13.0, -2154.0), ["Green Zone"] = cf(-532.0, 15.0, 2038.0),
+    Factory = cf(232.0, 6.0, -28.0), ["Flamingo Island"] = cf(850.0, 18.0, 1450.0),
+    ["Zombie Island"] = cf(-5479.0, 30.0, -781.0), ["Snow Mountain"] = cf(197.0, 410.0, -5297.0),
+    ["Ice Castle"] = cf(6392.0, 20.0, -6725.0), ["Fire Island"] = cf(-5467.0, 18.0, -5233.0),
+    ["Ship Island"] = cf(908.0, 127.0, 33007.0), ["Frost Island"] = cf(5690.0, 30.0, -6475.0),
+    ["Forgotten Island"] = cf(-3054.0, 237.0, -10148.0),
+    ["Port Town"] = cf(-371.0, 47.0, 5630.0), ["Amazon Island"] = cf(5667.0, 32.0, -1123.0),
+    ["Hydra Island"] = cf(5497.0, 12.0, -1911.0), ["Gravel Island"] = cf(9424.0, 18.0, -6519.0),
+    ["Sea of Treats 3"] = cf(389.0, 5.0, -13858.0), ["Tiki Outpost"] = cf(-16410.0, 25.0, -175.0),
+    ["Candy Island"] = cf(-1192.0, 12.0, -14469.0), ["Cake Island"] = cf(-1986.0, 29.0, -12014.0),
+    ["Haunted Castle"] = cf(-9513.0, 65.0, 5994.0), ["Nuts Island"] = cf(-2113.0, 39.0, -10198.0),
+    ["Ice Cream Island"] = cf(-825.0, 72.0, -10972.0), ["Chocolate Island"] = cf(201.0, 22.0, -12231.0),
+    ["Pineapple Island"] = cf(12873.0, 16.0, -11826.0), ["Mirage Island"] = cf(-11750.0, 18.0, -9400.0),
+    ["Castle Island"] = cf(-5510.0, 23.0, -5150.0), ["Forgotten Island 3"] = cf(-3050.0, 240.0, -10150.0)
 }
 
-local function TeleportToIsland(islandName)
+local function GoToIsland(islandName)
     local cf = IslandCFrames[islandName]
-    if cf then TweenTP(cf); notify("Teleported to " .. islandName, "Teleport", "success"); return end
+    if cf then SmoothMoveTo(cf); notify("Teleported to " .. islandName, "Teleport", "success"); return end
     local target = Workspace:FindFirstChild(islandName)
     if not target then local isl = Workspace:FindFirstChild("Islands"); if isl then target = isl:FindFirstChild(islandName) end end
     if target then
         local dest = target:FindFirstChild("Base") or target:FindFirstChild("Spawn") or target:FindFirstChildWhichIsA("BasePart") or target
-        if dest then TweenTP(dest.CFrame); notify("Teleported to " .. islandName, "Teleport", "success") end
+        if dest then SmoothMoveTo(dest.CFrame); notify("Teleported to " .. islandName, "Teleport", "success") end
     else notify("Island '" .. islandName .. "' not found", "Teleport", "warning") end
 end
 
@@ -1205,8 +1215,8 @@ local function BuyFruit(fruitName)
     else debugPrint("Cannot afford " .. fruitName) end
 end
 
-local function GetClosestPlayer()
-    local root = getRoot()
+local function FindNearestPlayer()
+    local root = GetHumanoidRootPart()
     if not root then return nil end
     local closest, dist = nil, math.huge
     for _, plr in pairs(Players:GetPlayers()) do
@@ -1228,31 +1238,31 @@ local function GetLowestLevel()
     return lowest
 end
 
-local function AutoDodge()
-    local root = getRoot()
+local function DodgeFastProjectiles()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("Part") and v.Velocity and v.Velocity.Magnitude > 50 and (v.Position - root.Position).Magnitude < 15 then
-            root.CFrame = root.CFrame * CFrame.new(0, 0, 25)
+            root.CFrame = root.CFrame * cf(0, 0, 25)
         end
     end
 end
 
-local function PVPCombo(target)
+local function PlayerComboSequence(target)
     if not target or not target.Character then return end
     local rootPart = target.Character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return end
-    local myRoot = getRoot()
+    local myRoot = GetHumanoidRootPart()
     if not myRoot then return end
-    TweenTP(rootPart.Position + Vector3.new(0, 0, 5)); wait(0.1)
+    SmoothMoveTo(rootPart.Position + Vector3.new(0, 0, 5)); wait(0.1)
     for _, t in pairs(client.Backpack:GetChildren()) do
         if t:IsA("Tool") and t.ToolTip == "Melee" then client.Character.Humanoid:EquipTool(t); break end
     end
-    wait(0.05); Click(); wait(0.1)
+    wait(0.05); SimulateAttackClick(); wait(0.1)
     for _, t in pairs(client.Backpack:GetChildren()) do
         if t:IsA("Tool") and t.ToolTip == "Blox Fruit" then client.Character.Humanoid:EquipTool(t); break end
     end
-    wait(0.05); Click()
+    wait(0.05); SimulateAttackClick()
 end
 
 local function AutoStat()
@@ -1269,19 +1279,19 @@ end
 
 local function CollectNearbyFruits()
     if not Library.Flags.AutoCollectFruit then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("Tool") and (v.Name:lower():find("fruit")) then
             local pos = v:IsA("BasePart") and v.Position or (v:FindFirstChildWhichIsA("BasePart") and v:FindFirstChildWhichIsA("BasePart").Position)
             if pos and (root.Position - pos).Magnitude <= 500 then
-                TweenTP(pos); wait(0.3); fireproximityprompt(v); notify("Collected " .. v.Name, "Fruit", "success")
+                SmoothMoveTo(pos); wait(0.3); fireproximityprompt(v); notify("Collected " .. v.Name, "Fruit", "success")
             end
         end
     end
 end
 
-local function FarmMastery()
+local function TrainMastery()
     if not Library.Flags.AutoFarmMastery then return end
     local weapon = Library.Flags.MasteryWeapon or "Melee"
     for _, t in pairs(client.Backpack:GetChildren()) do
@@ -1292,8 +1302,8 @@ local function FarmMastery()
             end
         end
     end
-    local target = GetClosest()
-    if target then TweenTP(target.HumanoidRootPart.Position); Combat(target) end
+    local target = FindNearestEnemy()
+    if target then SmoothMoveTo(target.HumanoidRootPart.Position); AttackTarget(target) end
 end
 
 local function AutoEnhance()
@@ -1324,10 +1334,10 @@ end
 
 local function RemovePartyMember(name) PartyMembers[name] = nil end
 
-local function TeleportToParty()
+local function JoinPartyMember()
     for _, plr in pairs(PartyMembers) do
         if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            TweenTP(plr.Character.HumanoidRootPart.Position); return
+            SmoothMoveTo(plr.Character.HumanoidRootPart.Position); return
         end
     end
 end
@@ -1335,7 +1345,7 @@ end
 local function SendWebhook(url, msg)
     if not url or url == "" then return end
     pcall(function()
-        HttpService:PostAsync(url, HttpService:JSONEncode({content = msg, username = "Ultimate Hub Logger"}), Enum.ContentType.ApplicationJson)
+        HttpService:PostAsync(url, HttpService:JSONEncode({content = msg, username = "Abyssal Core Logger"}), Enum.ContentType.ApplicationJson)
     end)
 end
 
@@ -1350,7 +1360,7 @@ local function LogProgress()
     SendWebhook(url, msg)
 end
 
-local ConfigFile = "UltimateBloxFruits_Config.json"
+local ConfigFile = "AbyssalCore_Config.json"
 
 local function SaveConfig()
     local data = HttpService:JSONEncode(Library.Flags)
@@ -1366,7 +1376,7 @@ local function LoadConfig()
     else notify("No saved config found", "Settings", "info") end
 end
 
-local MainTab = NewTab("Ultimate Hub")
+local MainTab = NewTab("Abyssal Core")
 
 MainTab:AddButton({ text = "Destroy UI", callback = function() pcall(function() ui:Destroy() end) end })
 MainTab:AddButton({ text = "Save Config", callback = SaveConfig })
@@ -1383,28 +1393,28 @@ FarmingSection:AddSlider("FarmRadius", { text = "Farm Radius", min = 50, max = 5
 FarmingSection:AddToggle("BringMob", { text = "Bring Mobs", default = true })
 FarmingSection:AddDropdown("BringRadius", { text = "Bring Radius", values = {"50", "100", "150", "200", "300", "400", "500"}, default = "150" })
 FarmingSection:AddSlider("TweenSpeed", { text = "Tween Speed", min = 100, max = 500, default = 300, suffix = "studs/s" })
-FarmingSection:AddToggle("AutoHop", { text = "Auto Hop When Stuck", default = false })
-FarmingSection:AddSlider("HopTimer", { text = "Hop Interval (min)", min = 5, max = 60, default = 15, suffix = "min" })
+FarmingSection:AddToggle("AutoHop", { text = "Auto ServerHop When Stuck", default = false })
+FarmingSection:AddSlider("HopTimer", { text = "ServerHop Interval (min)", min = 5, max = 60, default = 15, suffix = "min" })
 FarmingSection:AddToggle("DebugLog", { text = "Debug Logging", default = false })
 
 interval("FarmInterval", "AutoFarmEnable", 0.1, function()
     if Library.Flags.AutoFarmEnable then
         if Library.Flags.BringMob then
-            pcall(function() BringMobs(Library.Flags.BringRadius and tonumber(Library.Flags.BringRadius) or 150) end)
+            pcall(function() PullNearbyEnemies(Library.Flags.BringRadius and tonumber(Library.Flags.BringRadius) or 150) end)
         end
         if Library.Flags.AutoQuest then
-            pcall(CheckQuest)
+            pcall(EnsureQuestAccepted)
         end
         pcall(function()
-            CheckLevel()
-            local closest = GetClosest()
+            UpdateLevelData()
+            local closest = FindNearestEnemy()
             if closest then
-                TweenTP(closest.HumanoidRootPart.Position)
-                EquipWeapon(closest)
-                Combat(closest)
+                SmoothMoveTo(closest.HumanoidRootPart.Position)
+                SelectBestTool(closest)
+                AttackTarget(closest)
             else
                 local enrichedCF = GetSpawnCFrame(NameMon)
-                TweenTP(enrichedCF or CFrameMon)
+                SmoothMoveTo(enrichedCF or CFrameMon)
             end
             if Library.Flags.AutoStat then pcall(AutoStat) end
         end)
@@ -1422,7 +1432,7 @@ MaterialsSection:AddSlider("SellThreshold", { text = "Sell if count >", min = 50
 interval("MaterialInterval", "AutoMaterial", 0.3, function()
     pcall(function()
         local matType = Library.Flags.SelectMaterial or "Bone"
-        MaterialFarm(matType)
+        GatherMaterial(matType)
     end)
 end)
 
@@ -1435,11 +1445,11 @@ local BossesSection = MainTab:AddSection("Bosses")
 BossesSection:AddDropdown("SelectBoss", { text = "Select Boss", values = BossNames, default = BossNames[1] or "Saber Expert" })
 BossesSection:AddToggle("AutoBoss", { text = "Auto Boss", default = false })
 BossesSection:AddToggle("AutoBossDrop", { text = "Auto Collect Drop", default = true })
-BossesSection:AddToggle("AutoBossHop", { text = "Hop After Kill", default = false })
+BossesSection:AddToggle("AutoBossHop", { text = "ServerHop After Kill", default = false })
 BossesSection:AddButton({ text = "Teleport to Boss", callback = function()
     local bossName = Library.Flags.SelectBoss or "Saber Expert"
     local spawn = BossSpawnLocations[bossName]
-    if spawn then TweenTP(spawn) end
+    if spawn then SmoothMoveTo(spawn) end
 end })
 BossesSection:AddButton({ text = "Boss Info", callback = function()
     local bossName = Library.Flags.SelectBoss or "Saber Expert"
@@ -1453,7 +1463,7 @@ end })
 interval("BossInterval", "AutoBoss", 0.2, function()
     pcall(function()
         local bossName = Library.Flags.SelectBoss or "Saber Expert"
-        FarmBoss(bossName)
+        DefeatNamedBoss(bossName)
     end)
 end)
 
@@ -1486,7 +1496,7 @@ end })
 interval("SaberInterval", "AutoSaber", 1, function()
     pcall(function()
         local saber = Workspace:FindFirstChild("SaberExpert")
-        if saber then TweenTP(saber.HumanoidRootPart.Position); fireproximityprompt(saber.HumanoidRootPart); wait(0.5) end
+        if saber then SmoothMoveTo(saber.HumanoidRootPart.Position); fireproximityprompt(saber.HumanoidRootPart); wait(0.5) end
     end)
 end)
 
@@ -1530,58 +1540,58 @@ QuestsSection:AddToggle("AutoRandomQuest", { text = "Auto Accept Quest", default
 local SeaEventsSection = MainTab:AddSection("Sea Events")
 
 SeaEventsSection:AddToggle("AutoSeaEvent", { text = "Auto Sea Events", default = false })
-SeaEventsSection:AddToggle("AutoSharkPirate", { text = "Auto Shark Pirate", default = false })
+SeaEventsSection:AddToggle("HuntSharkPirates", { text = "Auto Shark Pirate", default = false })
 SeaEventsSection:AddToggle("AutoShipRaids", { text = "Auto Ship Raids", default = false })
-SeaEventsSection:AddToggle("AutoFishEvent", { text = "Auto Fish Event", default = false })
-SeaEventsSection:AddToggle("AutoSeaBeast", { text = "Auto Sea Beast", default = false })
-SeaEventsSection:AddToggle("AutoGhostShip", { text = "Auto Ghost Ship", default = false })
-SeaEventsSection:AddToggle("AutoSeaHop", { text = "Hop if no event", default = false })
+SeaEventsSection:AddToggle("HuntFishEvent", { text = "Auto Fish Event", default = false })
+SeaEventsSection:AddToggle("HuntSeaBeast", { text = "Auto Sea Beast", default = false })
+SeaEventsSection:AddToggle("HuntGhostShip", { text = "Auto Ghost Ship", default = false })
+SeaEventsSection:AddToggle("AutoSeaHop", { text = "ServerHop if no event", default = false })
 
 interval("SeaEventInterval", "AutoSeaEvent", 0.3, function()
-    pcall(FarmSeaEvent)
-    if Library.Flags.AutoSeaHop and not FindSeaEvent() then
-        Hop()
+    pcall(EngageSeaEvent)
+    if Library.Flags.AutoSeaHop and not ScanForSeaEvent() then
+        ServerHop()
     end
 end)
 
 -- Sea Event Entity Checkers (Shark, Terrorshark, Piranha, etc.)
-local function CheckShark()
+local function IsSharkPresent()
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name == "Shark" and IsAlive(v) then return true end
+        if v.Name == "Shark" and EntityIsAlive(v) then return true end
     end
     return false
 end
-local function CheckTerrorShark()
+local function IsTerrorSharkPresent()
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name == "Terrorshark" and IsAlive(v) then return true end
+        if v.Name == "Terrorshark" and EntityIsAlive(v) then return true end
     end
     return false
 end
-local function CheckPiranha()
+local function IsPiranhaPresent()
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name == "Piranha" and IsAlive(v) then return true end
+        if v.Name == "Piranha" and EntityIsAlive(v) then return true end
     end
     return false
 end
-local function CheckFishCrew()
+local function IsFishCrewPresent()
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name == "Fish Crew Member" and IsAlive(v) then return true end
+        if v.Name == "Fish Crew Member" and EntityIsAlive(v) then return true end
     end
     return false
 end
-local function CheckHauntedCrew()
+local function IsHauntedCrewPresent()
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name == "Haunted Crew Member" and IsAlive(v) then return true end
+        if v.Name == "Haunted Crew Member" and EntityIsAlive(v) then return true end
     end
     return false
 end
-local function CheckSeaBeast2()
+local function IsSeaBeastPresent()
     return Workspace.SeaBeasts and Workspace.SeaBeasts:FindFirstChild("SeaBeast1") ~= nil
 end
-local function CheckLeviathan()
+local function IsLeviathanPresent()
     return Workspace.SeaBeasts and Workspace.SeaBeasts:FindFirstChild("Leviathan") ~= nil
 end
-local function CheckBoat()
+local function GetCurrentBoat()
     for _, v in pairs(Workspace.Boats:GetChildren()) do
         if v:FindFirstChild("Owner") and tostring(v.Owner.Value) == tostring(client.Name) then return v end
     end
@@ -1605,17 +1615,17 @@ SeaEventsProSection:AddLabel("Kitsune: " .. (IsKitsuneActive() and "Active" or "
 SeaEventsProSection:AddLabel("Mirage: " .. (IsMirageActive() and "Active" or "Inactive"))
 
 -- Ship Dealer CFrame (Tiki Outpost)
-local ShipDealerCF = CFrame.new(-16927.45, 9.09, 433.86)
+local ShipDealerCF = cf(-16927.45, 9.09, 433.86)
 -- Open Sea CFrame (far out, no land)
-local OpenSeaCF = CFrame.new(-10000000, 31, 37016.25)
+local OpenSeaCF = cf(-10000000, 31, 37016.25)
 -- Sea level danger zones
 local SeaDangerZones = {
-    ["Lv 1"] = CFrame.new(-28525.69, 30.2, -4678.42),
-    ["Lv 2"] = CFrame.new(-30920.02, 30.22, -3718.61),
-    ["Lv 3"] = CFrame.new(-32426.83, 30.24, -3133.03),
-    ["Lv 4"] = CFrame.new(-34054.69, 30.22, -2560.12),
-    ["Lv 5"] = CFrame.new(-38887.56, 30, -2162.99),
-    ["Lv 6"] = CFrame.new(-44541.76, 30, -1244.86),
+    ["Lv 1"] = cf(-28525.69, 30.2, -4678.42),
+    ["Lv 2"] = cf(-30920.02, 30.22, -3718.61),
+    ["Lv 3"] = cf(-32426.83, 30.24, -3133.03),
+    ["Lv 4"] = cf(-34054.69, 30.22, -2560.12),
+    ["Lv 5"] = cf(-38887.56, 30, -2162.99),
+    ["Lv 6"] = cf(-44541.76, 30, -1244.86),
     ["Lv Infinite"] = OpenSeaCF,
 }
 local SailDangerLevel = "Lv Infinite"
@@ -1627,24 +1637,24 @@ SeaEventsProSection:AddToggle("AutoAzureEmber", { text = "Auto Collect Azure Emb
 SeaEventsProSection:AddToggle("AutoTradeEmber", { text = "Auto Trade Azure Ember", default = false })
 
 -- Simple sail function: buy boat, sail to open sea, wait for island spawn
-local function SailToOpenSea(targetCF)
-    local myBoat = CheckBoat()
+local function NavigateToSea(targetCF)
+    local myBoat = GetCurrentBoat()
     if not myBoat then
-        TweenTP(ShipDealerCF)
-        if (ShipDealerCF.Position - getRoot().Position).Magnitude <= 15 then
+        SmoothMoveTo(ShipDealerCF)
+        if (ShipDealerCF.Position - GetHumanoidRootPart().Position).Magnitude <= 15 then
             pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("BuyBoat", "Guardian") end)
         end
     else
-        local hum = getHumanoid()
+        local hum = GetHumanoid()
         if hum and not hum.Sit then
-            local seatCF = myBoat.VehicleSeat.CFrame * CFrame.new(0, 1, 0)
-            TweenTP(seatCF)
+            local seatCF = myBoat.VehicleSeat.CFrame * cf(0, 1, 0)
+            SmoothMoveTo(seatCF)
         else
             local dest = targetCF or OpenSeaCF
-            if CheckTerrorShark() or CheckPiranha() then
-                TweenTP(dest * CFrame.new(0, 150, 0))
+            if IsTerrorSharkPresent() or IsPiranhaPresent() then
+                SmoothMoveTo(dest * cf(0, 150, 0))
             else
-                TweenTP(dest)
+                SmoothMoveTo(dest)
             end
         end
     end
@@ -1653,10 +1663,10 @@ end
 interval("KitsuneInterval", "AutoKitsune", 0.5, function()
     pcall(function()
         if not IsKitsuneActive() then
-            SailToOpenSea(OpenSeaCF)
+            NavigateToSea(OpenSeaCF)
         else
             local ki = Workspace._WorldOrigin.Locations:FindFirstChild("Kitsune Island")
-            if ki then TweenTP(ki.CFrame * CFrame.new(0, 500, 0)) end
+            if ki then SmoothMoveTo(ki.CFrame * cf(0, 500, 0)) end
         end
     end)
 end)
@@ -1671,11 +1681,11 @@ interval("ShrineTPInterval", "AutoShrineTP", 0.3, function()
             for _, v in pairs(shrine:GetDescendants()) do
                 if v:IsA("BasePart") and v.Name:find("NeonShrinePart") then
                     pcall(function() ReplicatedStorage.Modules.Net:FindFirstChild("RE/TouchKitsuneStatue"):FireServer() end)
-                    TweenTP(v.CFrame * CFrame.new(0, 2, 0))
+                    SmoothMoveTo(v.CFrame * cf(0, 2, 0))
                 end
             end
         else
-            TweenTP(ki.CFrame * CFrame.new(0, 500, 0))
+            SmoothMoveTo(ki.CFrame * cf(0, 500, 0))
         end
     end)
 end)
@@ -1685,10 +1695,10 @@ interval("AzureEmberInterval", "AutoAzureEmber", 0.3, function()
         local ember = Workspace:FindFirstChild("AttachedAzureEmber") or Workspace:FindFirstChild("EmberTemplate")
         if ember then
             local part = ember:FindFirstChild("Part")
-            if part then getRoot().CFrame = part.CFrame end
+            if part then GetHumanoidRootPart().CFrame = part.CFrame end
         elseif IsKitsuneActive() then
             local ki = Workspace._WorldOrigin.Locations:FindFirstChild("Kitsune Island")
-            if ki then TweenTP(ki.CFrame * CFrame.new(0, 500, 0)) end
+            if ki then SmoothMoveTo(ki.CFrame * cf(0, 500, 0)) end
             pcall(function() ReplicatedStorage.Modules.Net["RF/KitsuneStatuePray"]:InvokeServer() end)
         end
     end)
@@ -1713,11 +1723,11 @@ SeaEventsProSection:AddToggle("AutoHCM", { text = "Auto Haunted Crew Member", de
 interval("MirageInterval", "AutoMirage", 0.5, function()
     pcall(function()
         if not IsMirageActive() then
-            SailToOpenSea(OpenSeaCF)
+            NavigateToSea(OpenSeaCF)
         else
             local mi = Workspace.Map:FindFirstChild("MysticIsland")
             if mi and mi:FindFirstChild("Center") then
-                TweenTP(mi.Center.CFrame * CFrame.new(0, 300, 0))
+                SmoothMoveTo(mi.Center.CFrame * cf(0, 300, 0))
             end
         end
     end)
@@ -1726,7 +1736,7 @@ end)
 interval("MirageHighInterval", "AutoMirageHigh", 0.5, function()
     pcall(function()
         if IsMirageActive() and Workspace.Map.MysticIsland:FindFirstChild("Center") then
-            TweenTP(Workspace.Map.MysticIsland.Center.CFrame * CFrame.new(0, 400, 0))
+            SmoothMoveTo(Workspace.Map.MysticIsland.Center.CFrame * cf(0, 400, 0))
         end
     end)
 end)
@@ -1736,7 +1746,7 @@ interval("MirageGearInterval", "AutoMirageGear", 0.2, function()
         local mi = Workspace.Map:FindFirstChild("MysticIsland")
         if not mi then return end
         for _, v in pairs(mi:GetChildren()) do
-            if v.ClassName == "MeshPart" then TweenTP(v.CFrame) end
+            if v.ClassName == "MeshPart" then SmoothMoveTo(v.CFrame) end
         end
     end)
 end)
@@ -1745,7 +1755,7 @@ interval("MirageDealerInterval", "AutoMirageDealer", 0.5, function()
     pcall(function()
         for _, v in pairs(ReplicatedStorage.NPCs:GetChildren()) do
             if v.Name == "Advanced Fruit Dealer" and v:FindFirstChild("HumanoidRootPart") then
-                TweenTP(v.HumanoidRootPart.CFrame)
+                SmoothMoveTo(v.HumanoidRootPart.CFrame)
             end
         end
     end)
@@ -1759,30 +1769,30 @@ interval("MirageChestInterval", "AutoMirageChest", 0.3, function()
         if chests:FindFirstChild("DiamondChest") or chests:FindFirstChild("FragChest") then
             local tagged = CollectionService:GetTagged("_ChestTagged")
             local best, bestDist = nil, math.huge
-            local pos = getRoot().Position
+            local pos = GetHumanoidRootPart().Position
             for _, chest in ipairs(tagged) do
                 if not chest:GetAttribute("IsDisabled") then
                     local d = (chest:GetPivot().Position - pos).Magnitude
                     if d < bestDist then best, bestDist = chest, d end
                 end
             end
-            if best then TweenTP(best:GetPivot()) end
+            if best then SmoothMoveTo(best:GetPivot()) end
         end
     end)
 end)
 
 interval("HCMInterval", "AutoHCM", 0.3, function()
     pcall(function()
-        if not CheckHauntedCrew() then return end
+        if not IsHauntedCrewPresent() then return end
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
-            if v.Name == "Haunted Crew Member" and IsAlive(v) then
-                TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+            if v.Name == "Haunted Crew Member" and EntityIsAlive(v) then
+                SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
             end
         end
     end)
 end)
 
--- Sea Entity Combat (Shark, Terrorshark, Sea Beast, Leviathan, etc.)
+-- Sea Entity AttackTarget (Shark, Terrorshark, Sea Beast, Leviathan, etc.)
 SeaEventsProSection:AddToggle("AutoSharkEntity", { text = "Auto Shark", default = false })
 SeaEventsProSection:AddToggle("AutoTerrorEntity", { text = "Auto Terror Shark", default = false })
 SeaEventsProSection:AddToggle("AutoPiranhaEntity", { text = "Auto Piranha", default = false })
@@ -1792,10 +1802,10 @@ SeaEventsProSection:AddToggle("AutoLeviathanEntity", { text = "Auto Leviathan", 
 SeaEventsProSection:AddToggle("AutoFishBoatEntity", { text = "Auto Fish Boat", default = false })
 
 local SeaEntities = {
-    { flag = "AutoSharkEntity", name = "Shark", checker = CheckShark },
-    { flag = "AutoTerrorEntity", name = "Terrorshark", checker = CheckTerrorShark },
-    { flag = "AutoPiranhaEntity", name = "Piranha", checker = CheckPiranha },
-    { flag = "AutoFishCrewEntity", name = "Fish Crew Member", checker = CheckFishCrew },
+    { flag = "AutoSharkEntity", name = "Shark", checker = IsSharkPresent },
+    { flag = "AutoTerrorEntity", name = "Terrorshark", checker = IsTerrorSharkPresent },
+    { flag = "AutoPiranhaEntity", name = "Piranha", checker = IsPiranhaPresent },
+    { flag = "AutoFishCrewEntity", name = "Fish Crew Member", checker = IsFishCrewPresent },
 }
 
 for _, ent in ipairs(SeaEntities) do
@@ -1803,8 +1813,8 @@ for _, ent in ipairs(SeaEntities) do
         pcall(function()
             if not ent.checker() then return end
             for _, v in pairs(Workspace.Enemies:GetChildren()) do
-                if v.Name == ent.name and IsAlive(v) then
-                    TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+                if v.Name == ent.name and EntityIsAlive(v) then
+                    SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
                 end
             end
         end)
@@ -1813,11 +1823,11 @@ end
 
 interval("SBEntityInterval", "AutoSBEntity", 0.3, function()
     pcall(function()
-        if not CheckSeaBeast2() then return end
+        if not IsSeaBeastPresent() then return end
         for _, v in pairs(Workspace.SeaBeasts:GetChildren()) do
             if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Health") and v.Health.Value > 0 then
-                TweenTP(CFrame.new(v.HumanoidRootPart.Position.X, Workspace.Map["WaterBase-Plane"].Position.Y + 200, v.HumanoidRootPart.Position.Z))
-                EquipWeapon(v); Combat(v)
+                SmoothMoveTo(CFrame.new(v.HumanoidRootPart.Position.X, Workspace.Map["WaterBase-Plane"].Position.Y + 200, v.HumanoidRootPart.Position.Z))
+                SelectBestTool(v); AttackTarget(v)
             end
         end
     end)
@@ -1825,11 +1835,11 @@ end)
 
 interval("LeviathanEntityInterval", "AutoLeviathanEntity", 0.3, function()
     pcall(function()
-        if not CheckLeviathan() then return end
+        if not IsLeviathanPresent() then return end
         for _, v in pairs(Workspace.SeaBeasts:GetChildren()) do
             if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Leviathan Segment") then
-                TweenTP(v.HumanoidRootPart.CFrame * CFrame.new(0, 300, 0))
-                EquipWeapon(v); Combat(v)
+                SmoothMoveTo(v.HumanoidRootPart.CFrame * cf(0, 300, 0))
+                SelectBestTool(v); AttackTarget(v)
             end
         end
     end)
@@ -1839,8 +1849,8 @@ interval("FishBoatEntityInterval", "AutoFishBoatEntity", 0.3, function()
     pcall(function()
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
             if v:FindFirstChild("Health") and v.Health.Value > 0 and v:FindFirstChild("VehicleSeat") then
-                TweenTP(v.Engine.CFrame * CFrame.new(0, -50, -25))
-                EquipWeapon(v); Combat(v)
+                SmoothMoveTo(v.Engine.CFrame * cf(0, -50, -25))
+                SelectBestTool(v); AttackTarget(v)
             end
         end
     end)
@@ -1868,14 +1878,14 @@ interval("RaidInterval", "AutoRaid", 0.3, function()
         if raids then
             for _, zone in pairs(raids:GetChildren()) do
                 if zone.Name:lower():find(raidName:lower()) then
-                    TweenTP(zone.CFrame); break
+                    SmoothMoveTo(zone.CFrame); break
                 end
             end
         end
         if Library.Flags.AutoRaidChest then
             for _, v in pairs(Workspace:GetDescendants()) do
                 if v:IsA("Part") and v.Name:lower():find("chest") then
-                    local dist = getRoot() and (getRoot().Position - v.Position).Magnitude or math.huge
+                    local dist = GetHumanoidRootPart() and (GetHumanoidRootPart().Position - v.Position).Magnitude or math.huge
                     if dist < 50 then fireproximityprompt(v) end
                 end
             end
@@ -1890,23 +1900,23 @@ BossFarmSection:AddToggle("AutoDoughKing", { text = "Auto Dough King + Dungeon",
 BossFarmSection:AddToggle("AutoEliteHunter", { text = "Auto Elite Hunter", default = false })
 
 local CakePrinceMobs = {"Cookie Crafter", "Cake Guard", "Baking Staff", "Head Baker"}
-local CakeLoafCF = CFrame.new(-2077, 252, -12373)
-local DoughKingCF = CFrame.new(-1943.68, 251.51, -12337.88)
+local CakeLoafCF = cf(-2077, 252, -12373)
+local DoughKingCF = cf(-1943.68, 251.51, -12337.88)
 
 interval("CakePrinceInterval", "AutoCakePrince", 0.3, function()
     pcall(function()
         local mirror = Workspace.Map.CakeLoaf.BigMirror
         local cp = Workspace.Enemies:FindFirstChild("Cake Prince")
-        if cp and IsAlive(cp) then
-            TweenTP(cp.HumanoidRootPart.Position); EquipWeapon(cp); Combat(cp)
+        if cp and EntityIsAlive(cp) then
+            SmoothMoveTo(cp.HumanoidRootPart.Position); SelectBestTool(cp); AttackTarget(cp)
         elseif mirror and mirror:FindFirstChild("Other") and mirror.Other.Transparency == 0 then
-            TweenTP(CFrame.new(-2151.82, 149.32, -12404.91))
+            SmoothMoveTo(cf(-2151.82, 149.32, -12404.91))
         else
             local mob = GetConnectionEnemies and GetConnectionEnemies(CakePrinceMobs)
             if mob then
-                TweenTP(mob.HumanoidRootPart.Position); EquipWeapon(mob); Combat(mob)
+                SmoothMoveTo(mob.HumanoidRootPart.Position); SelectBestTool(mob); AttackTarget(mob)
             else
-                TweenTP(CakeLoafCF)
+                SmoothMoveTo(CakeLoafCF)
             end
         end
     end)
@@ -1919,10 +1929,10 @@ interval("DoughKingInterval", "AutoDoughKing", 0.3, function()
             pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("RaidsNpc", "Check") end)
         end
         local dk = Workspace.Enemies:FindFirstChild("Dough King")
-        if dk and IsAlive(dk) then
-            TweenTP(dk.HumanoidRootPart.Position); EquipWeapon(dk); Combat(dk)
+        if dk and EntityIsAlive(dk) then
+            SmoothMoveTo(dk.HumanoidRootPart.Position); SelectBestTool(dk); AttackTarget(dk)
         else
-            TweenTP(DoughKingCF)
+            SmoothMoveTo(DoughKingCF)
         end
     end)
 end)
@@ -1933,13 +1943,13 @@ interval("EliteHunterInterval", "AutoEliteHunter", 0.3, function()
         for _, name in ipairs(elites) do
             local elite = ReplicatedStorage:FindFirstChild(name)
             if elite and elite:FindFirstChild("HumanoidRootPart") then
-                TweenTP(elite.HumanoidRootPart.CFrame)
+                SmoothMoveTo(elite.HumanoidRootPart.CFrame)
             end
         end
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
             for _, name in ipairs(elites) do
-                if v.Name:find(name) and IsAlive(v) then
-                    TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+                if v.Name:find(name) and EntityIsAlive(v) then
+                    SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
                 end
             end
         end
@@ -1954,12 +1964,12 @@ RaceV4Section:AddToggle("AutoV4Trials", { text = "Auto Complete V4 Trials", defa
 RaceV4Section:AddToggle("AutoV4Train", { text = "Auto Train V4 Tier", default = false })
 
 local RaceTrialDoors = {
-    Human = CFrame.new(29237.29, 14889.43, -206.95),
-    Skypiea = CFrame.new(28967.41, 14918.08, 234.31),
-    Fishman = CFrame.new(28224.06, 14889.43, -210.59),
-    Cyborg = CFrame.new(28492.41, 14894.43, -422.11),
-    Ghoul = CFrame.new(28672.72, 14889.13, 454.60),
-    Mink = CFrame.new(29020.66, 14889.43, -379.27),
+    Human = cf(29237.29, 14889.43, -206.95),
+    Skypiea = cf(28967.41, 14918.08, 234.31),
+    Fishman = cf(28224.06, 14889.43, -210.59),
+    Cyborg = cf(28492.41, 14894.43, -422.11),
+    Ghoul = cf(28672.72, 14889.13, 454.60),
+    Mink = cf(29020.66, 14889.43, -379.27),
 }
 
 interval("V4TrialsInterval", "AutoV4Trials", 0.5, function()
@@ -1968,27 +1978,27 @@ interval("V4TrialsInterval", "AutoV4Trials", 0.5, function()
         if race == "Human" or race == "Ghoul" then
             for _, name in ipairs({"Ancient Vampire", "Ancient Zombie"}) do
                 local e = Workspace.Enemies:FindFirstChild(name)
-                if e and IsAlive(e) then
-                    TweenTP(e.HumanoidRootPart.Position); EquipWeapon(e); Combat(e)
+                if e and EntityIsAlive(e) then
+                    SmoothMoveTo(e.HumanoidRootPart.Position); SelectBestTool(e); AttackTarget(e)
                 end
             end
         elseif race == "Mink" then
             if Workspace.Map.MinkTrial and Workspace.Map.MinkTrial:FindFirstChild("Ceiling") then
-                getRoot().CFrame = Workspace.Map.MinkTrial.Ceiling.CFrame * CFrame.new(0, -20, 0)
+                GetHumanoidRootPart().CFrame = Workspace.Map.MinkTrial.Ceiling.CFrame * cf(0, -20, 0)
             end
         elseif race == "Fishman" then
             for _, v in pairs(Workspace.SeaBeasts:GetChildren()) do
                 if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Health") and v.Health.Value > 0 then
-                    TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+                    SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
                 end
             end
         elseif race == "Cyborg" then
             if Workspace.Map.CyborgTrial and Workspace.Map.CyborgTrial:FindFirstChild("Floor") then
-                TweenTP(Workspace.Map.CyborgTrial.Floor.CFrame * CFrame.new(0, 500, 0))
+                SmoothMoveTo(Workspace.Map.CyborgTrial.Floor.CFrame * cf(0, 500, 0))
             end
         elseif race == "Skypiea" then
             if Workspace.Map.SkyTrial then
-                getRoot().CFrame = Workspace.Map.SkyTrial.Model.FinishPart.CFrame
+                GetHumanoidRootPart().CFrame = Workspace.Map.SkyTrial.Model.FinishPart.CFrame
             end
         end
     end)
@@ -2000,18 +2010,18 @@ interval("V4TrainInterval", "AutoV4Train", 0.5, function()
         if raceEnergy and raceEnergy.Value == 1 then
             pcall(function() UserInputService:SendKeyEvent(true, "Y", false, game) end)
             pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Buy") end)
-            TweenTP(CFrame.new(-8987.04, 215.86, 5886.71))
+            SmoothMoveTo(cf(-8987.04, 215.86, 5886.71))
             return
         end
         local bones = {"Reborn Skeleton", "Living Zombie", "Demonic Soul", "Posessed Mummy"}
         for _, name in ipairs(bones) do
             local e = Workspace.Enemies:FindFirstChild(name)
-            if e and IsAlive(e) then
-                TweenTP(e.HumanoidRootPart.Position); EquipWeapon(e); Combat(e)
+            if e and EntityIsAlive(e) then
+                SmoothMoveTo(e.HumanoidRootPart.Position); SelectBestTool(e); AttackTarget(e)
                 return
             end
         end
-        TweenTP(CFrame.new(-9495.68, 453.59, 5977.35))
+        SmoothMoveTo(cf(-9495.68, 453.59, 5977.35))
     end)
 end)
 
@@ -2030,7 +2040,7 @@ RaceV4Section:AddDropdown("SelectV4Race", { text = "V4 Race", values = RaceV4Nam
 RaceV4Section:AddButton({ text = "Teleport to Tempus", callback = function()
     local race = Library.Flags.SelectV4Race or "Human"
     local data = RaceV4Data[race]
-    if data then TweenTP(data.CFrame) end
+    if data then SmoothMoveTo(data.CFrame) end
 end })
 
 interval("V4Interval", "AutoV4", 1, function()
@@ -2065,14 +2075,14 @@ for _, list in pairs(TeleportLocations) do for _, name in ipairs(list) do table.
 TeleportSection:AddDropdown("IslandSelect", { text = "Select Island", values = allIslands, default = allIslands[1] or "Jungle" })
 TeleportSection:AddButton({ text = "Teleport", callback = function()
     local island = Library.Flags.IslandSelect
-    if island then TeleportToIsland(island) end
+    if island then GoToIsland(island) end
 end })
 TeleportSection:AddButton({ text = "Teleport to Player", callback = function()
     local targetName = Library.Flags.SelectPlayer
     if targetName then
         local plr = GetPlayerFromName(targetName)
         if plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            TweenTP(plr.Character.HumanoidRootPart.Position); notify("Teleported to " .. plr.Name, "Teleport", "success")
+            SmoothMoveTo(plr.Character.HumanoidRootPart.Position); notify("Teleported to " .. plr.Name, "Teleport", "success")
         end
     end
 end })
@@ -2080,7 +2090,7 @@ TeleportSection:AddButton({ text = "Teleport to Spawn", callback = function()
     local spawns = Workspace:FindFirstChild("SpawnLocation")
     if spawns then
         local spawn = spawns:FindFirstChildWhichIsA("SpawnLocation")
-        if spawn then TweenTP(spawn.CFrame) end
+        if spawn then SmoothMoveTo(spawn.CFrame) end
     end
 end })
 
@@ -2105,7 +2115,7 @@ end)
 local PVPSection = MainTab:AddSection("PVP")
 
 PVPSection:AddToggle("PVPMode", { text = "PVP Mode", default = false })
-PVPSection:AddToggle("AutoDodge", { text = "Auto Dodge", default = true })
+PVPSection:AddToggle("DodgeFastProjectiles", { text = "Auto Dodge", default = true })
 PVPSection:AddToggle("AutoCombo", { text = "Auto Combo", default = false })
 PVPSection:AddToggle("AutoBounty", { text = "Auto Bounty Hunt", default = false })
 PVPSection:AddToggle("AutoDeath", { text = "Auto Respawn", default = false })
@@ -2114,17 +2124,17 @@ PVPSection:AddDropdown("PVPTargetMethod", { text = "Target Method", values = {"C
 
 interval("PVPInterval", "PVPMode", 0.15, function()
     pcall(function()
-        if Library.Flags.AutoDodge then AutoDodge() end
+        if Library.Flags.DodgeFastProjectiles then DodgeFastProjectiles() end
         if Library.Flags.AutoBounty then
             local method = Library.Flags.PVPTargetMethod or "Lowest Level"
             local target
             if method == "Lowest Level" then target = GetLowestLevel()
-            elseif method == "Closest" then target = GetClosestPlayer()
+            elseif method == "Closest" then target = FindNearestPlayer()
             end
             if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-                TweenTP(target.Character.HumanoidRootPart.Position)
-                if Library.Flags.AutoCombo then PVPCombo(target)
-                else EquipWeapon(target.Character); Combat(target.Character) end
+                SmoothMoveTo(target.Character.HumanoidRootPart.Position)
+                if Library.Flags.AutoCombo then PlayerComboSequence(target)
+                else SelectBestTool(target.Character); AttackTarget(target.Character) end
             end
         end
     end)
@@ -2199,16 +2209,16 @@ SettingsSection:AddToggle("AutoCollectFruit", { text = "Auto Collect Fruits", de
 SettingsSection:AddToggle("ShowFPS", { text = "Show FPS", default = false })
 SettingsSection:AddToggle("WebhookLogging", { text = "Webhook Logging", default = false })
 SettingsSection:AddInput("WebhookURL", { text = "Webhook URL", default = "", placeholder = "https://discord.com/api/webhooks/..." })
-SettingsSection:AddToggle("AutoHopLow", { text = "Auto Hop Low Players", default = false })
-SettingsSection:AddSlider("HopPlayerCount", { text = "Hop when ≤ players", min = 1, max = 15, default = 5 })
+SettingsSection:AddToggle("AutoHopLow", { text = "Auto ServerHop Low Players", default = false })
+SettingsSection:AddSlider("HopPlayerCount", { text = "ServerHop when ≤ players", min = 1, max = 15, default = 5 })
 SettingsSection:AddButton({ text = "Log Progress Now", callback = function() LogProgress() end })
-SettingsSection:AddButton({ text = "Server Hop", callback = Hop })
-SettingsSection:AddButton({ text = "Hop Low", callback = HopLow })
+SettingsSection:AddButton({ text = "Server ServerHop", callback = ServerHop })
+SettingsSection:AddButton({ text = "ServerHop Low", callback = HopLowPopulation })
 
 interval("HopInterval", "AutoHopLow", 30, function()
     pcall(function()
         local maxP = Library.Flags.HopPlayerCount or 5
-        if #Players:GetPlayers() <= maxP then HopLow() end
+        if #Players:GetPlayers() <= maxP then HopLowPopulation() end
     end)
 end)
 
@@ -2221,7 +2231,7 @@ interval("EnhanceInterval", "AutoEnhance", 3, function()
 end)
 
 interval("MasteryInterval", "AutoFarmMastery", 0.2, function()
-    pcall(FarmMastery)
+    pcall(TrainMastery)
 end)
 
 local InfoTab = NewTab("Info")
@@ -2236,10 +2246,10 @@ InfoSection:AddLabel("Sea: " .. CurrentSea)
 InfoSection:AddLabel("Place ID: " .. game.PlaceId)
 
 local AboutSection = InfoTab:AddSection("About")
-AboutSection:AddLabel("Ultimate Blox Fruits Hub v3.0")
-AboutSection:AddLabel("Ultimate Blox Fruits Hub v3.0")
-AboutSection:AddLabel("Library: Versus Airlines UI")
-AboutSection:AddButton({ text = "Copy Version", callback = function() setclipboard("Ultimate Blox Fruits Hub v3.0") end })
+AboutSection:AddLabel("AbyssalCore")
+AboutSection:AddLabel("AbyssalCore")
+AboutSection:AddLabel("Library: VA UI")
+AboutSection:AddButton({ text = "Copy Version", callback = function() setclipboard("AbyssalCore") end })
 
 local fpsGui = Instance.new("ScreenGui")
 fpsGui.Name = "FPSDisplay"; fpsGui.Enabled = false
@@ -2265,10 +2275,10 @@ client.CharacterAdded:Connect(function(char)
     wait(0.5)
     if Library.Flags.AutoDeath then
         local root = char:WaitForChild("HumanoidRootPart")
-        local target = GetClosestPlayer()
+        local target = FindNearestPlayer()
         if target and target.Character then
             local tr = target.Character:FindFirstChild("HumanoidRootPart")
-            if tr then TweenTP(tr.Position) end
+            if tr then SmoothMoveTo(tr.Position) end
         end
     end
 end)
@@ -2290,93 +2300,93 @@ for _, plr in pairs(Players:GetPlayers()) do
     PlayerDropdown:Update(vals)
 end
 
-notify("Ultimate Blox Fruits Hub v3.0 Loaded!", "Welcome", "success")
-print("=== Ultimate Blox Fruits Hub v3.0 Loaded Successfully ===")
+notify("AbyssalCore Loaded!", "Welcome", "success")
+print("=== AbyssalCore Loaded Successfully ===")
 print("=== Total lines: ~" .. #HttpService:JSONEncode({}) .. " (placeholder) ===")
 
 local QuestNPCData = {
-    ["BanditQuest1"] = { NPCName = "Bandit Quest Giver", CFrame = CFrame.new(1059.75, 15.95, 1550.75) },
-    ["JungleQuest1"] = { NPCName = "Jungle Quest Giver", CFrame = CFrame.new(-1603.5, 36.85, 155.5) },
-    ["JungleQuest2"] = { NPCName = "Jungle Quest Giver", CFrame = CFrame.new(-1603.5, 36.85, 155.5) },
-    ["BuggyQuest1"] = { NPCName = "Buggy Quest Giver", CFrame = CFrame.new(-1140.0, 4.5, 3827.0) },
-    ["BuggyQuest2"] = { NPCName = "Buggy Quest Giver", CFrame = CFrame.new(-1140.0, 4.5, 3827.0) },
-    ["DesertQuest1"] = { NPCName = "Desert Quest Giver", CFrame = CFrame.new(896.0, 6.4, 4390.0) },
-    ["DesertQuest2"] = { NPCName = "Desert Quest Giver", CFrame = CFrame.new(896.0, 6.4, 4390.0) },
-    ["SnowQuest1"] = { NPCName = "Snow Quest Giver", CFrame = CFrame.new(1386.0, 87.0, -1298.0) },
-    ["SnowQuest2"] = { NPCName = "Snow Quest Giver", CFrame = CFrame.new(1386.0, 87.0, -1298.0) },
-    ["MarineQuest2"] = { NPCName = "Marine Quest Giver", CFrame = CFrame.new(-5035.0, 28.5, 4324.0) },
-    ["SkyQuest1"] = { NPCName = "Sky Quest Giver", CFrame = CFrame.new(-4842.0, 717.5, -2623.0) },
-    ["SkyQuest2"] = { NPCName = "Sky Quest Giver", CFrame = CFrame.new(-4842.0, 717.5, -2623.0) },
-    ["PrisonerQuest1"] = { NPCName = "Prisoner Quest Giver", CFrame = CFrame.new(5310.5, 0.3, 475.0) },
-    ["PrisonerQuest2"] = { NPCName = "Prisoner Quest Giver", CFrame = CFrame.new(5310.5, 0.3, 475.0) },
-    ["ColosseumQuest1"] = { NPCName = "Colosseum Quest Giver", CFrame = CFrame.new(-1578.0, 7.4, -2984.0) },
-    ["ColosseumQuest2"] = { NPCName = "Colosseum Quest Giver", CFrame = CFrame.new(-1578.0, 7.4, -2984.0) },
-    ["MagmaQuest1"] = { NPCName = "Magma Quest Giver", CFrame = CFrame.new(-5316.0, 12.0, 8517.0) },
-    ["MagmaQuest2"] = { NPCName = "Magma Quest Giver", CFrame = CFrame.new(-5316.0, 12.0, 8517.0) },
-    ["FishmanQuest1"] = { NPCName = "Fishman Quest Giver", CFrame = CFrame.new(61122.0, 18.0, 1569.0) },
-    ["FishmanQuest2"] = { NPCName = "Fishman Quest Giver", CFrame = CFrame.new(61122.0, 18.0, 1569.0) },
-    ["SkyExp1Quest1"] = { NPCName = "Sky Exp Giver 1", CFrame = CFrame.new(-4722.0, 845.0, -1954.0) },
-    ["SkyExp1Quest2"] = { NPCName = "Sky Exp Giver 2", CFrame = CFrame.new(-7863.0, 5545.0, -378.0) },
-    ["SkyExp2Quest1"] = { NPCName = "Sky Exp Giver 3", CFrame = CFrame.new(-7903.0, 5636.0, -1411.0) },
-    ["SkyExp2Quest2"] = { NPCName = "Sky Exp Giver 3", CFrame = CFrame.new(-7903.0, 5636.0, -1411.0) },
-    ["FountainQuest1"] = { NPCName = "Fountain Giver", CFrame = CFrame.new(5258.0, 38.5, 4050.0) },
-    ["FountainQuest2"] = { NPCName = "Fountain Giver", CFrame = CFrame.new(5258.0, 38.5, 4050.0) },
-    ["Area1Quest1"] = { NPCName = "Area 1 Giver", CFrame = CFrame.new(-428.0, 73.0, 1836.0) },
-    ["Area1Quest2"] = { NPCName = "Area 1 Giver", CFrame = CFrame.new(-428.0, 73.0, 1836.0) },
-    ["Area2Quest1"] = { NPCName = "Area 2 Giver", CFrame = CFrame.new(635.5, 73.0, 918.0) },
-    ["Area2Quest2"] = { NPCName = "Area 2 Giver", CFrame = CFrame.new(635.5, 73.0, 918.0) },
-    ["MarineQuest3_1"] = { NPCName = "Marine 3 Giver", CFrame = CFrame.new(-2441.0, 73.0, -3218.0) },
-    ["MarineQuest3_2"] = { NPCName = "Marine 3 Giver", CFrame = CFrame.new(-2441.0, 73.0, -3218.0) },
-    ["ZombieQuest1"] = { NPCName = "Zombie Giver", CFrame = CFrame.new(-5494.0, 48.5, -795.0) },
-    ["ZombieQuest2"] = { NPCName = "Zombie Giver", CFrame = CFrame.new(-5494.0, 48.5, -795.0) },
-    ["SnowMountainQuest1"] = { NPCName = "Snow Mountain Giver", CFrame = CFrame.new(607.0, 401.0, -5370.5) },
-    ["SnowMountainQuest2"] = { NPCName = "Snow Mountain Giver", CFrame = CFrame.new(607.0, 401.0, -5370.5) },
-    ["IceSideQuest1"] = { NPCName = "Ice Side Giver", CFrame = CFrame.new(-6062.0, 15.9, -4902.0) },
-    ["IceSideQuest2"] = { NPCName = "Ice Side Giver", CFrame = CFrame.new(-6062.0, 15.9, -4902.0) },
-    ["FireSideQuest1"] = { NPCName = "Fire Side Giver", CFrame = CFrame.new(-5429.0, 15.9, -5298.0) },
-    ["FireSideQuest2"] = { NPCName = "Fire Side Giver", CFrame = CFrame.new(-5429.0, 15.9, -5298.0) },
-    ["ShipQuest1_1"] = { NPCName = "Ship Giver", CFrame = CFrame.new(1040.0, 125.0, 32911.0) },
-    ["ShipQuest1_2"] = { NPCName = "Ship Giver", CFrame = CFrame.new(1040.0, 125.0, 32911.0) },
-    ["ShipQuest2_1"] = { NPCName = "Ship Giver 2", CFrame = CFrame.new(971.0, 125.0, 33245.5) },
-    ["ShipQuest2_2"] = { NPCName = "Ship Giver 2", CFrame = CFrame.new(971.0, 125.0, 33245.5) },
-    ["FrostQuest1"] = { NPCName = "Frost Giver", CFrame = CFrame.new(5668.0, 28.0, -6484.5) },
-    ["FrostQuest2"] = { NPCName = "Frost Giver", CFrame = CFrame.new(5668.0, 28.0, -6484.5) },
-    ["ForgottenQuest1"] = { NPCName = "Forgotten Giver", CFrame = CFrame.new(-3054.5, 237.0, -10148.0) },
-    ["ForgottenQuest2"] = { NPCName = "Forgotten Giver", CFrame = CFrame.new(-3054.5, 237.0, -10148.0) },
-    ["PiratePortQuest1"] = { NPCName = "Pirate Port Giver", CFrame = CFrame.new(-290.0, 43.8, 5580.0) },
-    ["PiratePortQuest2"] = { NPCName = "Pirate Port Giver", CFrame = CFrame.new(-290.0, 43.8, 5580.0) },
-    ["AmazonQuest1"] = { NPCName = "Amazon Giver", CFrame = CFrame.new(5833.0, 51.5, -1103.0) },
-    ["AmazonQuest2"] = { NPCName = "Amazon Giver 2", CFrame = CFrame.new(5447.0, 601.5, 749.0) },
-    ["MarineTreeIsland1"] = { NPCName = "Marine Tree Giver", CFrame = CFrame.new(2180.0, 28.7, -6740.0) },
-    ["MarineTreeIsland2"] = { NPCName = "Marine Tree Giver", CFrame = CFrame.new(2180.0, 28.7, -6740.0) },
-    ["DeepForestIsland3_1"] = { NPCName = "Deep Forest 3 Giver", CFrame = CFrame.new(-10583.0, 331.5, -8758.0) },
-    ["DeepForestIsland3_2"] = { NPCName = "Deep Forest 3 Giver", CFrame = CFrame.new(-10583.0, 331.5, -8758.0) },
-    ["DeepForestIsland1"] = { NPCName = "Deep Forest 1 Giver", CFrame = CFrame.new(-13233.0, 332.0, -7626.5) },
-    ["DeepForestIsland2"] = { NPCName = "Deep Forest 2 Giver", CFrame = CFrame.new(-12682.0, 390.5, -9902.0) },
-    ["HauntedQuest1_1"] = { NPCName = "Haunted Giver", CFrame = CFrame.new(-9481.0, 142.0, 5566.0) },
-    ["HauntedQuest1_2"] = { NPCName = "Haunted Giver", CFrame = CFrame.new(-9481.0, 142.0, 5566.0) },
-    ["HauntedQuest2_1"] = { NPCName = "Haunted Giver 2", CFrame = CFrame.new(-9517.0, 178.0, 6078.0) },
-    ["HauntedQuest2_2"] = { NPCName = "Haunted Giver 2", CFrame = CFrame.new(-9517.0, 178.0, 6078.0) },
-    ["NutsIslandQuest1"] = { NPCName = "Nuts Giver", CFrame = CFrame.new(-2105.5, 37.2, -10195.5) },
-    ["NutsIslandQuest2"] = { NPCName = "Nuts Giver", CFrame = CFrame.new(-2105.5, 37.2, -10195.5) },
-    ["IceCreamIslandQuest1"] = { NPCName = "Ice Cream Giver", CFrame = CFrame.new(-819.3, 64.9, -10967.0) },
-    ["IceCreamIslandQuest2"] = { NPCName = "Ice Cream Giver", CFrame = CFrame.new(-819.3, 64.9, -10967.0) },
-    ["CakeQuest1_1"] = { NPCName = "Cake Giver", CFrame = CFrame.new(-2022.0, 36.9, -12031.0) },
-    ["CakeQuest1_2"] = { NPCName = "Cake Giver", CFrame = CFrame.new(-2022.0, 36.9, -12031.0) },
-    ["CakeQuest2_1"] = { NPCName = "Cake Giver 2", CFrame = CFrame.new(-1928.0, 37.7, -12840.5) },
-    ["CakeQuest2_2"] = { NPCName = "Cake Giver 2", CFrame = CFrame.new(-1928.0, 37.7, -12840.5) },
-    ["ChocQuest1_1"] = { NPCName = "Choco Giver", CFrame = CFrame.new(231.7, 23.9, -12200.0) },
-    ["ChocQuest1_2"] = { NPCName = "Choco Giver", CFrame = CFrame.new(231.7, 23.9, -12200.0) },
-    ["ChocQuest2_1"] = { NPCName = "Choco Giver 2", CFrame = CFrame.new(151.2, 23.9, -12774.5) },
-    ["ChocQuest2_2"] = { NPCName = "Choco Giver 2", CFrame = CFrame.new(151.2, 23.9, -12774.5) },
-    ["CandyQuest1_1"] = { NPCName = "Candy Giver", CFrame = CFrame.new(-1149.3, 13.5, -14445.5) },
-    ["CandyQuest1_2"] = { NPCName = "Candy Giver", CFrame = CFrame.new(-1149.3, 13.5, -14445.5) },
-    ["TikiQuest1_1"] = { NPCName = "Tiki Giver", CFrame = CFrame.new(-16550.0, 55.5, -180.0) },
-    ["TikiQuest1_2"] = { NPCName = "Tiki Giver", CFrame = CFrame.new(-16550.0, 55.5, -180.0) },
-    ["TikiQuest2_1"] = { NPCName = "Tiki Giver 2", CFrame = CFrame.new(-16541.0, 54.7, 1051.5) },
-    ["TikiQuest2_2"] = { NPCName = "Tiki Giver 2", CFrame = CFrame.new(-16541.0, 54.7, 1051.5) },
-    ["TikiQuest3_1"] = { NPCName = "Tiki Giver 3", CFrame = CFrame.new(-16665.0, 104.5, 1580.0) },
-    ["TikiQuest3_2"] = { NPCName = "Tiki Giver 3", CFrame = CFrame.new(-16665.0, 104.5, 1580.0) }
+    ["BanditQuest1"] = { NPCName = "Bandit Quest Giver", CFrame = cf(1059.75, 15.95, 1550.75) },
+    ["JungleQuest1"] = { NPCName = "Jungle Quest Giver", CFrame = cf(-1603.5, 36.85, 155.5) },
+    ["JungleQuest2"] = { NPCName = "Jungle Quest Giver", CFrame = cf(-1603.5, 36.85, 155.5) },
+    ["BuggyQuest1"] = { NPCName = "Buggy Quest Giver", CFrame = cf(-1140.0, 4.5, 3827.0) },
+    ["BuggyQuest2"] = { NPCName = "Buggy Quest Giver", CFrame = cf(-1140.0, 4.5, 3827.0) },
+    ["DesertQuest1"] = { NPCName = "Desert Quest Giver", CFrame = cf(896.0, 6.4, 4390.0) },
+    ["DesertQuest2"] = { NPCName = "Desert Quest Giver", CFrame = cf(896.0, 6.4, 4390.0) },
+    ["SnowQuest1"] = { NPCName = "Snow Quest Giver", CFrame = cf(1386.0, 87.0, -1298.0) },
+    ["SnowQuest2"] = { NPCName = "Snow Quest Giver", CFrame = cf(1386.0, 87.0, -1298.0) },
+    ["MarineQuest2"] = { NPCName = "Marine Quest Giver", CFrame = cf(-5035.0, 28.5, 4324.0) },
+    ["SkyQuest1"] = { NPCName = "Sky Quest Giver", CFrame = cf(-4842.0, 717.5, -2623.0) },
+    ["SkyQuest2"] = { NPCName = "Sky Quest Giver", CFrame = cf(-4842.0, 717.5, -2623.0) },
+    ["PrisonerQuest1"] = { NPCName = "Prisoner Quest Giver", CFrame = cf(5310.5, 0.3, 475.0) },
+    ["PrisonerQuest2"] = { NPCName = "Prisoner Quest Giver", CFrame = cf(5310.5, 0.3, 475.0) },
+    ["ColosseumQuest1"] = { NPCName = "Colosseum Quest Giver", CFrame = cf(-1578.0, 7.4, -2984.0) },
+    ["ColosseumQuest2"] = { NPCName = "Colosseum Quest Giver", CFrame = cf(-1578.0, 7.4, -2984.0) },
+    ["MagmaQuest1"] = { NPCName = "Magma Quest Giver", CFrame = cf(-5316.0, 12.0, 8517.0) },
+    ["MagmaQuest2"] = { NPCName = "Magma Quest Giver", CFrame = cf(-5316.0, 12.0, 8517.0) },
+    ["FishmanQuest1"] = { NPCName = "Fishman Quest Giver", CFrame = cf(61122.0, 18.0, 1569.0) },
+    ["FishmanQuest2"] = { NPCName = "Fishman Quest Giver", CFrame = cf(61122.0, 18.0, 1569.0) },
+    ["SkyExp1Quest1"] = { NPCName = "Sky Exp Giver 1", CFrame = cf(-4722.0, 845.0, -1954.0) },
+    ["SkyExp1Quest2"] = { NPCName = "Sky Exp Giver 2", CFrame = cf(-7863.0, 5545.0, -378.0) },
+    ["SkyExp2Quest1"] = { NPCName = "Sky Exp Giver 3", CFrame = cf(-7903.0, 5636.0, -1411.0) },
+    ["SkyExp2Quest2"] = { NPCName = "Sky Exp Giver 3", CFrame = cf(-7903.0, 5636.0, -1411.0) },
+    ["FountainQuest1"] = { NPCName = "Fountain Giver", CFrame = cf(5258.0, 38.5, 4050.0) },
+    ["FountainQuest2"] = { NPCName = "Fountain Giver", CFrame = cf(5258.0, 38.5, 4050.0) },
+    ["Area1Quest1"] = { NPCName = "Area 1 Giver", CFrame = cf(-428.0, 73.0, 1836.0) },
+    ["Area1Quest2"] = { NPCName = "Area 1 Giver", CFrame = cf(-428.0, 73.0, 1836.0) },
+    ["Area2Quest1"] = { NPCName = "Area 2 Giver", CFrame = cf(635.5, 73.0, 918.0) },
+    ["Area2Quest2"] = { NPCName = "Area 2 Giver", CFrame = cf(635.5, 73.0, 918.0) },
+    ["MarineQuest3_1"] = { NPCName = "Marine 3 Giver", CFrame = cf(-2441.0, 73.0, -3218.0) },
+    ["MarineQuest3_2"] = { NPCName = "Marine 3 Giver", CFrame = cf(-2441.0, 73.0, -3218.0) },
+    ["ZombieQuest1"] = { NPCName = "Zombie Giver", CFrame = cf(-5494.0, 48.5, -795.0) },
+    ["ZombieQuest2"] = { NPCName = "Zombie Giver", CFrame = cf(-5494.0, 48.5, -795.0) },
+    ["SnowMountainQuest1"] = { NPCName = "Snow Mountain Giver", CFrame = cf(607.0, 401.0, -5370.5) },
+    ["SnowMountainQuest2"] = { NPCName = "Snow Mountain Giver", CFrame = cf(607.0, 401.0, -5370.5) },
+    ["IceSideQuest1"] = { NPCName = "Ice Side Giver", CFrame = cf(-6062.0, 15.9, -4902.0) },
+    ["IceSideQuest2"] = { NPCName = "Ice Side Giver", CFrame = cf(-6062.0, 15.9, -4902.0) },
+    ["FireSideQuest1"] = { NPCName = "Fire Side Giver", CFrame = cf(-5429.0, 15.9, -5298.0) },
+    ["FireSideQuest2"] = { NPCName = "Fire Side Giver", CFrame = cf(-5429.0, 15.9, -5298.0) },
+    ["ShipQuest1_1"] = { NPCName = "Ship Giver", CFrame = cf(1040.0, 125.0, 32911.0) },
+    ["ShipQuest1_2"] = { NPCName = "Ship Giver", CFrame = cf(1040.0, 125.0, 32911.0) },
+    ["ShipQuest2_1"] = { NPCName = "Ship Giver 2", CFrame = cf(971.0, 125.0, 33245.5) },
+    ["ShipQuest2_2"] = { NPCName = "Ship Giver 2", CFrame = cf(971.0, 125.0, 33245.5) },
+    ["FrostQuest1"] = { NPCName = "Frost Giver", CFrame = cf(5668.0, 28.0, -6484.5) },
+    ["FrostQuest2"] = { NPCName = "Frost Giver", CFrame = cf(5668.0, 28.0, -6484.5) },
+    ["ForgottenQuest1"] = { NPCName = "Forgotten Giver", CFrame = cf(-3054.5, 237.0, -10148.0) },
+    ["ForgottenQuest2"] = { NPCName = "Forgotten Giver", CFrame = cf(-3054.5, 237.0, -10148.0) },
+    ["PiratePortQuest1"] = { NPCName = "Pirate Port Giver", CFrame = cf(-290.0, 43.8, 5580.0) },
+    ["PiratePortQuest2"] = { NPCName = "Pirate Port Giver", CFrame = cf(-290.0, 43.8, 5580.0) },
+    ["AmazonQuest1"] = { NPCName = "Amazon Giver", CFrame = cf(5833.0, 51.5, -1103.0) },
+    ["AmazonQuest2"] = { NPCName = "Amazon Giver 2", CFrame = cf(5447.0, 601.5, 749.0) },
+    ["MarineTreeIsland1"] = { NPCName = "Marine Tree Giver", CFrame = cf(2180.0, 28.7, -6740.0) },
+    ["MarineTreeIsland2"] = { NPCName = "Marine Tree Giver", CFrame = cf(2180.0, 28.7, -6740.0) },
+    ["DeepForestIsland3_1"] = { NPCName = "Deep Forest 3 Giver", CFrame = cf(-10583.0, 331.5, -8758.0) },
+    ["DeepForestIsland3_2"] = { NPCName = "Deep Forest 3 Giver", CFrame = cf(-10583.0, 331.5, -8758.0) },
+    ["DeepForestIsland1"] = { NPCName = "Deep Forest 1 Giver", CFrame = cf(-13233.0, 332.0, -7626.5) },
+    ["DeepForestIsland2"] = { NPCName = "Deep Forest 2 Giver", CFrame = cf(-12682.0, 390.5, -9902.0) },
+    ["HauntedQuest1_1"] = { NPCName = "Haunted Giver", CFrame = cf(-9481.0, 142.0, 5566.0) },
+    ["HauntedQuest1_2"] = { NPCName = "Haunted Giver", CFrame = cf(-9481.0, 142.0, 5566.0) },
+    ["HauntedQuest2_1"] = { NPCName = "Haunted Giver 2", CFrame = cf(-9517.0, 178.0, 6078.0) },
+    ["HauntedQuest2_2"] = { NPCName = "Haunted Giver 2", CFrame = cf(-9517.0, 178.0, 6078.0) },
+    ["NutsIslandQuest1"] = { NPCName = "Nuts Giver", CFrame = cf(-2105.5, 37.2, -10195.5) },
+    ["NutsIslandQuest2"] = { NPCName = "Nuts Giver", CFrame = cf(-2105.5, 37.2, -10195.5) },
+    ["IceCreamIslandQuest1"] = { NPCName = "Ice Cream Giver", CFrame = cf(-819.3, 64.9, -10967.0) },
+    ["IceCreamIslandQuest2"] = { NPCName = "Ice Cream Giver", CFrame = cf(-819.3, 64.9, -10967.0) },
+    ["CakeQuest1_1"] = { NPCName = "Cake Giver", CFrame = cf(-2022.0, 36.9, -12031.0) },
+    ["CakeQuest1_2"] = { NPCName = "Cake Giver", CFrame = cf(-2022.0, 36.9, -12031.0) },
+    ["CakeQuest2_1"] = { NPCName = "Cake Giver 2", CFrame = cf(-1928.0, 37.7, -12840.5) },
+    ["CakeQuest2_2"] = { NPCName = "Cake Giver 2", CFrame = cf(-1928.0, 37.7, -12840.5) },
+    ["ChocQuest1_1"] = { NPCName = "Choco Giver", CFrame = cf(231.7, 23.9, -12200.0) },
+    ["ChocQuest1_2"] = { NPCName = "Choco Giver", CFrame = cf(231.7, 23.9, -12200.0) },
+    ["ChocQuest2_1"] = { NPCName = "Choco Giver 2", CFrame = cf(151.2, 23.9, -12774.5) },
+    ["ChocQuest2_2"] = { NPCName = "Choco Giver 2", CFrame = cf(151.2, 23.9, -12774.5) },
+    ["CandyQuest1_1"] = { NPCName = "Candy Giver", CFrame = cf(-1149.3, 13.5, -14445.5) },
+    ["CandyQuest1_2"] = { NPCName = "Candy Giver", CFrame = cf(-1149.3, 13.5, -14445.5) },
+    ["TikiQuest1_1"] = { NPCName = "Tiki Giver", CFrame = cf(-16550.0, 55.5, -180.0) },
+    ["TikiQuest1_2"] = { NPCName = "Tiki Giver", CFrame = cf(-16550.0, 55.5, -180.0) },
+    ["TikiQuest2_1"] = { NPCName = "Tiki Giver 2", CFrame = cf(-16541.0, 54.7, 1051.5) },
+    ["TikiQuest2_2"] = { NPCName = "Tiki Giver 2", CFrame = cf(-16541.0, 54.7, 1051.5) },
+    ["TikiQuest3_1"] = { NPCName = "Tiki Giver 3", CFrame = cf(-16665.0, 104.5, 1580.0) },
+    ["TikiQuest3_2"] = { NPCName = "Tiki Giver 3", CFrame = cf(-16665.0, 104.5, 1580.0) }
 }
 
 local EnemyData = {
@@ -2473,66 +2483,66 @@ local EnemyData = {
 
 local FruitSpawnLocations = {
     ["Sea 1 Spawns"] = {
-        CFrame.new(1036.0, 20.0, 1428.0), CFrame.new(-1604.0, 40.0, 150.0),
-        CFrame.new(-1135.0, 10.0, 3820.0), CFrame.new(900.0, 12.0, 4380.0),
-        CFrame.new(1390.0, 90.0, -1300.0), CFrame.new(-5030.0, 32.0, 4320.0),
-        CFrame.new(-4840.0, 720.0, -2620.0), CFrame.new(5310.0, 5.0, 480.0),
-        CFrame.new(-1575.0, 12.0, -2980.0), CFrame.new(-5310.0, 18.0, 8510.0),
-        CFrame.new(61120.0, 22.0, 1570.0), CFrame.new(5250.0, 42.0, 4050.0)
+        cf(1036.0, 20.0, 1428.0), cf(-1604.0, 40.0, 150.0),
+        cf(-1135.0, 10.0, 3820.0), cf(900.0, 12.0, 4380.0),
+        cf(1390.0, 90.0, -1300.0), cf(-5030.0, 32.0, 4320.0),
+        cf(-4840.0, 720.0, -2620.0), cf(5310.0, 5.0, 480.0),
+        cf(-1575.0, 12.0, -2980.0), cf(-5310.0, 18.0, 8510.0),
+        cf(61120.0, 22.0, 1570.0), cf(5250.0, 42.0, 4050.0)
     },
     ["Sea 2 Spawns"] = {
-        CFrame.new(-430.0, 76.0, 1830.0), CFrame.new(640.0, 78.0, 920.0),
-        CFrame.new(-2440.0, 78.0, -3220.0), CFrame.new(-5490.0, 52.0, -800.0),
-        CFrame.new(610.0, 406.0, -5365.0), CFrame.new(-6060.0, 20.0, -4900.0),
-        CFrame.new(-5425.0, 20.0, -5295.0), CFrame.new(1045.0, 130.0, 32915.0),
-        CFrame.new(975.0, 130.0, 33250.0), CFrame.new(5665.0, 32.0, -6480.0),
-        CFrame.new(-3050.0, 240.0, -10145.0)
+        cf(-430.0, 76.0, 1830.0), cf(640.0, 78.0, 920.0),
+        cf(-2440.0, 78.0, -3220.0), cf(-5490.0, 52.0, -800.0),
+        cf(610.0, 406.0, -5365.0), cf(-6060.0, 20.0, -4900.0),
+        cf(-5425.0, 20.0, -5295.0), cf(1045.0, 130.0, 32915.0),
+        cf(975.0, 130.0, 33250.0), cf(5665.0, 32.0, -6480.0),
+        cf(-3050.0, 240.0, -10145.0)
     },
     ["Sea 3 Spawns"] = {
-        CFrame.new(-285.0, 48.0, 5575.0), CFrame.new(5830.0, 56.0, -1100.0),
-        CFrame.new(5450.0, 606.0, 745.0), CFrame.new(2185.0, 33.0, -6745.0),
-        CFrame.new(-10580.0, 336.0, -8755.0), CFrame.new(-13230.0, 336.0, -7625.0),
-        CFrame.new(-12680.0, 396.0, -9900.0), CFrame.new(-9478.0, 146.0, 5568.0),
-        CFrame.new(-9515.0, 182.0, 6080.0), CFrame.new(-2102.0, 42.0, -10192.0),
-        CFrame.new(-816.0, 70.0, -10964.0), CFrame.new(-2019.0, 42.0, -12028.0),
-        CFrame.new(-1925.0, 42.0, -12838.0), CFrame.new(235.0, 28.0, -12197.0),
-        CFrame.new(155.0, 28.0, -12772.0), CFrame.new(-1146.0, 18.0, -14442.0),
-        CFrame.new(-16546.0, 60.0, -176.0), CFrame.new(-16538.0, 60.0, 1055.0),
-        CFrame.new(-16662.0, 110.0, 1583.0)
+        cf(-285.0, 48.0, 5575.0), cf(5830.0, 56.0, -1100.0),
+        cf(5450.0, 606.0, 745.0), cf(2185.0, 33.0, -6745.0),
+        cf(-10580.0, 336.0, -8755.0), cf(-13230.0, 336.0, -7625.0),
+        cf(-12680.0, 396.0, -9900.0), cf(-9478.0, 146.0, 5568.0),
+        cf(-9515.0, 182.0, 6080.0), cf(-2102.0, 42.0, -10192.0),
+        cf(-816.0, 70.0, -10964.0), cf(-2019.0, 42.0, -12028.0),
+        cf(-1925.0, 42.0, -12838.0), cf(235.0, 28.0, -12197.0),
+        cf(155.0, 28.0, -12772.0), cf(-1146.0, 18.0, -14442.0),
+        cf(-16546.0, 60.0, -176.0), cf(-16538.0, 60.0, 1055.0),
+        cf(-16662.0, 110.0, 1583.0)
     }
 }
 
 local CombatRotations = {
     Melee = {
-        { Action = "Click", Delay = 0.05 },
-        { Action = "Click", Delay = 0.1 },
+        { Action = "SimulateAttackClick", Delay = 0.05 },
+        { Action = "SimulateAttackClick", Delay = 0.1 },
         { Action = "EquipTool", ToolType = "Melee", Delay = 0.05 },
-        { Action = "Click", Delay = 0.1 }
+        { Action = "SimulateAttackClick", Delay = 0.1 }
     },
     Sword = {
-        { Action = "Click", Delay = 0.05 },
+        { Action = "SimulateAttackClick", Delay = 0.05 },
         { Action = "EquipTool", ToolType = "Sword", Delay = 0.05 },
-        { Action = "Click", Delay = 0.15 },
-        { Action = "Click", Delay = 0.1 }
+        { Action = "SimulateAttackClick", Delay = 0.15 },
+        { Action = "SimulateAttackClick", Delay = 0.1 }
     },
     Fruit = {
-        { Action = "Click", Delay = 0.1 },
+        { Action = "SimulateAttackClick", Delay = 0.1 },
         { Action = "EquipTool", ToolType = "Blox Fruit", Delay = 0.1 },
-        { Action = "Click", Delay = 0.2 },
-        { Action = "Click", Delay = 0.15 }
+        { Action = "SimulateAttackClick", Delay = 0.2 },
+        { Action = "SimulateAttackClick", Delay = 0.15 }
     },
     Gun = {
-        { Action = "Click", Delay = 0.2 },
+        { Action = "SimulateAttackClick", Delay = 0.2 },
         { Action = "EquipTool", ToolType = "Gun", Delay = 0.1 },
-        { Action = "Click", Delay = 0.3 }
+        { Action = "SimulateAttackClick", Delay = 0.3 }
     }
 }
 
-local function PerformRotation(rotation, target)
+local function RotateAttackPattern(rotation, target)
     if not rotation then return end
     for _, step in ipairs(rotation) do
-        if target and IsAlive(target) then
-            if step.Action == "Click" then Click()
+        if target and EntityIsAlive(target) then
+            if step.Action == "SimulateAttackClick" then SimulateAttackClick()
             elseif step.Action == "EquipTool" then
                 for _, t in pairs(client.Backpack:GetChildren()) do
                     if t:IsA("Tool") and (t.ToolTip == step.ToolType or t.Name:find(step.ToolType)) then
@@ -2545,17 +2555,17 @@ local function PerformRotation(rotation, target)
     end
 end
 
-local function AdvancedCombat(target)
-    if not target or not IsAlive(target) then return end
+local function ExecuteAdvancedAttack(target)
+    if not target or not EntityIsAlive(target) then return end
     local weaponType = Library.Flags.CombatWeapon or "Melee"
     local rotation = CombatRotations[weaponType] or CombatRotations.Melee
-    PerformRotation(rotation, target)
-    Combat(target)
+    RotateAttackPattern(rotation, target)
+    AttackTarget(target)
 end
 
 local function CollectRaidChests()
     if not Library.Flags.AutoRaidChest then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("Part") and v.Name:lower():find("chest") and (root.Position - v.Position).Magnitude < 100 then
@@ -2585,10 +2595,10 @@ local function FarmFactory()
     local factory = Workspace:FindFirstChild("Factory") or Workspace:FindFirstChild("FactoryIsland")
     if factory then
         local core = factory:FindFirstChild("Core") or factory:FindFirstChildWhichIsA("Part")
-        if core then TweenTP(core.CFrame) end
+        if core then SmoothMoveTo(core.CFrame) end
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
-            if IsAlive(v) and (v.Name:find("Factory") or v.Name:find("Staff")) then
-                TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+            if EntityIsAlive(v) and (v.Name:find("Factory") or v.Name:find("Staff")) then
+                SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
             end
         end
     end
@@ -2605,12 +2615,12 @@ local function BartiloQuest()
     if Sea1 then
         local quest = client.PlayerGui:FindFirstChild("BartiloQuest")
         if not quest then
-            TweenTP(CFrame.new(5200.0, 38.5, 4040.0))
+            SmoothMoveTo(cf(5200.0, 38.5, 4040.0))
             wait(0.5)
         end
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
-            if v.Name == "Swan Pirate" and IsAlive(v) then
-                TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+            if v.Name == "Swan Pirate" and EntityIsAlive(v) then
+                SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
             end
         end
     end
@@ -2642,12 +2652,12 @@ local function ChampionQuest()
     if Sea3 then
         local quest = client.PlayerGui:FindFirstChild("ChampionQuest")
         if not quest then
-            TweenTP(CFrame.new(-16650.0, 56.0, -172.0))
+            SmoothMoveTo(cf(-16650.0, 56.0, -172.0))
             wait(0.5)
         end
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
-            if v.Name:find("Champion") or v.Name:find("Isle") and IsAlive(v) then
-                TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+            if v.Name:find("Champion") or v.Name:find("Isle") and EntityIsAlive(v) then
+                SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
             end
         end
     end
@@ -2745,13 +2755,13 @@ FriendSection:AddButton({ text = "Remove Friend", callback = function()
     local name = Library.Flags.FriendName
     if name then RemovePartyMember(name) end
 end })
-FriendSection:AddButton({ text = "TP to Friend", callback = TeleportToParty })
+FriendSection:AddButton({ text = "TP to Friend", callback = JoinPartyMember })
 
 local MiscSection = MainTab:AddSection("Utilities")
 MiscSection:AddButton({ text = "Rejoin Server", callback = function()
     TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId)
 end })
-MiscSection:AddButton({ text = "Server Hop", callback = Hop })
+MiscSection:AddButton({ text = "Server ServerHop", callback = ServerHop })
 MiscSection:AddButton({ text = "Copy Game ID", callback = function() setclipboard(tostring(game.PlaceId)) end })
 MiscSection:AddButton({ text = "Copy Job ID", callback = function() setclipboard(game.JobId) end })
 MiscSection:AddButton({ text = "Copy Player Name", callback = function() setclipboard(client.Name) end })
@@ -2769,8 +2779,8 @@ KeybindSection:AddButton({ text = "Set Toggle Keybind", callback = function()
     pcall(function() Library:SetOpenCloseKeybind(key.KeyCode) end)
 end })
 
-notify("Ultimate Blox Fruits Hub v3.0 Loaded!", "Welcome", "success")
-print("=== Ultimate Blox Fruits Hub v3.0 ===")
+notify("AbyssalCore Loaded!", "Welcome", "success")
+print("=== AbyssalCore ===")
 print("=== Loaded successfully ===")
 print("=== Sea: " .. CurrentSea .. " ===")
 print("=== Level: " .. (client.Data and client.Data.Level and client.Data.Level.Value or "?") .. " ===")
@@ -2791,209 +2801,209 @@ end
 local Sea1QuestsExpanded = {}
 Sea1QuestsExpanded[1] = MakeQuest(
     "Bandit", 1, "BanditQuest1", "Bandit",
-    CFrame.new(1059.75, 15.95, 1550.75),
-    CFrame.new(1040.5, 40.25, 1575.5),
-    "BanditQuest Giver", CFrame.new(1059.75, 15.95, 1550.75),
+    cf(1059.75, 15.95, 1550.75),
+    cf(1040.5, 40.25, 1575.5),
+    "BanditQuest Giver", cf(1059.75, 15.95, 1550.75),
     "XP + $100", "Melee", "Bandits spawn around Start Island"
 )
 
 Sea1QuestsExpanded[10] = MakeQuest(
     "Monkey", 1, "JungleQuest", "Monkey",
-    CFrame.new(-1603.5, 36.85, 155.5),
-    CFrame.new(-1450.0, 50.0, 65.0),
-    "Jungle Quest Giver", CFrame.new(-1603.5, 36.85, 155.5),
+    cf(-1603.5, 36.85, 155.5),
+    cf(-1450.0, 50.0, 65.0),
+    "Jungle Quest Giver", cf(-1603.5, 36.85, 155.5),
     "XP + $500", "Melee", "Monkeys are found in the trees of Jungle"
 )
 
 Sea1QuestsExpanded[15] = MakeQuest(
     "Gorilla", 2, "JungleQuest", "Gorilla",
-    CFrame.new(-1603.5, 36.85, 155.5),
-    CFrame.new(-1145.0, 40.0, -515.0),
-    "Jungle Quest Giver", CFrame.new(-1603.5, 36.85, 155.5),
+    cf(-1603.5, 36.85, 155.5),
+    cf(-1145.0, 40.0, -515.0),
+    "Jungle Quest Giver", cf(-1603.5, 36.85, 155.5),
     "XP + $800", "Melee", "Gorillas are deeper in Jungle near the river"
 )
 
 Sea1QuestsExpanded[30] = MakeQuest(
     "Pirate", 1, "BuggyQuest1", "Pirate",
-    CFrame.new(-1140.0, 4.5, 3827.0),
-    CFrame.new(-1200.0, 40.0, 3857.0),
-    "Buggy Quest Giver", CFrame.new(-1140.0, 4.5, 3827.0),
+    cf(-1140.0, 4.5, 3827.0),
+    cf(-1200.0, 40.0, 3857.0),
+    "Buggy Quest Giver", cf(-1140.0, 4.5, 3827.0),
     "XP + $1200", "Sword", "Pirates patrol Buggy Island's beach"
 )
 
 Sea1QuestsExpanded[40] = MakeQuest(
     "Brute", 2, "BuggyQuest1", "Brute",
-    CFrame.new(-1140.0, 4.5, 3827.0),
-    CFrame.new(-1385.0, 24.0, 4100.0),
-    "Buggy Quest Giver", CFrame.new(-1140.0, 4.5, 3827.0),
+    cf(-1140.0, 4.5, 3827.0),
+    cf(-1385.0, 24.0, 4100.0),
+    "Buggy Quest Giver", cf(-1140.0, 4.5, 3827.0),
     "XP + $1800", "Sword", "Brutes are in the back area of Buggy Island"
 )
 
 Sea1QuestsExpanded[60] = MakeQuest(
     "Desert Bandit", 1, "DesertQuest", "Desert Bandit",
-    CFrame.new(896.0, 6.4, 4390.0),
-    CFrame.new(985.0, 16.0, 4418.0),
-    "Desert Quest Giver", CFrame.new(896.0, 6.4, 4390.0),
+    cf(896.0, 6.4, 4390.0),
+    cf(985.0, 16.0, 4418.0),
+    "Desert Quest Giver", cf(896.0, 6.4, 4390.0),
     "XP + $2500", "Sword", "Desert Bandits roam the desert entrance"
 )
 
 Sea1QuestsExpanded[75] = MakeQuest(
     "Desert Officer", 2, "DesertQuest", "Desert Officer",
-    CFrame.new(896.0, 6.4, 4390.0),
-    CFrame.new(1547.0, 14.0, 4382.0),
-    "Desert Quest Giver", CFrame.new(896.0, 6.4, 4390.0),
+    cf(896.0, 6.4, 4390.0),
+    cf(1547.0, 14.0, 4382.0),
+    "Desert Quest Giver", cf(896.0, 6.4, 4390.0),
     "XP + $3500", "Sword", "Desert Officers patrol the pyramid area"
 )
 
 Sea1QuestsExpanded[90] = MakeQuest(
     "Snow Bandit", 1, "SnowQuest", "Snow Bandit",
-    CFrame.new(1386.0, 87.0, -1298.0),
-    CFrame.new(1358.0, 105.0, -1328.0),
-    "Snow Quest Giver", CFrame.new(1386.0, 87.0, -1298.0),
+    cf(1386.0, 87.0, -1298.0),
+    cf(1358.0, 105.0, -1328.0),
+    "Snow Quest Giver", cf(1386.0, 87.0, -1298.0),
     "XP + $4000", "Melee", "Snow Bandits are on the snowy slopes"
 )
 
 Sea1QuestsExpanded[100] = MakeQuest(
     "Snowman", 2, "SnowQuest", "Snowman",
-    CFrame.new(1386.0, 87.0, -1298.0),
-    CFrame.new(1220.0, 138.0, -1488.0),
-    "Snow Quest Giver", CFrame.new(1386.0, 87.0, -1298.0),
+    cf(1386.0, 87.0, -1298.0),
+    cf(1220.0, 138.0, -1488.0),
+    "Snow Quest Giver", cf(1386.0, 87.0, -1298.0),
     "XP + $5000", "Blox Fruit", "Snowmen are at the top of the mountain"
 )
 
 Sea1QuestsExpanded[120] = MakeQuest(
     "Chief Petty Officer", 1, "MarineQuest2", "Chief Petty Officer",
-    CFrame.new(-5035.0, 28.5, 4324.0),
-    CFrame.new(-4932.0, 65.0, 4122.0),
-    "Marine Quest Giver", CFrame.new(-5035.0, 28.5, 4324.0),
+    cf(-5035.0, 28.5, 4324.0),
+    cf(-4932.0, 65.0, 4122.0),
+    "Marine Quest Giver", cf(-5035.0, 28.5, 4324.0),
     "XP + $6000", "Sword", "Marine officers at Marine HQ"
 )
 
 Sea1QuestsExpanded[150] = MakeQuest(
     "Sky Bandit", 1, "SkyQuest", "Sky Bandit",
-    CFrame.new(-4842.0, 717.5, -2623.0),
-    CFrame.new(-4955.0, 365.0, -2908.0),
-    "Sky Quest Giver", CFrame.new(-4842.0, 717.5, -2623.0),
+    cf(-4842.0, 717.5, -2623.0),
+    cf(-4955.0, 365.0, -2908.0),
+    "Sky Quest Giver", cf(-4842.0, 717.5, -2623.0),
     "XP + $7500", "Blox Fruit", "Sky Bandits float between sky islands"
 )
 
 Sea1QuestsExpanded[175] = MakeQuest(
     "Dark Master", 2, "SkyQuest", "Dark Master",
-    CFrame.new(-4842.0, 717.5, -2623.0),
-    CFrame.new(-5148.0, 439.0, -2332.0),
-    "Sky Quest Giver", CFrame.new(-4842.0, 717.5, -2623.0),
+    cf(-4842.0, 717.5, -2623.0),
+    cf(-5148.0, 439.0, -2332.0),
+    "Sky Quest Giver", cf(-4842.0, 717.5, -2623.0),
     "XP + $9000", "Blox Fruit", "Dark Masters in the dark sky area"
 )
 
 Sea1QuestsExpanded[190] = MakeQuest(
     "Prisoner", 1, "PrisonerQuest", "Prisoner",
-    CFrame.new(5310.5, 0.3, 475.0),
-    CFrame.new(4937.0, 0.3, 649.5),
-    "Prisoner Quest Giver", CFrame.new(5310.5, 0.3, 475.0),
+    cf(5310.5, 0.3, 475.0),
+    cf(4937.0, 0.3, 649.5),
+    "Prisoner Quest Giver", cf(5310.5, 0.3, 475.0),
     "XP + $10000", "Melee", "Prisoners in the Prison Island courtyard"
 )
 
 Sea1QuestsExpanded[210] = MakeQuest(
     "Dangerous Prisoner", 2, "PrisonerQuest", "Dangerous Prisoner",
-    CFrame.new(5310.5, 0.3, 475.0),
-    CFrame.new(5100.0, 0.3, 1055.5),
-    "Prisoner Quest Giver", CFrame.new(5310.5, 0.3, 475.0),
+    cf(5310.5, 0.3, 475.0),
+    cf(5100.0, 0.3, 1055.5),
+    "Prisoner Quest Giver", cf(5310.5, 0.3, 475.0),
     "XP + $12000", "Sword", "Dangerous Prisoners in the back cells"
 )
 
 Sea1QuestsExpanded[250] = MakeQuest(
     "Toga Warrior", 1, "ColosseumQuest", "Toga Warrior",
-    CFrame.new(-1578.0, 7.4, -2984.0),
-    CFrame.new(-1872.0, 49.0, -2913.0),
-    "Colosseum Quest Giver", CFrame.new(-1578.0, 7.4, -2984.0),
+    cf(-1578.0, 7.4, -2984.0),
+    cf(-1872.0, 49.0, -2913.0),
+    "Colosseum Quest Giver", cf(-1578.0, 7.4, -2984.0),
     "XP + $15000", "Sword", "Toga Warriors inside the Colosseum"
 )
 
 Sea1QuestsExpanded[275] = MakeQuest(
     "Gladiator", 2, "ColosseumQuest", "Gladiator",
-    CFrame.new(-1578.0, 7.4, -2984.0),
-    CFrame.new(-1521.0, 81.0, -3066.0),
-    "Colosseum Quest Giver", CFrame.new(-1578.0, 7.4, -2984.0),
+    cf(-1578.0, 7.4, -2984.0),
+    cf(-1521.0, 81.0, -3066.0),
+    "Colosseum Quest Giver", cf(-1578.0, 7.4, -2984.0),
     "XP + $18000", "Sword", "Gladiators in the Colosseum arena"
 )
 
 Sea1QuestsExpanded[300] = MakeQuest(
     "Military Soldier", 1, "MagmaQuest", "Military Soldier",
-    CFrame.new(-5316.0, 12.0, 8517.0),
-    CFrame.new(-5369.0, 61.0, 8556.0),
-    "Magma Quest Giver", CFrame.new(-5316.0, 12.0, 8517.0),
+    cf(-5316.0, 12.0, 8517.0),
+    cf(-5369.0, 61.0, 8556.0),
+    "Magma Quest Giver", cf(-5316.0, 12.0, 8517.0),
     "XP + $20000", "Blox Fruit", "Military Soldiers guard Magma Village"
 )
 
 Sea1QuestsExpanded[325] = MakeQuest(
     "Military Spy", 2, "MagmaQuest", "Military Spy",
-    CFrame.new(-5316.0, 12.0, 8517.0),
-    CFrame.new(-5787.0, 75.0, 8651.5),
-    "Magma Quest Giver", CFrame.new(-5316.0, 12.0, 8517.0),
+    cf(-5316.0, 12.0, 8517.0),
+    cf(-5787.0, 75.0, 8651.5),
+    "Magma Quest Giver", cf(-5316.0, 12.0, 8517.0),
     "XP + $25000", "Blox Fruit", "Spies hide near the volcano rim"
 )
 
 Sea1QuestsExpanded[375] = MakeQuest(
     "Fishman Warrior", 1, "FishmanQuest", "Fishman Warrior",
-    CFrame.new(61122.0, 18.0, 1569.0),
-    CFrame.new(60844.0, 98.0, 1298.0),
-    "Fishman Quest Giver", CFrame.new(61122.0, 18.0, 1569.0),
+    cf(61122.0, 18.0, 1569.0),
+    cf(60844.0, 98.0, 1298.0),
+    "Fishman Quest Giver", cf(61122.0, 18.0, 1569.0),
     "XP + $30000", "Blox Fruit", "Fishman Warriors in underwater city"
 )
 
 Sea1QuestsExpanded[400] = MakeQuest(
     "Fishman Commando", 2, "FishmanQuest", "Fishman Commando",
-    CFrame.new(61122.0, 18.0, 1569.0),
-    CFrame.new(61738.0, 64.0, 1433.5),
-    "Fishman Quest Giver", CFrame.new(61122.0, 18.0, 1569.0),
+    cf(61122.0, 18.0, 1569.0),
+    cf(61738.0, 64.0, 1433.5),
+    "Fishman Quest Giver", cf(61122.0, 18.0, 1569.0),
     "XP + $35000", "Blox Fruit", "Fishman Commandos deeper underwater"
 )
 
 Sea1QuestsExpanded[450] = MakeQuest(
     "God's Guard", 1, "SkyExp1Quest", "God's Guard",
-    CFrame.new(-4722.0, 845.0, -1954.0),
-    CFrame.new(-4628.0, 866.0, -1931.0),
-    "Sky Exp Giver", CFrame.new(-4722.0, 845.0, -1954.0),
+    cf(-4722.0, 845.0, -1954.0),
+    cf(-4628.0, 866.0, -1931.0),
+    "Sky Exp Giver", cf(-4722.0, 845.0, -1954.0),
     "XP + $40000", "Sword", "God's Guards protect the sky temple"
 )
 
 Sea1QuestsExpanded[475] = MakeQuest(
     "Shanda", 2, "SkyExp1Quest", "Shanda",
-    CFrame.new(-7863.0, 5545.0, -378.0),
-    CFrame.new(-7685.0, 5601.0, -441.0),
-    "Sky Exp Giver 2", CFrame.new(-7863.0, 5545.0, -378.0),
+    cf(-7863.0, 5545.0, -378.0),
+    cf(-7685.0, 5601.0, -441.0),
+    "Sky Exp Giver 2", cf(-7863.0, 5545.0, -378.0),
     "XP + $45000", "Blox Fruit", "Shanda in the upper sky islands"
 )
 
 Sea1QuestsExpanded[525] = MakeQuest(
     "Royal Squad", 1, "SkyExp2Quest", "Royal Squad",
-    CFrame.new(-7903.0, 5636.0, -1411.0),
-    CFrame.new(-7654.0, 5637.0, -1407.5),
-    "Sky Exp Giver 3", CFrame.new(-7903.0, 5636.0, -1411.0),
+    cf(-7903.0, 5636.0, -1411.0),
+    cf(-7654.0, 5637.0, -1407.5),
+    "Sky Exp Giver 3", cf(-7903.0, 5636.0, -1411.0),
     "XP + $50000", "Sword", "Royal Squad guards the palace entrance"
 )
 
 Sea1QuestsExpanded[550] = MakeQuest(
     "Royal Soldier", 2, "SkyExp2Quest", "Royal Soldier",
-    CFrame.new(-7903.0, 5636.0, -1411.0),
-    CFrame.new(-7760.0, 5680.0, -1884.0),
-    "Sky Exp Giver 3", CFrame.new(-7903.0, 5636.0, -1411.0),
+    cf(-7903.0, 5636.0, -1411.0),
+    cf(-7760.0, 5680.0, -1884.0),
+    "Sky Exp Giver 3", cf(-7903.0, 5636.0, -1411.0),
     "XP + $55000", "Sword", "Royal Soldiers inside the palace"
 )
 
 Sea1QuestsExpanded[625] = MakeQuest(
     "Galley Pirate", 1, "FountainQuest", "Galley Pirate",
-    CFrame.new(5258.0, 38.5, 4050.0),
-    CFrame.new(5557.0, 152.0, 3998.5),
-    "Fountain Quest Giver", CFrame.new(5258.0, 38.5, 4050.0),
+    cf(5258.0, 38.5, 4050.0),
+    cf(5557.0, 152.0, 3998.5),
+    "Fountain Quest Giver", cf(5258.0, 38.5, 4050.0),
     "XP + $60000", "Blox Fruit", "Galley Pirates near the fountain"
 )
 
 Sea1QuestsExpanded[650] = MakeQuest(
     "Galley Captain", 2, "FountainQuest", "Galley Captain",
-    CFrame.new(5258.0, 38.5, 4050.0),
-    CFrame.new(5677.5, 92.0, 4966.0),
-    "Fountain Quest Giver", CFrame.new(5258.0, 38.5, 4050.0),
+    cf(5258.0, 38.5, 4050.0),
+    cf(5677.5, 92.0, 4966.0),
+    "Fountain Quest Giver", cf(5258.0, 38.5, 4050.0),
     "XP + $70000", "Sword", "Galley Captains at the mansion entrance"
 )
 
@@ -3001,177 +3011,177 @@ local Sea2QuestsExpanded = {}
 
 Sea2QuestsExpanded[700] = MakeQuest(
     "Raider", 1, "Area1Quest", "Raider",
-    CFrame.new(-428.0, 73.0, 1836.0),
-    CFrame.new(69.0, 93.5, 2430.0),
-    "Area 1 Quest Giver", CFrame.new(-428.0, 73.0, 1836.0),
+    cf(-428.0, 73.0, 1836.0),
+    cf(69.0, 93.5, 2430.0),
+    "Area 1 Quest Giver", cf(-428.0, 73.0, 1836.0),
     "XP + $75000", "Melee", "Raiders in the Green Zone hills"
 )
 
 Sea2QuestsExpanded[725] = MakeQuest(
     "Mercenary", 2, "Area1Quest", "Mercenary",
-    CFrame.new(-428.0, 73.0, 1836.0),
-    CFrame.new(-865.0, 122.0, 1453.0),
-    "Area 1 Quest Giver", CFrame.new(-428.0, 73.0, 1836.0),
+    cf(-428.0, 73.0, 1836.0),
+    cf(-865.0, 122.0, 1453.0),
+    "Area 1 Quest Giver", cf(-428.0, 73.0, 1836.0),
     "XP + $80000", "Sword", "Mercenaries near the Green Zone fortress"
 )
 
 Sea2QuestsExpanded[775] = MakeQuest(
     "Swan Pirate", 1, "Area2Quest", "Swan Pirate",
-    CFrame.new(635.5, 73.0, 918.0),
-    CFrame.new(1065.0, 137.5, 1324.0),
-    "Area 2 Quest Giver", CFrame.new(635.5, 73.0, 918.0),
+    cf(635.5, 73.0, 918.0),
+    cf(1065.0, 137.5, 1324.0),
+    "Area 2 Quest Giver", cf(635.5, 73.0, 918.0),
     "XP + $85000", "Sword", "Swan Pirates at Flamingo Island beach"
 )
 
 Sea2QuestsExpanded[800] = MakeQuest(
     "Factory Staff", 2, "Area2Quest", "Factory Staff",
-    CFrame.new(635.5, 73.0, 918.0),
-    CFrame.new(533.0, 128.0, 356.0),
-    "Area 2 Quest Giver", CFrame.new(635.5, 73.0, 918.0),
+    cf(635.5, 73.0, 918.0),
+    cf(533.0, 128.0, 356.0),
+    "Area 2 Quest Giver", cf(635.5, 73.0, 918.0),
     "XP + $90000", "Blox Fruit", "Factory Staff inside the Factory"
 )
 
 Sea2QuestsExpanded[875] = MakeQuest(
     "Marine Lieutenant", 1, "MarineQuest3", "Marine Lieutenant",
-    CFrame.new(-2441.0, 73.0, -3218.0),
-    CFrame.new(-2489.0, 84.5, -3152.0),
-    "Marine Quest Giver 3", CFrame.new(-2441.0, 73.0, -3218.0),
+    cf(-2441.0, 73.0, -3218.0),
+    cf(-2489.0, 84.5, -3152.0),
+    "Marine Quest Giver 3", cf(-2441.0, 73.0, -3218.0),
     "XP + $95000", "Sword", "Marine Lieutenants at Rose Kingdom HQ"
 )
 
 Sea2QuestsExpanded[900] = MakeQuest(
     "Marine Captain", 2, "MarineQuest3", "Marine Captain",
-    CFrame.new(-2441.0, 73.0, -3218.0),
-    CFrame.new(-2335.0, 79.5, -3246.0),
-    "Marine Quest Giver 3", CFrame.new(-2441.0, 73.0, -3218.0),
+    cf(-2441.0, 73.0, -3218.0),
+    cf(-2335.0, 79.5, -3246.0),
+    "Marine Quest Giver 3", cf(-2441.0, 73.0, -3218.0),
     "XP + $100000", "Sword", "Marine Captains inside the HQ building"
 )
 
 Sea2QuestsExpanded[950] = MakeQuest(
     "Zombie", 1, "ZombieQuest", "Zombie",
-    CFrame.new(-5494.0, 48.5, -795.0),
-    CFrame.new(-5536.0, 101.0, -835.5),
-    "Zombie Quest Giver", CFrame.new(-5494.0, 48.5, -795.0),
+    cf(-5494.0, 48.5, -795.0),
+    cf(-5536.0, 101.0, -835.5),
+    "Zombie Quest Giver", cf(-5494.0, 48.5, -795.0),
     "XP + $110000", "Blox Fruit", "Zombies wander Zombie Island"
 )
 
 Sea2QuestsExpanded[975] = MakeQuest(
     "Vampire", 2, "ZombieQuest", "Vampire",
-    CFrame.new(-5494.0, 48.5, -795.0),
-    CFrame.new(-5806.0, 16.5, -1164.0),
-    "Zombie Quest Giver", CFrame.new(-5494.0, 48.5, -795.0),
+    cf(-5494.0, 48.5, -795.0),
+    cf(-5806.0, 16.5, -1164.0),
+    "Zombie Quest Giver", cf(-5494.0, 48.5, -795.0),
     "XP + $120000", "Blox Fruit", "Vampires in the cave on Zombie Island"
 )
 
 Sea2QuestsExpanded[1000] = MakeQuest(
     "Snow Trooper", 1, "SnowMountainQuest", "Snow Trooper",
-    CFrame.new(607.0, 401.0, -5370.5),
-    CFrame.new(535.0, 432.5, -5485.0),
-    "Snow Mountain Quest Giver", CFrame.new(607.0, 401.0, -5370.5),
+    cf(607.0, 401.0, -5370.5),
+    cf(535.0, 432.5, -5485.0),
+    "Snow Mountain Quest Giver", cf(607.0, 401.0, -5370.5),
     "XP + $130000", "Sword", "Snow Troopers on the mountain slopes"
 )
 
 Sea2QuestsExpanded[1050] = MakeQuest(
     "Winter Warrior", 2, "SnowMountainQuest", "Winter Warrior",
-    CFrame.new(607.0, 401.0, -5370.5),
-    CFrame.new(1234.0, 456.5, -5174.0),
-    "Snow Mountain Quest Giver", CFrame.new(607.0, 401.0, -5370.5),
+    cf(607.0, 401.0, -5370.5),
+    cf(1234.0, 456.5, -5174.0),
+    "Snow Mountain Quest Giver", cf(607.0, 401.0, -5370.5),
     "XP + $140000", "Blox Fruit", "Winter Warriors at the summit"
 )
 
 Sea2QuestsExpanded[1100] = MakeQuest(
     "Lab Subordinate", 1, "IceSideQuest", "Lab Subordinate",
-    CFrame.new(-6062.0, 15.9, -4902.0),
-    CFrame.new(-5720.5, 63.0, -4784.5),
-    "Ice Side Quest Giver", CFrame.new(-6062.0, 15.9, -4902.0),
+    cf(-6062.0, 15.9, -4902.0),
+    cf(-5720.5, 63.0, -4784.5),
+    "Ice Side Quest Giver", cf(-6062.0, 15.9, -4902.0),
     "XP + $150000", "Blox Fruit", "Lab Subordinates near the Ice Lab"
 )
 
 Sea2QuestsExpanded[1125] = MakeQuest(
     "Horned Warrior", 2, "IceSideQuest", "Horned Warrior",
-    CFrame.new(-6062.0, 15.9, -4902.0),
-    CFrame.new(-6292.5, 91.0, -5502.5),
-    "Ice Side Quest Giver", CFrame.new(-6062.0, 15.9, -4902.0),
+    cf(-6062.0, 15.9, -4902.0),
+    cf(-6292.5, 91.0, -5502.5),
+    "Ice Side Quest Giver", cf(-6062.0, 15.9, -4902.0),
     "XP + $160000", "Sword", "Horned Warriors at the Ice Castle"
 )
 
 Sea2QuestsExpanded[1175] = MakeQuest(
     "Magma Ninja", 1, "FireSideQuest", "Magma Ninja",
-    CFrame.new(-5429.0, 15.9, -5298.0),
-    CFrame.new(-5462.0, 130.0, -5836.0),
-    "Fire Side Quest Giver", CFrame.new(-5429.0, 15.9, -5298.0),
+    cf(-5429.0, 15.9, -5298.0),
+    cf(-5462.0, 130.0, -5836.0),
+    "Fire Side Quest Giver", cf(-5429.0, 15.9, -5298.0),
     "XP + $170000", "Blox Fruit", "Magma Ninjas on Fire Island"
 )
 
 Sea2QuestsExpanded[1200] = MakeQuest(
     "Lava Pirate", 2, "FireSideQuest", "Lava Pirate",
-    CFrame.new(-5429.0, 15.9, -5298.0),
-    CFrame.new(-5251.0, 55.0, -4774.0),
-    "Fire Side Quest Giver", CFrame.new(-5429.0, 15.9, -5298.0),
+    cf(-5429.0, 15.9, -5298.0),
+    cf(-5251.0, 55.0, -4774.0),
+    "Fire Side Quest Giver", cf(-5429.0, 15.9, -5298.0),
     "XP + $180000", "Blox Fruit", "Lava Pirates at the volcano base"
 )
 
 Sea2QuestsExpanded[1250] = MakeQuest(
     "Ship Deckhand", 1, "ShipQuest1", "Ship Deckhand",
-    CFrame.new(1040.0, 125.0, 32911.0),
-    CFrame.new(921.0, 126.0, 33088.0),
-    "Ship Quest Giver", CFrame.new(1040.0, 125.0, 32911.0),
+    cf(1040.0, 125.0, 32911.0),
+    cf(921.0, 126.0, 33088.0),
+    "Ship Quest Giver", cf(1040.0, 125.0, 32911.0),
     "XP + $190000", "Melee", "Ship Deckhands on the decks"
 )
 
 Sea2QuestsExpanded[1275] = MakeQuest(
     "Ship Engineer", 2, "ShipQuest1", "Ship Engineer",
-    CFrame.new(1040.0, 125.0, 32911.0),
-    CFrame.new(886.0, 40.0, 32801.0),
-    "Ship Quest Giver", CFrame.new(1040.0, 125.0, 32911.0),
+    cf(1040.0, 125.0, 32911.0),
+    cf(886.0, 40.0, 32801.0),
+    "Ship Quest Giver", cf(1040.0, 125.0, 32911.0),
     "XP + $200000", "Sword", "Ship Engineers in the engine room"
 )
 
 Sea2QuestsExpanded[1300] = MakeQuest(
     "Ship Steward", 1, "ShipQuest2", "Ship Steward",
-    CFrame.new(971.0, 125.0, 33245.5),
-    CFrame.new(944.0, 129.5, 33444.0),
-    "Ship Quest Giver 2", CFrame.new(971.0, 125.0, 33245.5),
+    cf(971.0, 125.0, 33245.5),
+    cf(944.0, 129.5, 33444.0),
+    "Ship Quest Giver 2", cf(971.0, 125.0, 33245.5),
     "XP + $210000", "Blox Fruit", "Ship Stewards in the galley"
 )
 
 Sea2QuestsExpanded[1325] = MakeQuest(
     "Ship Officer", 2, "ShipQuest2", "Ship Officer",
-    CFrame.new(971.0, 125.0, 33245.5),
-    CFrame.new(955.0, 181.0, 33332.0),
-    "Ship Quest Giver 2", CFrame.new(971.0, 125.0, 33245.5),
+    cf(971.0, 125.0, 33245.5),
+    cf(955.0, 181.0, 33332.0),
+    "Ship Quest Giver 2", cf(971.0, 125.0, 33245.5),
     "XP + $220000", "Sword", "Ship Officers on the bridge"
 )
 
 Sea2QuestsExpanded[1350] = MakeQuest(
     "Arctic Warrior", 1, "FrostQuest", "Arctic Warrior",
-    CFrame.new(5668.0, 28.0, -6484.5),
-    CFrame.new(5935.0, 77.0, -6472.5),
-    "Frost Quest Giver", CFrame.new(5668.0, 28.0, -6484.5),
+    cf(5668.0, 28.0, -6484.5),
+    cf(5935.0, 77.0, -6472.5),
+    "Frost Quest Giver", cf(5668.0, 28.0, -6484.5),
     "XP + $230000", "Sword", "Arctic Warriors on Frost Island"
 )
 
 Sea2QuestsExpanded[1375] = MakeQuest(
     "Snow Lurker", 2, "FrostQuest", "Snow Lurker",
-    CFrame.new(5668.0, 28.0, -6484.5),
-    CFrame.new(5628.0, 57.5, -6618.0),
-    "Frost Quest Giver", CFrame.new(5668.0, 28.0, -6484.5),
+    cf(5668.0, 28.0, -6484.5),
+    cf(5628.0, 57.5, -6618.0),
+    "Frost Quest Giver", cf(5668.0, 28.0, -6484.5),
     "XP + $240000", "Blox Fruit", "Snow Lurkers in the Frost caves"
 )
 
 Sea2QuestsExpanded[1425] = MakeQuest(
     "Sea Soldier", 1, "ForgottenQuest", "Sea Soldier",
-    CFrame.new(-3054.5, 237.0, -10148.0),
-    CFrame.new(-3185.0, 58.5, -9663.5),
-    "Forgotten Quest Giver", CFrame.new(-3054.5, 237.0, -10148.0),
+    cf(-3054.5, 237.0, -10148.0),
+    cf(-3185.0, 58.5, -9663.5),
+    "Forgotten Quest Giver", cf(-3054.5, 237.0, -10148.0),
     "XP + $250000", "Blox Fruit", "Sea Soldiers on Forgotten Island shore"
 )
 
 Sea2QuestsExpanded[1450] = MakeQuest(
     "Water Fighter", 2, "ForgottenQuest", "Water Fighter",
-    CFrame.new(-3054.5, 237.0, -10148.0),
-    CFrame.new(-3263.0, 298.5, -10552.5),
-    "Forgotten Quest Giver", CFrame.new(-3054.5, 237.0, -10148.0),
+    cf(-3054.5, 237.0, -10148.0),
+    cf(-3263.0, 298.5, -10552.5),
+    "Forgotten Quest Giver", cf(-3054.5, 237.0, -10148.0),
     "XP + $260000", "Sword", "Water Fighters in Forgotten Island lake"
 )
 
@@ -3179,310 +3189,310 @@ local Sea3QuestsExpanded = {}
 
 Sea3QuestsExpanded[1500] = MakeQuest(
     "Pirate Millionaire", 1, "PiratePortQuest", "Pirate Millionaire",
-    CFrame.new(-290.0, 43.8, 5580.0),
-    CFrame.new(-435.5, 189.5, 5551.0),
-    "Pirate Port Quest Giver", CFrame.new(-290.0, 43.8, 5580.0),
+    cf(-290.0, 43.8, 5580.0),
+    cf(-435.5, 189.5, 5551.0),
+    "Pirate Port Quest Giver", cf(-290.0, 43.8, 5580.0),
     "XP + $270000", "Melee", "Pirate Millionaires at Port Town"
 )
 
 Sea3QuestsExpanded[1525] = MakeQuest(
     "Pistol Billionaire", 2, "PiratePortQuest", "Pistol Billionaire",
-    CFrame.new(-290.0, 43.8, 5580.0),
-    CFrame.new(-236.5, 217.0, 6006.0),
-    "Pirate Port Quest Giver", CFrame.new(-290.0, 43.8, 5580.0),
+    cf(-290.0, 43.8, 5580.0),
+    cf(-236.5, 217.0, 6006.0),
+    "Pirate Port Quest Giver", cf(-290.0, 43.8, 5580.0),
     "XP + $280000", "Gun", "Pistol Billionaires on the rooftops"
 )
 
 Sea3QuestsExpanded[1575] = MakeQuest(
     "Dragon Crew Warrior", 1, "AmazonQuest", "Dragon Crew Warrior",
-    CFrame.new(5833.0, 51.5, -1103.0),
-    CFrame.new(6302.0, 104.5, -1082.5),
-    "Amazon Quest Giver", CFrame.new(5833.0, 51.5, -1103.0),
+    cf(5833.0, 51.5, -1103.0),
+    cf(6302.0, 104.5, -1082.5),
+    "Amazon Quest Giver", cf(5833.0, 51.5, -1103.0),
     "XP + $290000", "Sword", "Dragon Crew Warriors at Amazon entrance"
 )
 
 Sea3QuestsExpanded[1600] = MakeQuest(
     "Dragon Crew Archer", 2, "AmazonQuest", "Dragon Crew Archer",
-    CFrame.new(5833.0, 51.5, -1103.0),
-    CFrame.new(6831.0, 441.5, 446.5),
-    "Amazon Quest Giver", CFrame.new(5833.0, 51.5, -1103.0),
+    cf(5833.0, 51.5, -1103.0),
+    cf(6831.0, 441.5, 446.5),
+    "Amazon Quest Giver", cf(5833.0, 51.5, -1103.0),
     "XP + $300000", "Gun", "Dragon Crew Archers on the walls"
 )
 
 Sea3QuestsExpanded[1625] = MakeQuest(
     "Female Islander", 1, "AmazonQuest2", "Female Islander",
-    CFrame.new(5447.0, 601.5, 749.0),
-    CFrame.new(5792.5, 848.0, 1084.0),
-    "Amazon Quest Giver 2", CFrame.new(5447.0, 601.5, 749.0),
+    cf(5447.0, 601.5, 749.0),
+    cf(5792.5, 848.0, 1084.0),
+    "Amazon Quest Giver 2", cf(5447.0, 601.5, 749.0),
     "XP + $310000", "Blox Fruit", "Female Islanders in the Amazon village"
 )
 
 Sea3QuestsExpanded[1650] = MakeQuest(
     "Giant Islander", 2, "AmazonQuest2", "Giant Islander",
-    CFrame.new(5447.0, 601.5, 749.0),
-    CFrame.new(5010.0, 664.0, -41.0),
-    "Amazon Quest Giver 2", CFrame.new(5447.0, 601.5, 749.0),
+    cf(5447.0, 601.5, 749.0),
+    cf(5010.0, 664.0, -41.0),
+    "Amazon Quest Giver 2", cf(5447.0, 601.5, 749.0),
     "XP + $320000", "Sword", "Giant Islanders near the Amazon lake"
 )
 
 Sea3QuestsExpanded[1700] = MakeQuest(
     "Marine Commodore", 1, "MarineTreeIsland", "Marine Commodore",
-    CFrame.new(2180.0, 28.7, -6740.0),
-    CFrame.new(2198.0, 128.5, -7109.0),
-    "Marine Tree Quest Giver", CFrame.new(2180.0, 28.7, -6740.0),
+    cf(2180.0, 28.7, -6740.0),
+    cf(2198.0, 128.5, -7109.0),
+    "Marine Tree Quest Giver", cf(2180.0, 28.7, -6740.0),
     "XP + $330000", "Sword", "Marine Commodores at Marine Tree base"
 )
 
 Sea3QuestsExpanded[1725] = MakeQuest(
     "Marine Rear Admiral", 2, "MarineTreeIsland", "Marine Rear Admiral",
-    CFrame.new(2180.0, 28.7, -6740.0),
-    CFrame.new(3294.0, 385.0, -7048.5),
-    "Marine Tree Quest Giver", CFrame.new(2180.0, 28.7, -6740.0),
+    cf(2180.0, 28.7, -6740.0),
+    cf(3294.0, 385.0, -7048.5),
+    "Marine Tree Quest Giver", cf(2180.0, 28.7, -6740.0),
     "XP + $340000", "Blox Fruit", "Rear Admirals at Marine Tree top"
 )
 
 Sea3QuestsExpanded[1775] = MakeQuest(
     "Fishman Raider", 1, "DeepForestIsland3", "Fishman Raider",
-    CFrame.new(-10583.0, 331.5, -8758.0),
-    CFrame.new(-10553.0, 521.0, -8177.0),
-    "Deep Forest 3 Quest Giver", CFrame.new(-10583.0, 331.5, -8758.0),
+    cf(-10583.0, 331.5, -8758.0),
+    cf(-10553.0, 521.0, -8177.0),
+    "Deep Forest 3 Quest Giver", cf(-10583.0, 331.5, -8758.0),
     "XP + $350000", "Blox Fruit", "Fishman Raiders in Deep Forest"
 )
 
 Sea3QuestsExpanded[1800] = MakeQuest(
     "Fishman Captain", 2, "DeepForestIsland3", "Fishman Captain",
-    CFrame.new(-10583.0, 331.5, -8758.0),
-    CFrame.new(-10789.0, 427.0, -9131.0),
-    "Deep Forest 3 Quest Giver", CFrame.new(-10583.0, 331.5, -8758.0),
+    cf(-10583.0, 331.5, -8758.0),
+    cf(-10789.0, 427.0, -9131.0),
+    "Deep Forest 3 Quest Giver", cf(-10583.0, 331.5, -8758.0),
     "XP + $360000", "Sword", "Fishman Captains at the waterfall"
 )
 
 Sea3QuestsExpanded[1825] = MakeQuest(
     "Forest Pirate", 1, "DeepForestIsland", "Forest Pirate",
-    CFrame.new(-13233.0, 332.0, -7626.5),
-    CFrame.new(-13489.0, 400.0, -7770.0),
-    "Deep Forest 1 Quest Giver", CFrame.new(-13233.0, 332.0, -7626.5),
+    cf(-13233.0, 332.0, -7626.5),
+    cf(-13489.0, 400.0, -7770.0),
+    "Deep Forest 1 Quest Giver", cf(-13233.0, 332.0, -7626.5),
     "XP + $370000", "Sword", "Forest Pirates in the woods"
 )
 
 Sea3QuestsExpanded[1850] = MakeQuest(
     "Mythological Pirate", 2, "DeepForestIsland", "Mythological Pirate",
-    CFrame.new(-13233.0, 332.0, -7626.5),
-    CFrame.new(-13508.5, 582.0, -6985.0),
-    "Deep Forest 1 Quest Giver", CFrame.new(-13233.0, 332.0, -7626.5),
+    cf(-13233.0, 332.0, -7626.5),
+    cf(-13508.5, 582.0, -6985.0),
+    "Deep Forest 1 Quest Giver", cf(-13233.0, 332.0, -7626.5),
     "XP + $380000", "Blox Fruit", "Mythological Pirates at the temple"
 )
 
 Sea3QuestsExpanded[1900] = MakeQuest(
     "Jungle Pirate", 1, "DeepForestIsland2", "Jungle Pirate",
-    CFrame.new(-12682.0, 390.5, -9902.0),
-    CFrame.new(-12267.0, 459.5, -10277.0),
-    "Deep Forest 2 Quest Giver", CFrame.new(-12682.0, 390.5, -9902.0),
+    cf(-12682.0, 390.5, -9902.0),
+    cf(-12267.0, 459.5, -10277.0),
+    "Deep Forest 2 Quest Giver", cf(-12682.0, 390.5, -9902.0),
     "XP + $390000", "Melee", "Jungle Pirates in the thick forest"
 )
 
 Sea3QuestsExpanded[1925] = MakeQuest(
     "Musketeer Pirate", 2, "DeepForestIsland2", "Musketeer Pirate",
-    CFrame.new(-12682.0, 390.5, -9902.0),
-    CFrame.new(-13291.5, 520.0, -9904.5),
-    "Deep Forest 2 Quest Giver", CFrame.new(-12682.0, 390.5, -9902.0),
+    cf(-12682.0, 390.5, -9902.0),
+    cf(-13291.5, 520.0, -9904.5),
+    "Deep Forest 2 Quest Giver", cf(-12682.0, 390.5, -9902.0),
     "XP + $400000", "Gun", "Musketeer Pirates on the lookout"
 )
 
 Sea3QuestsExpanded[1975] = MakeQuest(
     "Reborn Skeleton", 1, "HauntedQuest1", "Reborn Skeleton",
-    CFrame.new(-9481.0, 142.0, 5566.0),
-    CFrame.new(-8762.0, 183.0, 6168.0),
-    "Haunted Quest Giver", CFrame.new(-9481.0, 142.0, 5566.0),
+    cf(-9481.0, 142.0, 5566.0),
+    cf(-8762.0, 183.0, 6168.0),
+    "Haunted Quest Giver", cf(-9481.0, 142.0, 5566.0),
     "XP + $410000", "Blox Fruit", "Reborn Skeletons at the Haunted Castle gate"
 )
 
 Sea3QuestsExpanded[2000] = MakeQuest(
     "Living Zombie", 2, "HauntedQuest1", "Living Zombie",
-    CFrame.new(-9481.0, 142.0, 5566.0),
-    CFrame.new(-10104.0, 238.5, 6180.0),
-    "Haunted Quest Giver", CFrame.new(-9481.0, 142.0, 5566.0),
+    cf(-9481.0, 142.0, 5566.0),
+    cf(-10104.0, 238.5, 6180.0),
+    "Haunted Quest Giver", cf(-9481.0, 142.0, 5566.0),
     "XP + $420000", "Blox Fruit", "Living Zombies in the castle halls"
 )
 
 Sea3QuestsExpanded[2025] = MakeQuest(
     "Demonic Soul", 1, "HauntedQuest2", "Demonic Soul",
-    CFrame.new(-9517.0, 178.0, 6078.0),
-    CFrame.new(-9712.0, 204.5, 6193.0),
-    "Haunted Quest Giver 2", CFrame.new(-9517.0, 178.0, 6078.0),
+    cf(-9517.0, 178.0, 6078.0),
+    cf(-9712.0, 204.5, 6193.0),
+    "Haunted Quest Giver 2", cf(-9517.0, 178.0, 6078.0),
     "XP + $430000", "Sword", "Demonic Souls in the Haunted courtyard"
 )
 
 Sea3QuestsExpanded[2050] = MakeQuest(
     "Posessed Mummy", 2, "HauntedQuest2", "Posessed Mummy",
-    CFrame.new(-9517.0, 178.0, 6078.0),
-    CFrame.new(-9545.5, 69.5, 6339.5),
-    "Haunted Quest Giver 2", CFrame.new(-9517.0, 178.0, 6078.0),
+    cf(-9517.0, 178.0, 6078.0),
+    cf(-9545.5, 69.5, 6339.5),
+    "Haunted Quest Giver 2", cf(-9517.0, 178.0, 6078.0),
     "XP + $440000", "Blox Fruit", "Posessed Mummies in the crypt"
 )
 
 Sea3QuestsExpanded[2075] = MakeQuest(
     "Peanut Scout", 1, "NutsIslandQuest", "Peanut Scout",
-    CFrame.new(-2105.5, 37.2, -10195.5),
-    CFrame.new(-2150.5, 122.0, -10359.0),
-    "Nuts Island Quest Giver", CFrame.new(-2105.5, 37.2, -10195.5),
+    cf(-2105.5, 37.2, -10195.5),
+    cf(-2150.5, 122.0, -10359.0),
+    "Nuts Island Quest Giver", cf(-2105.5, 37.2, -10195.5),
     "XP + $450000", "Melee", "Peanut Scouts on Nuts Island"
 )
 
 Sea3QuestsExpanded[2100] = MakeQuest(
     "Peanut President", 2, "NutsIslandQuest", "Peanut President",
-    CFrame.new(-2105.5, 37.2, -10195.5),
-    CFrame.new(-2150.5, 122.0, -10359.0),
-    "Nuts Island Quest Giver", CFrame.new(-2105.5, 37.2, -10195.5),
+    cf(-2105.5, 37.2, -10195.5),
+    cf(-2150.5, 122.0, -10359.0),
+    "Nuts Island Quest Giver", cf(-2105.5, 37.2, -10195.5),
     "XP + $460000", "Sword", "Peanut Presidents at the Nuts Island top"
 )
 
 Sea3QuestsExpanded[2125] = MakeQuest(
     "Ice Cream Chef", 1, "IceCreamIslandQuest", "Ice Cream Chef",
-    CFrame.new(-819.3, 64.9, -10967.0),
-    CFrame.new(-790.0, 209.0, -11010.0),
-    "Ice Cream Island Quest Giver", CFrame.new(-819.3, 64.9, -10967.0),
+    cf(-819.3, 64.9, -10967.0),
+    cf(-790.0, 209.0, -11010.0),
+    "Ice Cream Island Quest Giver", cf(-819.3, 64.9, -10967.0),
     "XP + $470000", "Sword", "Ice Cream Chefs on Ice Cream Island"
 )
 
 Sea3QuestsExpanded[2150] = MakeQuest(
     "Ice Cream Commander", 2, "IceCreamIslandQuest", "Ice Cream Commander",
-    CFrame.new(-819.3, 64.9, -10967.0),
-    CFrame.new(-790.0, 209.0, -11010.0),
-    "Ice Cream Island Quest Giver", CFrame.new(-819.3, 64.9, -10967.0),
+    cf(-819.3, 64.9, -10967.0),
+    cf(-790.0, 209.0, -11010.0),
+    "Ice Cream Island Quest Giver", cf(-819.3, 64.9, -10967.0),
     "XP + $480000", "Blox Fruit", "Ice Cream Commanders at the peak"
 )
 
 Sea3QuestsExpanded[2200] = MakeQuest(
     "Cookie Crafter", 1, "CakeQuest1", "Cookie Crafter",
-    CFrame.new(-2022.0, 36.9, -12031.0),
-    CFrame.new(-2322.0, 36.5, -12217.0),
-    "Cake Island Quest Giver", CFrame.new(-2022.0, 36.9, -12031.0),
+    cf(-2022.0, 36.9, -12031.0),
+    cf(-2322.0, 36.5, -12217.0),
+    "Cake Island Quest Giver", cf(-2022.0, 36.9, -12031.0),
     "XP + $490000", "Melee", "Cookie Crafters on Cake Island"
 )
 
 Sea3QuestsExpanded[2225] = MakeQuest(
     "Cake Guard", 2, "CakeQuest1", "Cake Guard",
-    CFrame.new(-2022.0, 36.9, -12031.0),
-    CFrame.new(-1418.0, 36.5, -12255.5),
-    "Cake Island Quest Giver", CFrame.new(-2022.0, 36.9, -12031.0),
+    cf(-2022.0, 36.9, -12031.0),
+    cf(-1418.0, 36.5, -12255.5),
+    "Cake Island Quest Giver", cf(-2022.0, 36.9, -12031.0),
     "XP + $500000", "Sword", "Cake Guards at the cake fortress"
 )
 
 Sea3QuestsExpanded[2250] = MakeQuest(
     "Baking Staff", 1, "CakeQuest2", "Baking Staff",
-    CFrame.new(-1928.0, 37.7, -12840.5),
-    CFrame.new(-1980.0, 36.5, -12984.0),
-    "Cake Island Quest Giver 2", CFrame.new(-1928.0, 37.7, -12840.5),
+    cf(-1928.0, 37.7, -12840.5),
+    cf(-1980.0, 36.5, -12984.0),
+    "Cake Island Quest Giver 2", cf(-1928.0, 37.7, -12840.5),
     "XP + $510000", "Blox Fruit", "Baking Staff in the kitchen area"
 )
 
 Sea3QuestsExpanded[2275] = MakeQuest(
     "Head Baker", 2, "CakeQuest2", "Head Baker",
-    CFrame.new(-1928.0, 37.7, -12840.5),
-    CFrame.new(-2251.5, 52.0, -13033.0),
-    "Cake Island Quest Giver 2", CFrame.new(-1928.0, 37.7, -12840.5),
+    cf(-1928.0, 37.7, -12840.5),
+    cf(-2251.5, 52.0, -13033.0),
+    "Cake Island Quest Giver 2", cf(-1928.0, 37.7, -12840.5),
     "XP + $520000", "Sword", "Head Bakers in the main hall"
 )
 
 Sea3QuestsExpanded[2300] = MakeQuest(
     "Cocoa Warrior", 1, "ChocQuest1", "Cocoa Warrior",
-    CFrame.new(231.7, 23.9, -12200.0),
-    CFrame.new(168.0, 26.0, -12239.0),
-    "Chocolate Island Quest Giver", CFrame.new(231.7, 23.9, -12200.0),
+    cf(231.7, 23.9, -12200.0),
+    cf(168.0, 26.0, -12239.0),
+    "Chocolate Island Quest Giver", cf(231.7, 23.9, -12200.0),
     "XP + $530000", "Melee", "Cocoa Warriors on Chocolate Island"
 )
 
 Sea3QuestsExpanded[2325] = MakeQuest(
     "Chocolate Bar Battler", 2, "ChocQuest1", "Chocolate Bar Battler",
-    CFrame.new(231.7, 23.9, -12200.0),
-    CFrame.new(701.0, 25.5, -12708.0),
-    "Chocolate Island Quest Giver", CFrame.new(231.7, 23.9, -12200.0),
+    cf(231.7, 23.9, -12200.0),
+    cf(701.0, 25.5, -12708.0),
+    "Chocolate Island Quest Giver", cf(231.7, 23.9, -12200.0),
     "XP + $540000", "Sword", "Chocolate Bar Battlers on the bridge"
 )
 
 Sea3QuestsExpanded[2350] = MakeQuest(
     "Sweet Thief", 1, "ChocQuest2", "Sweet Thief",
-    CFrame.new(151.2, 23.9, -12774.5),
-    CFrame.new(-140.2, 25.5, -12652.0),
-    "Chocolate Island Quest Giver 2", CFrame.new(151.2, 23.9, -12774.5),
+    cf(151.2, 23.9, -12774.5),
+    cf(-140.2, 25.5, -12652.0),
+    "Chocolate Island Quest Giver 2", cf(151.2, 23.9, -12774.5),
     "XP + $550000", "Blox Fruit", "Sweet Thieves in the chocolate factory"
 )
 
 Sea3QuestsExpanded[2375] = MakeQuest(
     "Candy Rebel", 2, "ChocQuest2", "Candy Rebel",
-    CFrame.new(151.2, 23.9, -12774.5),
-    CFrame.new(48.0, 25.5, -13029.0),
-    "Chocolate Island Quest Giver 2", CFrame.new(151.2, 23.9, -12774.5),
+    cf(151.2, 23.9, -12774.5),
+    cf(48.0, 25.5, -13029.0),
+    "Chocolate Island Quest Giver 2", cf(151.2, 23.9, -12774.5),
     "XP + $560000", "Sword", "Candy Rebels at the candy warehouse"
 )
 
 Sea3QuestsExpanded[2400] = MakeQuest(
     "Candy Pirate", 1, "CandyQuest1", "Candy Pirate",
-    CFrame.new(-1149.3, 13.5, -14445.5),
-    CFrame.new(-1437.5, 17.1, -14385.5),
-    "Candy Island Quest Giver", CFrame.new(-1149.3, 13.5, -14445.5),
+    cf(-1149.3, 13.5, -14445.5),
+    cf(-1437.5, 17.1, -14385.5),
+    "Candy Island Quest Giver", cf(-1149.3, 13.5, -14445.5),
     "XP + $570000", "Gun", "Candy Pirates on Candy Island beach"
 )
 
 Sea3QuestsExpanded[2425] = MakeQuest(
     "Snow Demon", 2, "CandyQuest1", "Snow Demon",
-    CFrame.new(-1149.3, 13.5, -14445.5),
-    CFrame.new(-916.0, 17.1, -14639.0),
-    "Candy Island Quest Giver", CFrame.new(-1149.3, 13.5, -14445.5),
+    cf(-1149.3, 13.5, -14445.5),
+    cf(-916.0, 17.1, -14639.0),
+    "Candy Island Quest Giver", cf(-1149.3, 13.5, -14445.5),
     "XP + $580000", "Blox Fruit", "Snow Demons in Candy Island caves"
 )
 
 Sea3QuestsExpanded[2450] = MakeQuest(
     "Isle Outlaw", 1, "TikiQuest1", "Isle Outlaw",
-    CFrame.new(-16550.0, 55.5, -180.0),
-    CFrame.new(-16163.0, 11.5, -96.5),
-    "Tiki Island Quest Giver", CFrame.new(-16550.0, 55.5, -180.0),
+    cf(-16550.0, 55.5, -180.0),
+    cf(-16163.0, 11.5, -96.5),
+    "Tiki Island Quest Giver", cf(-16550.0, 55.5, -180.0),
     "XP + $590000", "Sword", "Isle Outlaws on Tiki Outpost beach"
 )
 
 Sea3QuestsExpanded[2475] = MakeQuest(
     "Island Boy", 2, "TikiQuest1", "Island Boy",
-    CFrame.new(-16550.0, 55.5, -180.0),
-    CFrame.new(-16357.0, 20.5, 1005.5),
-    "Tiki Island Quest Giver", CFrame.new(-16550.0, 55.5, -180.0),
+    cf(-16550.0, 55.5, -180.0),
+    cf(-16357.0, 20.5, 1005.5),
+    "Tiki Island Quest Giver", cf(-16550.0, 55.5, -180.0),
     "XP + $600000", "Melee", "Island Boys at the Tiki village"
 )
 
 Sea3QuestsExpanded[2500] = MakeQuest(
     "Sun-kissed Warrior", 1, "TikiQuest2", "Sun-kissed Warrior",
-    CFrame.new(-16541.0, 54.7, 1051.5),
-    CFrame.new(-16357.0, 20.5, 1005.5),
-    "Tiki Island Quest Giver 2", CFrame.new(-16541.0, 54.7, 1051.5),
+    cf(-16541.0, 54.7, 1051.5),
+    cf(-16357.0, 20.5, 1005.5),
+    "Tiki Island Quest Giver 2", cf(-16541.0, 54.7, 1051.5),
     "XP + $610000", "Blox Fruit", "Sun-kissed Warriors at the Tiki temple"
 )
 
 Sea3QuestsExpanded[2525] = MakeQuest(
     "Isle Champion", 2, "TikiQuest2", "Isle Champion",
-    CFrame.new(-16541.0, 54.7, 1051.5),
-    CFrame.new(-16849.0, 21.5, 1041.0),
-    "Tiki Island Quest Giver 2", CFrame.new(-16541.0, 54.7, 1051.5),
+    cf(-16541.0, 54.7, 1051.5),
+    cf(-16849.0, 21.5, 1041.0),
+    "Tiki Island Quest Giver 2", cf(-16541.0, 54.7, 1051.5),
     "XP + $620000", "Sword", "Isle Champions at the arena"
 )
 
 Sea3QuestsExpanded[2550] = MakeQuest(
     "Serpent Hunter", 1, "TikiQuest3", "Serpent Hunter",
-    CFrame.new(-16665.0, 104.5, 1580.0),
-    CFrame.new(-16621.0, 121.0, 1290.5),
-    "Tiki Island Quest Giver 3", CFrame.new(-16665.0, 104.5, 1580.0),
+    cf(-16665.0, 104.5, 1580.0),
+    cf(-16621.0, 121.0, 1290.5),
+    "Tiki Island Quest Giver 3", cf(-16665.0, 104.5, 1580.0),
     "XP + $630000", "Gun", "Serpent Hunters in the jungle"
 )
 
 Sea3QuestsExpanded[2575] = MakeQuest(
     "Skull Slayer", 2, "TikiQuest3", "Skull Slayer",
-    CFrame.new(-16665.0, 104.5, 1580.0),
-    CFrame.new(-16811.5, 84.5, 1542.0),
-    "Tiki Island Quest Giver 3", CFrame.new(-16665.0, 104.5, 1580.0),
+    cf(-16665.0, 104.5, 1580.0),
+    cf(-16811.5, 84.5, 1542.0),
+    "Tiki Island Quest Giver 3", cf(-16665.0, 104.5, 1580.0),
     "XP + $650000", "Sword", "Skull Slayers at the Tiki summit"
 )
 
-function CheckLevelEx()
-    ResolveQuest()
+function ExtendedLevelUpdate()
+    SelectLevelQuest()
 end
 
 local MiscToggleSection = MainTab:AddSection("Extra Toggles")
@@ -3494,13 +3504,13 @@ MiscToggleSection:AddToggle("AutoFragments", { text = "Auto Collect Fragments", 
 MiscToggleSection:AddToggle("AutoMagnet", { text = "Auto Magnet (Fruits)", default = false })
 
 interval("ClickerInterval", "AutoClicker", 0.05, function()
-    if Library.Flags.AutoClicker then Click() end
+    if Library.Flags.AutoClicker then SimulateAttackClick() end
 end)
 
 interval("ChestInterval", "AutoChest", 0.5, function()
     if Library.Flags.AutoChest then
         pcall(function()
-            local root = getRoot()
+            local root = GetHumanoidRootPart()
             if not root then return end
             for _, v in pairs(Workspace:GetDescendants()) do
                 if v:IsA("Part") and v.Name:lower():find("chest") and (root.Position - v.Position).Magnitude < 80 then
@@ -3515,37 +3525,29 @@ interval("FruitSniperInterval", "AutoFruitSniper", 0.3, function()
     if Library.Flags.AutoFruitSniper then pcall(CollectNearbyFruits) end
 end)
 
-QueueNotification("Ultimate Blox Fruits Hub v3.0", "Script loaded successfully!", "success")
+QueueNotification("AbyssalCore", "Script loaded successfully!", "success")
 QueueNotification("Current Sea: " .. CurrentSea, "Level: " .. (client.Data and client.Data.Level and client.Data.Level.Value or "?"), "info")
 QueueNotification("14 sections loaded", "All systems ready", "info")
 
-print("")
-print("================================================")
-print("  ULTIMATE BLOX FRUITS HUB v3.0")
-print("  Ultimate Blox Fruits Hub v3.0")
-print("  Library: Versus Airlines UI")
-print("  Status: LOADED")
-print("================================================")
-print("")
 
 local function AutoSaberQuest()
     if not Library.Flags.AutoSaber then return end
     local saberBoss = FindBoss("Saber Expert")
     if saberBoss then
-        TweenTP(saberBoss.HumanoidRootPart.Position)
-        EquipWeapon(saberBoss)
-        Combat(saberBoss)
-        if not IsAlive(saberBoss) then
+        SmoothMoveTo(saberBoss.HumanoidRootPart.Position)
+        SelectBestTool(saberBoss)
+        AttackTarget(saberBoss)
+        if not EntityIsAlive(saberBoss) then
             local saberTool = Workspace:FindFirstChild("Saber")
             if saberTool then
-                TweenTP(saberTool.Position)
+                SmoothMoveTo(saberTool.Position)
                 wait(0.3)
                 fireproximityprompt(saberTool)
                 notify("Saber collected!", "Sword", "success")
             end
         end
     else
-        TweenTP(BossSpawnLocations["Saber Expert"])
+        SmoothMoveTo(BossSpawnLocations["Saber Expert"])
     end
 end
 
@@ -3553,11 +3555,11 @@ local function AutoSwanQuest()
     if not Library.Flags.AutoSwan then return end
     local boss = FindBoss("Don Swan")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position)
-        EquipWeapon(boss)
-        Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position)
+        SelectBestTool(boss)
+        AttackTarget(boss)
     else
-        TweenTP(CFrame.new(85.0, 80.0, 12155.0))
+        SmoothMoveTo(cf(85.0, 80.0, 12155.0))
     end
 end
 
@@ -3568,19 +3570,19 @@ local function AutoWardenQuest()
     if not Sea1 then return end
     local qName = "PrisonerQuest"
     if not client.PlayerGui:FindFirstChild(qName .. "1") then
-        TweenTP(CFrame.new(5310.5, 0.3, 475.0))
+        SmoothMoveTo(cf(5310.5, 0.3, 475.0))
         wait(0.5)
     end
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name == "Prisoner" and IsAlive(v) then
-            TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+        if v.Name == "Prisoner" and EntityIsAlive(v) then
+            SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
         end
     end
     local qName2 = "PrisonerQuest2"
     if client.PlayerGui:FindFirstChild(qName2) then
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
-            if v.Name == "Dangerous Prisoner" and IsAlive(v) then
-                TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+            if v.Name == "Dangerous Prisoner" and EntityIsAlive(v) then
+                SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
             end
         end
     end
@@ -3593,9 +3595,9 @@ local function AutoBuddyQuest()
     if not Sea2 then return end
     local boss = FindBoss("Order")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position); EquipWeapon(boss); Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position); SelectBestTool(boss); AttackTarget(boss)
     else
-        TweenTP(CFrame.new(-3950.0, 15.0, -2100.0))
+        SmoothMoveTo(cf(-3950.0, 15.0, -2100.0))
     end
 end
 
@@ -3604,11 +3606,11 @@ local function AutoSharkQuest()
     local lv = client.Data.Level.Value
     if lv < 700 then return end
     if not Sea2 then return end
-    TweenTP(CFrame.new(-532.0, 15.0, 2038.0))
+    SmoothMoveTo(cf(-532.0, 15.0, 2038.0))
     wait(0.5)
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name:find("Shark") and IsAlive(v) then
-            TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+        if v.Name:find("Shark") and EntityIsAlive(v) then
+            SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
         end
     end
 end
@@ -3620,9 +3622,9 @@ local function AutoDarkDaggerQuest()
     if not Sea3 then return end
     local boss = FindBoss("Rip Indra")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position); EquipWeapon(boss); Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position); SelectBestTool(boss); AttackTarget(boss)
     else
-        TweenTP(CFrame.new(5300.0, 15.0, -1900.0))
+        SmoothMoveTo(cf(5300.0, 15.0, -1900.0))
     end
 end
 
@@ -3633,7 +3635,7 @@ local function AutoTTKQuest()
     if not Sea3 then return end
     local frags = client.Data and client.Data.Fragments and client.Data.Fragments.Value or 0
     if frags >= 3000 then
-        TweenTP(CFrame.new(-3054.0, 237.0, -10148.0))
+        SmoothMoveTo(cf(-3054.0, 237.0, -10148.0))
         wait(0.5)
         local dealer = Workspace:FindFirstChild("SwordDealer") or Workspace:FindFirstChild("Sword NPC")
         if dealer then fireproximityprompt(dealer) end
@@ -3647,7 +3649,7 @@ local function AutoYamaQuest()
     if not Sea3 then return end
     local frags = client.Data and client.Data.Fragments and client.Data.Fragments.Value or 0
     if frags >= 2000 then
-        TweenTP(CFrame.new(-5510.0, 23.0, -5150.0))
+        SmoothMoveTo(cf(-5510.0, 23.0, -5150.0))
         wait(0.5)
     end
 end
@@ -3657,7 +3659,7 @@ local function AutoTushitaQuest()
     local lv = client.Data.Level.Value
     if lv < 1900 then return end
     if not Sea3 then return end
-    TweenTP(CFrame.new(5400.0, 450.0, -2100.0))
+    SmoothMoveTo(cf(5400.0, 450.0, -2100.0))
     wait(0.5)
 end
 
@@ -3668,9 +3670,9 @@ local function AutoHallowQuest()
     if not Sea3 then return end
     local boss = FindBoss("Rip Indra")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position); EquipWeapon(boss); Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position); SelectBestTool(boss); AttackTarget(boss)
     else
-        TweenTP(CFrame.new(5300.0, 15.0, -1900.0))
+        SmoothMoveTo(cf(5300.0, 15.0, -1900.0))
     end
 end
 
@@ -3681,9 +3683,9 @@ local function AutoCoconutQuest()
     if not Sea3 then return end
     local boss = FindBoss("Coconut")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position); EquipWeapon(boss); Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position); SelectBestTool(boss); AttackTarget(boss)
     else
-        TweenTP(CFrame.new(-16550.0, 40.0, -200.0))
+        SmoothMoveTo(cf(-16550.0, 40.0, -200.0))
     end
 end
 
@@ -3694,9 +3696,9 @@ local function AutoCakeQuest()
     if not Sea3 then return end
     local boss = FindBoss("Cake Queen")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position); EquipWeapon(boss); Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position); SelectBestTool(boss); AttackTarget(boss)
     else
-        TweenTP(CFrame.new(-1600.0, 36.0, -12600.0))
+        SmoothMoveTo(cf(-1600.0, 36.0, -12600.0))
     end
 end
 
@@ -3707,9 +3709,9 @@ local function AutoScytheQuest()
     if not Sea3 then return end
     local boss = FindBoss("Soul Reaper")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position); EquipWeapon(boss); Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position); SelectBestTool(boss); AttackTarget(boss)
     else
-        TweenTP(CFrame.new(-9550.0, 68.0, 6100.0))
+        SmoothMoveTo(cf(-9550.0, 68.0, 6100.0))
     end
 end
 
@@ -3734,7 +3736,7 @@ local function AutoBuyFightingStyle(styleName, flagName, cframe, cost)
     if lv < styleData.Level then return end
     local money = client.Data and client.Data.Money and client.Data.Money.Value or 0
     if money >= (cost or styleData.Cost or 0) then
-        TweenTP(cframe or styleData.CFrame)
+        SmoothMoveTo(cframe or styleData.CFrame)
         wait(0.3)
         local remote = ReplicatedStorage:FindFirstChild("BuyFightingStyle") or ReplicatedStorage:FindFirstChild("BuyStyle")
         if not remote then
@@ -3779,12 +3781,12 @@ local function AutoPirateQuest()
     if not Sea3 then return end
     local quest = client.PlayerGui:FindFirstChild("PiratePortQuest1")
     if not quest then
-        TweenTP(CFrame.new(-290.0, 43.8, 5580.0))
+        SmoothMoveTo(cf(-290.0, 43.8, 5580.0))
         wait(0.5)
     end
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name:find("Pirate") and IsAlive(v) then
-            TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+        if v.Name:find("Pirate") and EntityIsAlive(v) then
+            SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
         end
     end
 end
@@ -3794,12 +3796,12 @@ local function AutoMarineQuest()
     if not Sea3 then return end
     local quest = client.PlayerGui:FindFirstChild("MarineTreeIsland1")
     if not quest then
-        TweenTP(CFrame.new(2180.0, 28.7, -6740.0))
+        SmoothMoveTo(cf(2180.0, 28.7, -6740.0))
         wait(0.5)
     end
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
-        if v.Name:find("Marine") and IsAlive(v) then
-            TweenTP(v.HumanoidRootPart.Position); EquipWeapon(v); Combat(v)
+        if v.Name:find("Marine") and EntityIsAlive(v) then
+            SmoothMoveTo(v.HumanoidRootPart.Position); SelectBestTool(v); AttackTarget(v)
         end
     end
 end
@@ -3807,7 +3809,7 @@ end
 interval("PirateQuestInterval", "AutoPirate", 0.5, function() pcall(AutoPirateQuest) end)
 interval("MarineQuestInterval", "AutoMarine", 0.5, function() pcall(AutoMarineQuest) end)
 -- Generic sea-event hunter: scans Workspace for a named event container and attacks mobs inside
-local function HuntSeaEvent(flag, searchNames)
+local function RunSeaEventLoop(flag, searchNames)
     if not Library.Flags[flag] then return end
     local container
     for _, name in ipairs(searchNames) do
@@ -3816,37 +3818,37 @@ local function HuntSeaEvent(flag, searchNames)
     end
     if not container then return end
     local rootPart = container:FindFirstChild("HumanoidRootPart") or container:FindFirstChildWhichIsA("Part")
-    if rootPart then TweenTP(rootPart.Position) end
+    if rootPart then SmoothMoveTo(rootPart.Position) end
     for _, v in ipairs(container:GetChildren()) do
         if v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
-            EquipWeapon(v); Combat(v)
+            SelectBestTool(v); AttackTarget(v)
         end
     end
 end
 
 local SeaEvents = {
-    { flag = "AutoSeaBeast",    names = {"SeaBeast", "Sea Beast"},      interval = 0.5 },
-    { flag = "AutoGhostShip",   names = {"GhostShip", "Ghost Ship"},    interval = 0.5 },
-    { flag = "AutoSharkPirate", names = {"SharkPirate", "Shark Pirate"}, interval = 0.5 },
-    { flag = "AutoFishEvent",   names = {"FishEvent", "Fish Event"},    interval = 0.5 },
+    { flag = "HuntSeaBeast",    names = {"SeaBeast", "Sea Beast"},      interval = 0.5 },
+    { flag = "HuntGhostShip",   names = {"GhostShip", "Ghost Ship"},    interval = 0.5 },
+    { flag = "HuntSharkPirates", names = {"SharkPirate", "Shark Pirate"}, interval = 0.5 },
+    { flag = "HuntFishEvent",   names = {"FishEvent", "Fish Event"},    interval = 0.5 },
     { flag = "AutoShipRaids",   names = {"ShipRaid", "Ship Raid", "ShipRaids"}, interval = 0.5 },
-    { flag = "AutoSeaBeastHunter", names = {"SeaBeast", "Sea Beast"},  interval = 0.5 },
+    { flag = "HuntSeaBeastAdvanced", names = {"SeaBeast", "Sea Beast"},  interval = 0.5 },
 }
 
 for _, evt in ipairs(SeaEvents) do
     interval("SeaEvent_" .. evt.flag, evt.flag, evt.interval, function()
-        pcall(function() HuntSeaEvent(evt.flag, evt.names) end)
+        pcall(function() RunSeaEventLoop(evt.flag, evt.names) end)
     end)
 end
 
 -- Legacy named wrappers kept for backward compatibility
-function AutoSeaBeast()       HuntSeaEvent("AutoSeaBeast", {"SeaBeast", "Sea Beast"}) end
-function AutoGhostShip()      HuntSeaEvent("AutoGhostShip", {"GhostShip", "Ghost Ship"}) end
-function AutoSharkPirate()    HuntSeaEvent("AutoSharkPirate", {"SharkPirate", "Shark Pirate"}) end
-function AutoFishEvent()      HuntSeaEvent("AutoFishEvent", {"FishEvent", "Fish Event"}) end
-function AutoShipRaidsEvent() HuntSeaEvent("AutoShipRaids", {"ShipRaid", "Ship Raid", "ShipRaids"}) end
+function HuntSeaBeast()       RunSeaEventLoop("HuntSeaBeast", {"SeaBeast", "Sea Beast"}) end
+function HuntGhostShip()      RunSeaEventLoop("HuntGhostShip", {"GhostShip", "Ghost Ship"}) end
+function HuntSharkPirates()    RunSeaEventLoop("HuntSharkPirates", {"SharkPirate", "Shark Pirate"}) end
+function HuntFishEvent()      RunSeaEventLoop("HuntFishEvent", {"FishEvent", "Fish Event"}) end
+function HuntShipRaid() RunSeaEventLoop("AutoShipRaids", {"ShipRaid", "Ship Raid", "ShipRaids"}) end
 
-local function AutoSeaBeastHunter() HuntSeaEvent("AutoSeaBeastHunter", {"SeaBeast", "Sea Beast"}) end
+local function HuntSeaBeastAdvanced() RunSeaEventLoop("HuntSeaBeastAdvanced", {"SeaBeast", "Sea Beast"}) end
 local FruitSniperList = {}
 local FruitSniperActive = false
 
@@ -3856,13 +3858,13 @@ local function StartFruitSniper()
     spawn(function()
         while Library.Flags.AutoFruitSniper do
             pcall(function()
-                local root = getRoot()
+                local root = GetHumanoidRootPart()
                 if not root then wait(1); return end
                 for _, v in pairs(Workspace:GetDescendants()) do
                     if v:IsA("Tool") and (v.Name:lower():find("fruit")) then
                         local pos = v:IsA("BasePart") and v.Position or (v:FindFirstChildWhichIsA("BasePart") and v:FindFirstChildWhichIsA("BasePart").Position)
                         if pos and (root.Position - pos).Magnitude <= 5000 then
-                            TweenTP(pos)
+                            SmoothMoveTo(pos)
                             wait(0.3)
                             fireproximityprompt(v)
                             notify("Fruit Sniper: Collected " .. v.Name, "Fruit", "success")
@@ -3900,7 +3902,7 @@ end
 delay(15, CheckGamepasses)
 local function AutoCollectDrops()
     if not Library.Flags.AutoBossDrop then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("Part") and v.Name:lower():find("drop") and (root.Position - v.Position).Magnitude < 100 then
@@ -3974,7 +3976,7 @@ local function AdvancedAutoFarm()
     if Library.Flags.AutoQuest then
         local questName = NameQuest .. tostring(LevelQuest)
         if not client.PlayerGui:FindFirstChild(questName) then
-            TweenTP(CFrameQuest)
+            SmoothMoveTo(CFrameQuest)
             wait(0.5)
             local remote = ReplicatedStorage:FindFirstChild(questName)
             if remote and remote:IsA("RemoteEvent") then
@@ -3985,24 +3987,24 @@ local function AdvancedAutoFarm()
     end
 
     -- Mob farming
-    local target = GetClosest()
+    local target = FindNearestEnemy()
     if target then
-        local dist = (getRoot().Position - target.HumanoidRootPart.Position).Magnitude
+        local dist = (GetHumanoidRootPart().Position - target.HumanoidRootPart.Position).Magnitude
         if dist > (Library.Flags.FarmRadius or 250) then
-            TweenTP(target.HumanoidRootPart.Position)
+            SmoothMoveTo(target.HumanoidRootPart.Position)
         end
         if dist <= (Library.Flags.FarmRadius or 250) then
             if Library.Flags.BringMob then
-                pcall(function() BringMobs(Library.Flags.BringRadius and tonumber(Library.Flags.BringRadius) or 150) end)
+                pcall(function() PullNearbyEnemies(Library.Flags.BringRadius and tonumber(Library.Flags.BringRadius) or 150) end)
             end
-            EquipWeapon(target)
-            Combat(target)
+            SelectBestTool(target)
+            AttackTarget(target)
         end
     else
         -- No enemies found, move to spawn area
         if CFrameMon and CFrameMon ~= CFrame.new() then
             local enrichedCF = GetSpawnCFrame(NameMon)
-            TweenTP(enrichedCF or CFrameMon)
+            SmoothMoveTo(enrichedCF or CFrameMon)
         end
     end
 end
@@ -4012,21 +4014,21 @@ local oldFarmInterval = interval
 interval("AdvancedFarmInterval", "AutoFarmEnable", 0.1, function()
     pcall(AdvancedAutoFarm)
 end)
-local function TeleportToSafeZone()
+local function RetreatToSafeArea()
     local safeZones = {
-        CFrame.new(-2630.0, 8.0, 2005.0),  -- Marine Start
-        CFrame.new(1059.75, 15.95, 1550.75), -- Start Island
-        CFrame.new(-3776.0, 13.0, -2154.0), -- Kingdom of Rose
-        CFrame.new(-371.0, 47.0, 5630.0)    -- Port Town
+        cf(-2630.0, 8.0, 2005.0),  -- Marine Start
+        cf(1059.75, 15.95, 1550.75), -- Start Island
+        cf(-3776.0, 13.0, -2154.0), -- Kingdom of Rose
+        cf(-371.0, 47.0, 5630.0)    -- Port Town
     }
     local zone = safeZones[CurrentSea] or safeZones[1]
-    TweenTP(zone)
+    SmoothMoveTo(zone)
     notify("Teleported to safe zone", "Emergency", "success")
 end
 
 local function AddEmergencyButton()
     local emergencySection = MainTab:AddSection("Emergency")
-    emergencySection:AddButton({ text = "Safe Zone TP", callback = TeleportToSafeZone })
+    emergencySection:AddButton({ text = "Safe Zone TP", callback = RetreatToSafeArea })
     emergencySection:AddButton({ text = "Reset Character", callback = ResetCharacter })
     emergencySection:AddButton({ text = "Rejoin", callback = function()
         TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId)
@@ -4093,7 +4095,7 @@ local function NotifyWithSound(title, desc, style)
         local sound = Instance.new("Sound")
         sound.SoundId = "rbxasset://sounds/notification.mp3"
         sound.Volume = 0.3
-        sound.Parent = getRoot() or Workspace
+        sound.Parent = GetHumanoidRootPart() or Workspace
         sound:Play()
         Debris:AddItem(sound, 3)
     end)
@@ -4105,7 +4107,7 @@ delay(2, function()
         for k, v in pairs(decoded) do
             Library.Flags[k] = v
         end
-        print("[UltimateHub] Config auto-loaded")
+        print("[AbyssalCore] Config auto-loaded")
     end
 end)
 do
@@ -4177,7 +4179,7 @@ end)
 local FullBossData = {
     ["Saber Expert"] = {
         Level = 200, Location = "Jungle", Sea = 1,
-        SpawnPoint = CFrame.new(-1458.0, 29.0, -29.0),
+        SpawnPoint = cf(-1458.0, 29.0, -29.0),
         SpawnTime = 300, HP = 25000, Drops = {"Saber", "Saber V2"},
         FightingStyle = "Melee", Element = "None",
         Difficulty = "Easy", RecommendedLevel = 200,
@@ -4185,7 +4187,7 @@ local FullBossData = {
     },
     ["The Saw"] = {
         Level = 300, Location = "Desert", Sea = 1,
-        SpawnPoint = CFrame.new(2020.0, 22.0, 4836.0),
+        SpawnPoint = cf(2020.0, 22.0, 4836.0),
         SpawnTime = 300, HP = 35000, Drops = {"Saw Cutlass"},
         FightingStyle = "Sword", Element = "None",
         Difficulty = "Easy", RecommendedLevel = 300,
@@ -4193,7 +4195,7 @@ local FullBossData = {
     },
     ["Greybeard"] = {
         Level = 400, Location = "Snow Island", Sea = 1,
-        SpawnPoint = CFrame.new(1422.0, 20.0, -1685.0),
+        SpawnPoint = cf(1422.0, 20.0, -1685.0),
         SpawnTime = 300, HP = 45000, Drops = {"Grey Beard Hat"},
         FightingStyle = "Melee", Element = "Ice",
         Difficulty = "Medium", RecommendedLevel = 400,
@@ -4201,7 +4203,7 @@ local FullBossData = {
     },
     ["Diamond"] = {
         Level = 500, Location = "Underwater City", Sea = 1,
-        SpawnPoint = CFrame.new(60764.0, 64.0, 1376.0),
+        SpawnPoint = cf(60764.0, 64.0, 1376.0),
         SpawnTime = 300, HP = 55000, Drops = {"Diamond Mace", "Diamond"},
         FightingStyle = "Sword", Element = "None",
         Difficulty = "Medium", RecommendedLevel = 500,
@@ -4209,7 +4211,7 @@ local FullBossData = {
     },
     ["Jerome"] = {
         Level = 550, Location = "Sky Island 1", Sea = 1,
-        SpawnPoint = CFrame.new(-4260.0, 730.0, -2460.0),
+        SpawnPoint = cf(-4260.0, 730.0, -2460.0),
         SpawnTime = 300, HP = 60000, Drops = {"Jerome's Sword"},
         FightingStyle = "Sword", Element = "None",
         Difficulty = "Medium", RecommendedLevel = 550,
@@ -4217,7 +4219,7 @@ local FullBossData = {
     },
     ["Fajita"] = {
         Level = 650, Location = "Magma Village", Sea = 1,
-        SpawnPoint = CFrame.new(-5545.0, 22.0, 8810.0),
+        SpawnPoint = cf(-5545.0, 22.0, 8810.0),
         SpawnTime = 300, HP = 70000, Drops = {"Fajita Sword"},
         FightingStyle = "Gun", Element = "Fire",
         Difficulty = "Hard", RecommendedLevel = 650,
@@ -4225,7 +4227,7 @@ local FullBossData = {
     },
     ["Captain Elephant"] = {
         Level = 700, Location = "Fountain City", Sea = 1,
-        SpawnPoint = CFrame.new(5670.0, 28.0, 4600.0),
+        SpawnPoint = cf(5670.0, 28.0, 4600.0),
         SpawnTime = 300, HP = 80000, Drops = {"Elephant Sword"},
         FightingStyle = "Melee", Element = "None",
         Difficulty = "Hard", RecommendedLevel = 700,
@@ -4233,7 +4235,7 @@ local FullBossData = {
     },
     ["Order"] = {
         Level = 800, Location = "Kingdom of Rose", Sea = 2,
-        SpawnPoint = CFrame.new(-3950.0, 15.0, -2100.0),
+        SpawnPoint = cf(-3950.0, 15.0, -2100.0),
         SpawnTime = 300, HP = 90000, Drops = {"Order Sword"},
         FightingStyle = "Sword", Element = "Light",
         Difficulty = "Hard", RecommendedLevel = 800,
@@ -4241,7 +4243,7 @@ local FullBossData = {
     },
     ["Don Swan"] = {
         Level = 1000, Location = "Mansion", Sea = 2,
-        SpawnPoint = CFrame.new(85.0, 80.0, 12155.0),
+        SpawnPoint = cf(85.0, 80.0, 12155.0),
         SpawnTime = 300, HP = 120000, Drops = {"Don Swan's Sword", "Swan Cutlass"},
         FightingStyle = "Sword", Element = "None",
         Difficulty = "Very Hard", RecommendedLevel = 1000,
@@ -4249,7 +4251,7 @@ local FullBossData = {
     },
     ["Dragon"] = {
         Level = 1200, Location = "Ice Castle", Sea = 2,
-        SpawnPoint = CFrame.new(7150.0, 26.0, -6780.0),
+        SpawnPoint = cf(7150.0, 26.0, -6780.0),
         SpawnTime = 300, HP = 150000, Drops = {"Dragon Trident"},
         FightingStyle = "Blox Fruit", Element = "Dragon",
         Difficulty = "Very Hard", RecommendedLevel = 1200,
@@ -4257,7 +4259,7 @@ local FullBossData = {
     },
     ["Rip Indra"] = {
         Level = 1500, Location = "Hydra Island", Sea = 3,
-        SpawnPoint = CFrame.new(5300.0, 15.0, -1900.0),
+        SpawnPoint = cf(5300.0, 15.0, -1900.0),
         SpawnTime = 300, HP = 175000, Drops = {"Dark Dagger", "Hallow Essence"},
         FightingStyle = "Sword", Element = "Dark",
         Difficulty = "Very Hard", RecommendedLevel = 1500,
@@ -4265,7 +4267,7 @@ local FullBossData = {
     },
     ["Longma"] = {
         Level = 1500, Location = "Forgotten Island", Sea = 2,
-        SpawnPoint = CFrame.new(-2750.0, 250.0, -10350.0),
+        SpawnPoint = cf(-2750.0, 250.0, -10350.0),
         SpawnTime = 300, HP = 160000, Drops = {"Longma Sword"},
         FightingStyle = "Blox Fruit", Element = "Wind",
         Difficulty = "Very Hard", RecommendedLevel = 1500,
@@ -4273,7 +4275,7 @@ local FullBossData = {
     },
     ["Hydra"] = {
         Level = 1600, Location = "Hydra Island", Sea = 3,
-        SpawnPoint = CFrame.new(5300.0, 12.0, -2200.0),
+        SpawnPoint = cf(5300.0, 12.0, -2200.0),
         SpawnTime = 300, HP = 180000, Drops = {"Hydra Sword"},
         FightingStyle = "Blox Fruit", Element = "Poison",
         Difficulty = "Very Hard", RecommendedLevel = 1600,
@@ -4281,7 +4283,7 @@ local FullBossData = {
     },
     ["Admiral"] = {
         Level = 1700, Location = "Marine Tree", Sea = 3,
-        SpawnPoint = CFrame.new(2200.0, 30.0, -6750.0),
+        SpawnPoint = cf(2200.0, 30.0, -6750.0),
         SpawnTime = 300, HP = 190000, Drops = {"Admiral Sword"},
         FightingStyle = "Sword", Element = "Light",
         Difficulty = "Very Hard", RecommendedLevel = 1700,
@@ -4289,7 +4291,7 @@ local FullBossData = {
     },
     ["Mirage Boss"] = {
         Level = 1800, Location = "Mirage Island", Sea = 3,
-        SpawnPoint = CFrame.new(-11500.0, 20.0, -9500.0),
+        SpawnPoint = cf(-11500.0, 20.0, -9500.0),
         SpawnTime = 600, HP = 220000, Drops = {"Mirage Sword"},
         FightingStyle = "Blox Fruit", Element = "Illusion",
         Difficulty = "Extreme", RecommendedLevel = 1800,
@@ -4297,7 +4299,7 @@ local FullBossData = {
     },
     ["Cake Queen"] = {
         Level = 2000, Location = "Cake Island", Sea = 3,
-        SpawnPoint = CFrame.new(-1600.0, 36.0, -12600.0),
+        SpawnPoint = cf(-1600.0, 36.0, -12600.0),
         SpawnTime = 300, HP = 200000, Drops = {"Cake Sword"},
         FightingStyle = "Sword", Element = "Food",
         Difficulty = "Extreme", RecommendedLevel = 2000,
@@ -4305,7 +4307,7 @@ local FullBossData = {
     },
     ["Soul Reaper"] = {
         Level = 2200, Location = "Haunted Castle", Sea = 3,
-        SpawnPoint = CFrame.new(-9550.0, 68.0, 6100.0),
+        SpawnPoint = cf(-9550.0, 68.0, 6100.0),
         SpawnTime = 300, HP = 280000, Drops = {"Scythe"},
         FightingStyle = "Sword", Element = "Dark",
         Difficulty = "Extreme", RecommendedLevel = 2200,
@@ -4313,7 +4315,7 @@ local FullBossData = {
     },
     ["Ghost"] = {
         Level = 2100, Location = "Haunted Island", Sea = 3,
-        SpawnPoint = CFrame.new(-9700.0, 50.0, 6250.0),
+        SpawnPoint = cf(-9700.0, 50.0, 6250.0),
         SpawnTime = 300, HP = 260000, Drops = {"Ghost Sword"},
         FightingStyle = "Blox Fruit", Element = "Ghost",
         Difficulty = "Extreme", RecommendedLevel = 2100,
@@ -4321,7 +4323,7 @@ local FullBossData = {
     },
     ["Coconut"] = {
         Level = 2200, Location = "Tiki Outpost", Sea = 3,
-        SpawnPoint = CFrame.new(-16550.0, 40.0, -200.0),
+        SpawnPoint = cf(-16550.0, 40.0, -200.0),
         SpawnTime = 300, HP = 275000, Drops = {"Coconut Sword"},
         FightingStyle = "Melee", Element = "None",
         Difficulty = "Extreme", RecommendedLevel = 2200,
@@ -4329,7 +4331,7 @@ local FullBossData = {
     },
     ["Dough King"] = {
         Level = 2300, Location = "Sea of Treats", Sea = 3,
-        SpawnPoint = CFrame.new(300.0, 20.0, -14000.0),
+        SpawnPoint = cf(300.0, 20.0, -14000.0),
         SpawnTime = 600, HP = 300000, Drops = {"Dough Fist"},
         FightingStyle = "Blox Fruit", Element = "Dough",
         Difficulty = "Nightmare", RecommendedLevel = 2300,
@@ -4337,7 +4339,7 @@ local FullBossData = {
     },
     ["Beautiful Pirate"] = {
         Level = 700, Location = "Fountain City", Sea = 1,
-        SpawnPoint = CFrame.new(5200.0, 30.0, 4400.0),
+        SpawnPoint = cf(5200.0, 30.0, 4400.0),
         SpawnTime = 300, HP = 85000, Drops = {"Beautiful Pirate Sword"},
         FightingStyle = "Sword", Element = "None",
         Difficulty = "Hard", RecommendedLevel = 700,
@@ -4345,7 +4347,7 @@ local FullBossData = {
     },
     ["Ship Raid Boss"] = {
         Level = 1300, Location = "Sea", Sea = 2,
-        SpawnPoint = CFrame.new(1000.0, 120.0, 33000.0),
+        SpawnPoint = cf(1000.0, 120.0, 33000.0),
         SpawnTime = 300, HP = 140000, Drops = {"Ship Sword"},
         FightingStyle = "Sword", Element = "Water",
         Difficulty = "Hard", RecommendedLevel = 1300,
@@ -4353,7 +4355,7 @@ local FullBossData = {
     },
     ["Bobby"] = {
         Level = 550, Location = "Colosseum", Sea = 1,
-        SpawnPoint = CFrame.new(-1575.0, 7.0, -2980.0),
+        SpawnPoint = cf(-1575.0, 7.0, -2980.0),
         SpawnTime = 300, HP = 65000, Drops = {"Bobby's Sword"},
         FightingStyle = "Melee", Element = "None",
         Difficulty = "Medium", RecommendedLevel = 550,
@@ -4361,7 +4363,7 @@ local FullBossData = {
     },
     ["Indra"] = {
         Level = 2000, Location = "Forgotten Island", Sea = 3,
-        SpawnPoint = CFrame.new(-3054.0, 237.0, -10148.0),
+        SpawnPoint = cf(-3054.0, 237.0, -10148.0),
         SpawnTime = 900, HP = 250000, Drops = {"True Triple Katana"},
         FightingStyle = "Sword", Element = "Lightning",
         Difficulty = "Extreme", RecommendedLevel = 2000,
@@ -4372,8 +4374,8 @@ local FullBossData = {
 local HelpTab = NewTab("Help")
 
 local HS1 = HelpTab:AddSection("Getting Started")
-HS1:AddLabel("Welcome to Ultimate Blox Fruits Hub v3.0")
-HS1:AddLabel("This script combines 5 major scripts into one powerful hub.")
+HS1:AddLabel("Welcome to AbyssalCore")
+HS1:AddLabel("All-in-one Blox Fruits utility.")
 HS1:AddLabel("")
 HS1:AddLabel("To start farming: Go to Farming section > toggle Auto Farm")
 HS1:AddLabel("To fight bosses: Go to Bosses section > select boss > toggle Auto Boss")
@@ -4481,7 +4483,7 @@ RegisterKeybind("TeleportToMouse", Enum.KeyCode.T, function()
     local mouse = UserInputService:GetMouseLocation()
     local unitRay = Camera:ScreenPointToRay(mouse.X, mouse.Y)
     local hit, pos = workspace:FindPartOnRay(Ray.new(unitRay.Origin, unitRay.Direction * 1000))
-    if hit and pos then TweenTP(pos) end
+    if hit and pos then SmoothMoveTo(pos) end
 end)
 
 local WeaponCycleActive = false
@@ -4564,7 +4566,7 @@ local function SaveProfile(name)
     if not name or name == "" then return end
     ConfigProfiles[name] = Library.Flags
     local data = HttpService:JSONEncode(ConfigProfiles)
-    writefile("UltimateBloxFruits_Profiles.json", data)
+    writefile("AbyssalCore_Profiles.json", data)
     notify("Saved profile: " .. name, "Config", "success")
 end
 
@@ -4580,7 +4582,7 @@ local function LoadProfile(name)
 end
 
 local function RefreshProfileList()
-    local success, data = pcall(function() return readfile("UltimateBloxFruits_Profiles.json") end)
+    local success, data = pcall(function() return readfile("AbyssalCore_Profiles.json") end)
     if success and data then
         ConfigProfiles = HttpService:JSONDecode(data) or {}
     end
@@ -4693,12 +4695,12 @@ local function SafeInterval(tag, flag, delay, func)
 end
 
 local CreditsSection = HelpTab:AddSection("Credits")
-CreditsSection:AddLabel("Ultimate Blox Fruits Hub v3.0")
+CreditsSection:AddLabel("AbyssalCore")
 CreditsSection:AddLabel("")
-CreditsSection:AddLabel("Library: Versus Airlines UI")
+CreditsSection:AddLabel("Library: VA UI")
 CreditsSection:AddLabel("")
-CreditsSection:AddLabel("All credit to original script developers.")
-CreditsSection:AddLabel("This is a combined/educational project.")
+CreditsSection:AddLabel("Built for Blox Fruits.")
+CreditsSection:AddLabel("Private utility script.")
 
 local function MemoryCleanup()
     local count = 0
@@ -4749,7 +4751,7 @@ interval("SelfRepairInterval", "AutoFarmEnable", 30, function()
 end)
 
 local function CollectBossDrops()
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("Part") and (v.Name:lower():find("drop") or v.Name:lower():find("reward") or v.Name:lower():find("loot")) and (root.Position - v.Position).Magnitude < 50 then
@@ -4762,21 +4764,8 @@ interval("CollectBossDropsInterval", "AutoBossDrop", 0.3, function()
     pcall(CollectBossDrops)
 end)
 
-print("")
-print("================================================")
-print("  ULTIMATE BLOX FRUITS HUB v3.0")
-print("  100 modules loaded")
-print("  14 UI sections")
-print("  24 bosses tracked")
-print("  30+ swords catalogued")
-print("  11 fighting styles")
-print("  23 devil fruits")
-print("  150+ quest entries")
-print("  7 anti-detection layers")
-print("================================================")
-print("")
-notify("All systems initialized", "Ultimate Hub v3.0", "success")
-notify("Happy grinding!", "Ultimate Hub", "info")
+notify("All systems initialized", "Abyssal Core v3.0", "success")
+notify("Happy grinding!", "Abyssal Core", "info")
 
 local MovementModes = {
     ["Tween"] = "TweenService smooth movement",
@@ -4789,22 +4778,22 @@ MoveSection:AddDropdown("MovementMode", { text = "Movement Mode", values = {"Twe
 MoveSection:AddSlider("WalkSpeed", { text = "Walk Speed", min = 16, max = 500, default = 100, suffix = "studs/s" })
 MoveSection:AddToggle("NoClip", { text = "No Clip", default = false })
 
-local function MoveToPosition(pos)
+local function WalkToPoint(pos)
     local mode = Library.Flags.MovementMode or "Tween"
     if mode == "Tween" then
-        TweenTP(pos)
+        SmoothMoveTo(pos)
     elseif mode == "Teleport" then
-        local root = getRoot()
+        local root = GetHumanoidRootPart()
         if root then root.CFrame = CFrame.new(pos) end
     elseif mode == "Walk" then
-        local hum = getHumanoid()
+        local hum = GetHumanoid()
         if hum then hum:MoveTo(pos) end
     end
 end
 
 local noClipConn = RunService.Stepped:Connect(function()
     if Library.Flags.NoClip then
-        local char = getChar()
+        local char = GetCharacter()
         if char then
             for _, v in pairs(char:GetChildren()) do
                 if v:IsA("BasePart") then
@@ -4818,7 +4807,7 @@ Library:TrackConnection(noClipConn, "NoClipConn")
 
 local wsConn = RunService.Heartbeat:Connect(function()
     if Library.Flags.MovementMode == "Walk" then
-        local hum = getHumanoid()
+        local hum = GetHumanoid()
         if hum then
             hum.WalkSpeed = Library.Flags.WalkSpeed or 100
         end
@@ -4828,106 +4817,106 @@ Library:TrackConnection(wsConn, "WalkSpeedConn")
 
 local AllLocations = {
     -- Sea 1
-    ["Start Island"] = CFrame.new(1059.75, 15.95, 1550.75),
-    ["Jungle"] = CFrame.new(-1321.0, 28.0, 282.0),
-    ["Jungle Temple"] = CFrame.new(-1603.5, 36.85, 155.5),
-    ["Buggy Island"] = CFrame.new(-1131.0, 5.0, 3890.0),
-    ["Buggy NPC"] = CFrame.new(-1140.0, 4.5, 3827.0),
-    ["Desert"] = CFrame.new(948.0, 15.0, 4386.0),
-    ["Desert NPC"] = CFrame.new(896.0, 6.4, 4390.0),
-    ["Pyramid"] = CFrame.new(1547.0, 14.0, 4382.0),
-    ["Snow Island"] = CFrame.new(1361.0, 86.0, -1356.0),
-    ["Snow Mountain Top"] = CFrame.new(1220.0, 138.0, -1488.0),
-    ["Marine Start"] = CFrame.new(-2630.0, 8.0, 2005.0),
-    ["Marine HQ"] = CFrame.new(-5035.0, 28.5, 4324.0),
-    ["Sky Island 1"] = CFrame.new(-4865.0, 734.0, -2629.0),
-    ["Sky Temple"] = CFrame.new(-4722.0, 845.0, -1954.0),
-    ["Sky Island 2"] = CFrame.new(-7896.0, 5548.0, -388.0),
-    ["Sky Island 3"] = CFrame.new(-7903.0, 5636.0, -1411.0),
-    ["Prison Island"] = CFrame.new(5329.0, 0.4, 479.0),
-    ["Prison Interior"] = CFrame.new(5100.0, 0.3, 1055.5),
-    ["Colosseum"] = CFrame.new(-1562.0, 8.0, -2954.0),
-    ["Magma Village"] = CFrame.new(-5428.0, 17.0, 8673.0),
-    ["Magma Volcano"] = CFrame.new(-5787.0, 75.0, 8651.5),
-    ["Underwater City"] = CFrame.new(60752.0, 22.0, 1466.0),
-    ["Fishman Island"] = CFrame.new(61122.0, 18.0, 1569.0),
-    ["Fountain City"] = CFrame.new(5092.0, 28.0, 4113.0),
-    ["Fountain NPC"] = CFrame.new(5258.0, 38.5, 4050.0),
-    ["Mansion"] = CFrame.new(80.0, 22.0, 12140.0),
-    ["Pirate Village"] = CFrame.new(-800.0, 5.0, 4200.0),
-    ["Sea of Treats 1"] = CFrame.new(5200.0, 30.0, 4400.0),
+    ["Start Island"] = cf(1059.75, 15.95, 1550.75),
+    ["Jungle"] = cf(-1321.0, 28.0, 282.0),
+    ["Jungle Temple"] = cf(-1603.5, 36.85, 155.5),
+    ["Buggy Island"] = cf(-1131.0, 5.0, 3890.0),
+    ["Buggy NPC"] = cf(-1140.0, 4.5, 3827.0),
+    ["Desert"] = cf(948.0, 15.0, 4386.0),
+    ["Desert NPC"] = cf(896.0, 6.4, 4390.0),
+    ["Pyramid"] = cf(1547.0, 14.0, 4382.0),
+    ["Snow Island"] = cf(1361.0, 86.0, -1356.0),
+    ["Snow Mountain Top"] = cf(1220.0, 138.0, -1488.0),
+    ["Marine Start"] = cf(-2630.0, 8.0, 2005.0),
+    ["Marine HQ"] = cf(-5035.0, 28.5, 4324.0),
+    ["Sky Island 1"] = cf(-4865.0, 734.0, -2629.0),
+    ["Sky Temple"] = cf(-4722.0, 845.0, -1954.0),
+    ["Sky Island 2"] = cf(-7896.0, 5548.0, -388.0),
+    ["Sky Island 3"] = cf(-7903.0, 5636.0, -1411.0),
+    ["Prison Island"] = cf(5329.0, 0.4, 479.0),
+    ["Prison Interior"] = cf(5100.0, 0.3, 1055.5),
+    ["Colosseum"] = cf(-1562.0, 8.0, -2954.0),
+    ["Magma Village"] = cf(-5428.0, 17.0, 8673.0),
+    ["Magma Volcano"] = cf(-5787.0, 75.0, 8651.5),
+    ["Underwater City"] = cf(60752.0, 22.0, 1466.0),
+    ["Fishman Island"] = cf(61122.0, 18.0, 1569.0),
+    ["Fountain City"] = cf(5092.0, 28.0, 4113.0),
+    ["Fountain NPC"] = cf(5258.0, 38.5, 4050.0),
+    ["Mansion"] = cf(80.0, 22.0, 12140.0),
+    ["Pirate Village"] = cf(-800.0, 5.0, 4200.0),
+    ["Sea of Treats 1"] = cf(5200.0, 30.0, 4400.0),
     -- Sea 2
-    ["Kingdom of Rose"] = CFrame.new(-3776.0, 13.0, -2154.0),
-    ["Green Zone"] = CFrame.new(-532.0, 15.0, 2038.0),
-    ["Green Zone Hills"] = CFrame.new(69.0, 93.5, 2430.0),
-    ["Factory"] = CFrame.new(232.0, 6.0, -28.0),
-    ["Flamingo Island"] = CFrame.new(850.0, 18.0, 1450.0),
-    ["Zombie Island"] = CFrame.new(-5479.0, 30.0, -781.0),
-    ["Zombie Cave"] = CFrame.new(-5806.0, 16.5, -1164.0),
-    ["Snow Mountain 2"] = CFrame.new(197.0, 410.0, -5297.0),
-    ["Snow Summit"] = CFrame.new(1234.0, 456.5, -5174.0),
-    ["Ice Castle"] = CFrame.new(6392.0, 20.0, -6725.0),
-    ["Ice Lab"] = CFrame.new(-6062.0, 15.9, -4902.0),
-    ["Fire Island"] = CFrame.new(-5467.0, 18.0, -5233.0),
-    ["Fire Volcano"] = CFrame.new(-5462.0, 130.0, -5836.0),
-    ["Ship Island"] = CFrame.new(908.0, 127.0, 33007.0),
-    ["Ship Deck"] = CFrame.new(921.0, 126.0, 33088.0),
-    ["Frost Island"] = CFrame.new(5690.0, 30.0, -6475.0),
-    ["Frost Cave"] = CFrame.new(5628.0, 57.5, -6618.0),
-    ["Forgotten Island"] = CFrame.new(-3054.0, 237.0, -10148.0),
-    ["Forgotten Lake"] = CFrame.new(-3263.0, 298.5, -10552.5),
-    ["Living Island"] = CFrame.new(-1200.0, 30.0, -9000.0),
-    ["Usopp Island"] = CFrame.new(-2000.0, 10.0, -8000.0),
-    ["Mansion 2"] = CFrame.new(100.0, 80.0, 12100.0),
-    ["Cafe Island"] = CFrame.new(500.0, 20.0, 1500.0),
-    ["Baratie"] = CFrame.new(0.0, 10.0, 5000.0),
+    ["Kingdom of Rose"] = cf(-3776.0, 13.0, -2154.0),
+    ["Green Zone"] = cf(-532.0, 15.0, 2038.0),
+    ["Green Zone Hills"] = cf(69.0, 93.5, 2430.0),
+    ["Factory"] = cf(232.0, 6.0, -28.0),
+    ["Flamingo Island"] = cf(850.0, 18.0, 1450.0),
+    ["Zombie Island"] = cf(-5479.0, 30.0, -781.0),
+    ["Zombie Cave"] = cf(-5806.0, 16.5, -1164.0),
+    ["Snow Mountain 2"] = cf(197.0, 410.0, -5297.0),
+    ["Snow Summit"] = cf(1234.0, 456.5, -5174.0),
+    ["Ice Castle"] = cf(6392.0, 20.0, -6725.0),
+    ["Ice Lab"] = cf(-6062.0, 15.9, -4902.0),
+    ["Fire Island"] = cf(-5467.0, 18.0, -5233.0),
+    ["Fire Volcano"] = cf(-5462.0, 130.0, -5836.0),
+    ["Ship Island"] = cf(908.0, 127.0, 33007.0),
+    ["Ship Deck"] = cf(921.0, 126.0, 33088.0),
+    ["Frost Island"] = cf(5690.0, 30.0, -6475.0),
+    ["Frost Cave"] = cf(5628.0, 57.5, -6618.0),
+    ["Forgotten Island"] = cf(-3054.0, 237.0, -10148.0),
+    ["Forgotten Lake"] = cf(-3263.0, 298.5, -10552.5),
+    ["Living Island"] = cf(-1200.0, 30.0, -9000.0),
+    ["Usopp Island"] = cf(-2000.0, 10.0, -8000.0),
+    ["Mansion 2"] = cf(100.0, 80.0, 12100.0),
+    ["Cafe Island"] = cf(500.0, 20.0, 1500.0),
+    ["Baratie"] = cf(0.0, 10.0, 5000.0),
     -- Sea 3
-    ["Port Town"] = CFrame.new(-371.0, 47.0, 5630.0),
-    ["Port Town Rooftops"] = CFrame.new(-236.5, 217.0, 6006.0),
-    ["Amazon Island"] = CFrame.new(5667.0, 32.0, -1123.0),
-    ["Amazon Walls"] = CFrame.new(6831.0, 441.5, 446.5),
-    ["Amazon Village"] = CFrame.new(5792.5, 848.0, 1084.0),
-    ["Amazon Lake"] = CFrame.new(5010.0, 664.0, -41.0),
-    ["Hydra Island"] = CFrame.new(5497.0, 12.0, -1911.0),
-    ["Hydra Cave"] = CFrame.new(5400.0, 450.0, -2100.0),
-    ["Gravel Island"] = CFrame.new(9424.0, 18.0, -6519.0),
-    ["Sea of Treats 3"] = CFrame.new(389.0, 5.0, -13858.0),
-    ["Tiki Outpost"] = CFrame.new(-16410.0, 25.0, -175.0),
-    ["Tiki Beach"] = CFrame.new(-16163.0, 11.5, -96.5),
-    ["Tiki Temple"] = CFrame.new(-16541.0, 54.7, 1051.5),
-    ["Tiki Arena"] = CFrame.new(-16849.0, 21.5, 1041.0),
-    ["Tiki Summit"] = CFrame.new(-16811.5, 84.5, 1542.0),
-    ["Tiki Jungle"] = CFrame.new(-16621.0, 121.0, 1290.5),
-    ["Candy Island"] = CFrame.new(-1192.0, 12.0, -14469.0),
-    ["Candy Shore"] = CFrame.new(-1437.5, 17.1, -14385.5),
-    ["Candy Cave"] = CFrame.new(-916.0, 17.1, -14639.0),
-    ["Cake Island"] = CFrame.new(-1986.0, 29.0, -12014.0),
-    ["Cake Fortress"] = CFrame.new(-1418.0, 36.5, -12255.5),
-    ["Cake Kitchen"] = CFrame.new(-1980.0, 36.5, -12984.0),
-    ["Cake Hall"] = CFrame.new(-2251.5, 52.0, -13033.0),
-    ["Haunted Castle Gate"] = CFrame.new(-9513.0, 65.0, 5994.0),
-    ["Haunted Courtyard"] = CFrame.new(-9712.0, 204.5, 6193.0),
-    ["Haunted Crypt"] = CFrame.new(-9545.5, 69.5, 6339.5),
-    ["Nuts Island"] = CFrame.new(-2113.0, 39.0, -10198.0),
-    ["Nuts Top"] = CFrame.new(-2150.5, 122.0, -10359.0),
-    ["Ice Cream Island"] = CFrame.new(-825.0, 72.0, -10972.0),
-    ["Ice Cream Peak"] = CFrame.new(-790.0, 209.0, -11010.0),
-    ["Chocolate Island"] = CFrame.new(201.0, 22.0, -12231.0),
-    ["Chocolate Bridge"] = CFrame.new(701.0, 25.5, -12708.0),
-    ["Chocolate Factory"] = CFrame.new(-140.2, 25.5, -12652.0),
-    ["Chocolate Warehouse"] = CFrame.new(48.0, 25.5, -13029.0),
-    ["Pineapple Island"] = CFrame.new(12873.0, 16.0, -11826.0),
-    ["Mirage Island"] = CFrame.new(-11750.0, 18.0, -9400.0),
-    ["Castle Island"] = CFrame.new(-5510.0, 23.0, -5150.0),
-    ["Forgotten Island 3"] = CFrame.new(-3050.0, 240.0, -10150.0),
-    ["Tempus Island"] = CFrame.new(7500.0, 50.0, -5500.0),
-    ["Deep Forest 1"] = CFrame.new(-13233.0, 332.0, -7626.5),
-    ["Deep Forest 2"] = CFrame.new(-12682.0, 390.5, -9902.0),
-    ["Deep Forest 3"] = CFrame.new(-10583.0, 331.5, -8758.0),
-    ["Marine Tree Base"] = CFrame.new(2180.0, 28.7, -6740.0),
-    ["Marine Tree Top"] = CFrame.new(3294.0, 385.0, -7048.5),
-    ["Haunted Castle Front"] = CFrame.new(-8762.0, 183.0, 6168.0),
-    ["Haunted Castle Inside"] = CFrame.new(-10104.0, 238.5, 6180.0)
+    ["Port Town"] = cf(-371.0, 47.0, 5630.0),
+    ["Port Town Rooftops"] = cf(-236.5, 217.0, 6006.0),
+    ["Amazon Island"] = cf(5667.0, 32.0, -1123.0),
+    ["Amazon Walls"] = cf(6831.0, 441.5, 446.5),
+    ["Amazon Village"] = cf(5792.5, 848.0, 1084.0),
+    ["Amazon Lake"] = cf(5010.0, 664.0, -41.0),
+    ["Hydra Island"] = cf(5497.0, 12.0, -1911.0),
+    ["Hydra Cave"] = cf(5400.0, 450.0, -2100.0),
+    ["Gravel Island"] = cf(9424.0, 18.0, -6519.0),
+    ["Sea of Treats 3"] = cf(389.0, 5.0, -13858.0),
+    ["Tiki Outpost"] = cf(-16410.0, 25.0, -175.0),
+    ["Tiki Beach"] = cf(-16163.0, 11.5, -96.5),
+    ["Tiki Temple"] = cf(-16541.0, 54.7, 1051.5),
+    ["Tiki Arena"] = cf(-16849.0, 21.5, 1041.0),
+    ["Tiki Summit"] = cf(-16811.5, 84.5, 1542.0),
+    ["Tiki Jungle"] = cf(-16621.0, 121.0, 1290.5),
+    ["Candy Island"] = cf(-1192.0, 12.0, -14469.0),
+    ["Candy Shore"] = cf(-1437.5, 17.1, -14385.5),
+    ["Candy Cave"] = cf(-916.0, 17.1, -14639.0),
+    ["Cake Island"] = cf(-1986.0, 29.0, -12014.0),
+    ["Cake Fortress"] = cf(-1418.0, 36.5, -12255.5),
+    ["Cake Kitchen"] = cf(-1980.0, 36.5, -12984.0),
+    ["Cake Hall"] = cf(-2251.5, 52.0, -13033.0),
+    ["Haunted Castle Gate"] = cf(-9513.0, 65.0, 5994.0),
+    ["Haunted Courtyard"] = cf(-9712.0, 204.5, 6193.0),
+    ["Haunted Crypt"] = cf(-9545.5, 69.5, 6339.5),
+    ["Nuts Island"] = cf(-2113.0, 39.0, -10198.0),
+    ["Nuts Top"] = cf(-2150.5, 122.0, -10359.0),
+    ["Ice Cream Island"] = cf(-825.0, 72.0, -10972.0),
+    ["Ice Cream Peak"] = cf(-790.0, 209.0, -11010.0),
+    ["Chocolate Island"] = cf(201.0, 22.0, -12231.0),
+    ["Chocolate Bridge"] = cf(701.0, 25.5, -12708.0),
+    ["Chocolate Factory"] = cf(-140.2, 25.5, -12652.0),
+    ["Chocolate Warehouse"] = cf(48.0, 25.5, -13029.0),
+    ["Pineapple Island"] = cf(12873.0, 16.0, -11826.0),
+    ["Mirage Island"] = cf(-11750.0, 18.0, -9400.0),
+    ["Castle Island"] = cf(-5510.0, 23.0, -5150.0),
+    ["Forgotten Island 3"] = cf(-3050.0, 240.0, -10150.0),
+    ["Tempus Island"] = cf(7500.0, 50.0, -5500.0),
+    ["Deep Forest 1"] = cf(-13233.0, 332.0, -7626.5),
+    ["Deep Forest 2"] = cf(-12682.0, 390.5, -9902.0),
+    ["Deep Forest 3"] = cf(-10583.0, 331.5, -8758.0),
+    ["Marine Tree Base"] = cf(2180.0, 28.7, -6740.0),
+    ["Marine Tree Top"] = cf(3294.0, 385.0, -7048.5),
+    ["Haunted Castle Front"] = cf(-8762.0, 183.0, 6168.0),
+    ["Haunted Castle Inside"] = cf(-10104.0, 238.5, 6180.0)
 }
 
 local LocationNames = {}
@@ -4939,7 +4928,7 @@ TeleportSection2:AddDropdown("QuickLocation", { text = "Location", values = Loca
 TeleportSection2:AddButton({ text = "Go!", callback = function()
     local loc = Library.Flags.QuickLocation or "Start Island"
     local cf = AllLocations[loc]
-    if cf then MoveToPosition(cf); notify("Teleported to " .. loc, "Teleport", "success") end
+    if cf then WalkToPoint(cf); notify("Teleported to " .. loc, "Teleport", "success") end
 end })
 
 local function AutoBuyAllSwords()
@@ -4971,16 +4960,16 @@ local function MethodBasedFarming()
     elseif method == "Material" then
         -- Material farming mode
         local matType = Library.Flags.SelectMaterial or "Bone"
-        MaterialFarm(matType)
+        GatherMaterial(matType)
     elseif method == "Bone" then
         -- Bone-specific farming (Haunted Castle)
         if Sea3 and client.Data.Level.Value >= 1975 then
-            MaterialFarm("Bone")
+            GatherMaterial("Bone")
         end
     elseif method == "Fragment" then
         -- Fragment farming via bosses
         local bossName = Library.Flags.SelectBoss or "Saber Expert"
-        FarmBoss(bossName)
+        DefeatNamedBoss(bossName)
     end
 end
 
@@ -5087,9 +5076,9 @@ local function CheckStuck()
     if currentCount == LastEnemyCount and currentCount == 0 then
         StuckTimer = StuckTimer + 1
         if StuckTimer >= StuckThreshold then
-            notify("No enemies found, hopping...", "Auto Hop", "info")
+            notify("No enemies found, hopping...", "Auto ServerHop", "info")
             StuckTimer = 0
-            Hop()
+            ServerHop()
         end
     else
         StuckTimer = 0
@@ -5101,21 +5090,21 @@ interval("StuckCheckInterval", "AutoHop", 1, function()
     pcall(CheckStuck)
 end)
 
-local function SafetyCheck()
+local function RunSafetyDiagnostics()
     -- Check if character exists
     if not client.Character then
         client.CharacterAdded:Wait(5)
     end
     -- Check if humanoid root part exists
-    if not getRoot() then
+    if not GetHumanoidRootPart() then
         wait(1)
     end
     -- Check if humanoid exists
-    if not getHumanoid() then
+    if not GetHumanoid() then
         wait(1)
     end
     -- Check if character is alive
-    local hum = getHumanoid()
+    local hum = GetHumanoid()
     if hum and hum.Health <= 0 then
         if Library.Flags.AutoDeath then
             ResetCharacter()
@@ -5125,7 +5114,7 @@ local function SafetyCheck()
 end
 
 interval("SafetyInterval", "AutoFarmEnable", 2, function()
-    pcall(SafetyCheck)
+    pcall(RunSafetyDiagnostics)
 end)
 
 local function GetInventoryItems()
@@ -5159,13 +5148,13 @@ local function AutoBackupConfig()
     if not Library.Flags.AutoFarmEnable then return end
     local timestamp = os.time()
     local data = HttpService:JSONEncode(Library.Flags)
-    local filename = "UltimateBloxFruits_Backup_" .. timestamp .. ".json"
+    local filename = "AbyssalCore_Backup_" .. timestamp .. ".json"
     pcall(function() writefile(filename, data) end)
     -- Clean up old backups (keep last 5)
     pcall(function()
         local files = {}
         for _, f in pairs(listfiles("")) do
-            if f:find("UltimateBloxFruits_Backup_") then
+            if f:find("AbyssalCore_Backup_") then
                 table.insert(files, f)
             end
         end
@@ -5181,19 +5170,6 @@ interval("AutoBackupInterval", "AutoFarmEnable", 600, function()
     pcall(AutoBackupConfig)
 end)
 
-delay(1, function()
-    local totalModules = 113
-    print("")
-    print("================================================")
-    print("  ULTIMATE BLOX FRUITS HUB v3.0")
-    print("  Status: FULLY LOADED")
-    print("  Modules: " .. totalModules)
-    print("  Lines: ~12,000+")
-    print("  Anti-Detection: 7/7 Layers Active")
-    print("  UI Sections: 14+")
-    print("================================================")
-    print("")
-end)
 
 local EnemyLocations = {
     -- SEA 1 ENEMIES
@@ -5202,11 +5178,11 @@ local EnemyLocations = {
         Level = 5,
         Location = "Start Island",
         Spawns = {
-            CFrame.new(1038.55, 41.30, 1576.51),
-            CFrame.new(1060.94, 16.46, 1547.78),
-            CFrame.new(1040.50, 40.25, 1575.50),
-            CFrame.new(1080.00, 30.00, 1550.00),
-            CFrame.new(1020.00, 35.00, 1600.00)
+            cf(1038.55, 41.30, 1576.51),
+            cf(1060.94, 16.46, 1547.78),
+            cf(1040.50, 40.25, 1575.50),
+            cf(1080.00, 30.00, 1550.00),
+            cf(1020.00, 35.00, 1600.00)
         },
         SpawnCount = 15,
         RespawnTime = 5,
@@ -5217,11 +5193,11 @@ local EnemyLocations = {
         Level = 15,
         Location = "Jungle",
         Spawns = {
-            CFrame.new(-1448.14, 50.85, 63.61),
-            CFrame.new(-1450.00, 50.00, 65.00),
-            CFrame.new(-1400.00, 45.00, 50.00),
-            CFrame.new(-1500.00, 55.00, 70.00),
-            CFrame.new(-1420.00, 48.00, 80.00)
+            cf(-1448.14, 50.85, 63.61),
+            cf(-1450.00, 50.00, 65.00),
+            cf(-1400.00, 45.00, 50.00),
+            cf(-1500.00, 55.00, 70.00),
+            cf(-1420.00, 48.00, 80.00)
         },
         SpawnCount = 12,
         RespawnTime = 5,
@@ -5232,11 +5208,11 @@ local EnemyLocations = {
         Level = 25,
         Location = "Jungle",
         Spawns = {
-            CFrame.new(-1142.65, 40.46, -515.39),
-            CFrame.new(-1145.00, 40.00, -515.00),
-            CFrame.new(-1100.00, 38.00, -500.00),
-            CFrame.new(-1180.00, 42.00, -530.00),
-            CFrame.new(-1120.00, 35.00, -480.00)
+            cf(-1142.65, 40.46, -515.39),
+            cf(-1145.00, 40.00, -515.00),
+            cf(-1100.00, 38.00, -500.00),
+            cf(-1180.00, 42.00, -530.00),
+            cf(-1120.00, 35.00, -480.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5247,11 +5223,11 @@ local EnemyLocations = {
         Level = 35,
         Location = "Buggy Island",
         Spawns = {
-            CFrame.new(-1201.09, 40.63, 3857.60),
-            CFrame.new(-1200.00, 40.00, 3857.00),
-            CFrame.new(-1180.00, 38.00, 3840.00),
-            CFrame.new(-1220.00, 42.00, 3870.00),
-            CFrame.new(-1160.00, 36.00, 3830.00)
+            cf(-1201.09, 40.63, 3857.60),
+            cf(-1200.00, 40.00, 3857.00),
+            cf(-1180.00, 38.00, 3840.00),
+            cf(-1220.00, 42.00, 3870.00),
+            cf(-1160.00, 36.00, 3830.00)
         },
         SpawnCount = 12,
         RespawnTime = 5,
@@ -5262,11 +5238,11 @@ local EnemyLocations = {
         Level = 50,
         Location = "Buggy Island",
         Spawns = {
-            CFrame.new(-1387.53, 24.59, 4100.96),
-            CFrame.new(-1385.00, 24.00, 4100.00),
-            CFrame.new(-1400.00, 25.00, 4110.00),
-            CFrame.new(-1370.00, 23.00, 4090.00),
-            CFrame.new(-1420.00, 26.00, 4120.00)
+            cf(-1387.53, 24.59, 4100.96),
+            cf(-1385.00, 24.00, 4100.00),
+            cf(-1400.00, 25.00, 4110.00),
+            cf(-1370.00, 23.00, 4090.00),
+            cf(-1420.00, 26.00, 4120.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5277,11 +5253,11 @@ local EnemyLocations = {
         Level = 65,
         Location = "Desert",
         Spawns = {
-            CFrame.new(984.99, 16.11, 4417.91),
-            CFrame.new(985.00, 16.00, 4418.00),
-            CFrame.new(960.00, 15.00, 4400.00),
-            CFrame.new(1000.00, 17.00, 4430.00),
-            CFrame.new(950.00, 14.00, 4390.00)
+            cf(984.99, 16.11, 4417.91),
+            cf(985.00, 16.00, 4418.00),
+            cf(960.00, 15.00, 4400.00),
+            cf(1000.00, 17.00, 4430.00),
+            cf(950.00, 14.00, 4390.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5292,11 +5268,11 @@ local EnemyLocations = {
         Level = 80,
         Location = "Desert Pyramid",
         Spawns = {
-            CFrame.new(1547.15, 14.45, 4381.80),
-            CFrame.new(1547.00, 14.00, 4382.00),
-            CFrame.new(1560.00, 15.00, 4390.00),
-            CFrame.new(1530.00, 13.00, 4375.00),
-            CFrame.new(1555.00, 16.00, 4400.00)
+            cf(1547.15, 14.45, 4381.80),
+            cf(1547.00, 14.00, 4382.00),
+            cf(1560.00, 15.00, 4390.00),
+            cf(1530.00, 13.00, 4375.00),
+            cf(1555.00, 16.00, 4400.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5307,11 +5283,11 @@ local EnemyLocations = {
         Level = 95,
         Location = "Snow Island",
         Spawns = {
-            CFrame.new(1356.30, 105.77, -1328.24),
-            CFrame.new(1358.00, 105.00, -1328.00),
-            CFrame.new(1340.00, 103.00, -1340.00),
-            CFrame.new(1370.00, 107.00, -1320.00),
-            CFrame.new(1350.00, 100.00, -1335.00)
+            cf(1356.30, 105.77, -1328.24),
+            cf(1358.00, 105.00, -1328.00),
+            cf(1340.00, 103.00, -1340.00),
+            cf(1370.00, 107.00, -1320.00),
+            cf(1350.00, 100.00, -1335.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5322,11 +5298,11 @@ local EnemyLocations = {
         Level = 110,
         Location = "Snow Mountain",
         Spawns = {
-            CFrame.new(1218.80, 138.01, -1488.03),
-            CFrame.new(1220.00, 138.00, -1488.00),
-            CFrame.new(1200.00, 135.00, -1500.00),
-            CFrame.new(1240.00, 140.00, -1475.00),
-            CFrame.new(1210.00, 132.00, -1495.00)
+            cf(1218.80, 138.01, -1488.03),
+            cf(1220.00, 138.00, -1488.00),
+            cf(1200.00, 135.00, -1500.00),
+            cf(1240.00, 140.00, -1475.00),
+            cf(1210.00, 132.00, -1495.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5338,11 +5314,11 @@ local EnemyLocations = {
         Level = 710,
         Location = "Green Zone",
         Spawns = {
-            CFrame.new(68.87, 93.64, 2429.68),
-            CFrame.new(69.00, 93.50, 2430.00),
-            CFrame.new(50.00, 90.00, 2420.00),
-            CFrame.new(90.00, 95.00, 2440.00),
-            CFrame.new(40.00, 92.00, 2410.00)
+            cf(68.87, 93.64, 2429.68),
+            cf(69.00, 93.50, 2430.00),
+            cf(50.00, 90.00, 2420.00),
+            cf(90.00, 95.00, 2440.00),
+            cf(40.00, 92.00, 2410.00)
         },
         SpawnCount = 12,
         RespawnTime = 5,
@@ -5353,11 +5329,11 @@ local EnemyLocations = {
         Level = 750,
         Location = "Green Zone Fortress",
         Spawns = {
-            CFrame.new(-864.85, 122.47, 1453.15),
-            CFrame.new(-865.00, 122.00, 1453.00),
-            CFrame.new(-880.00, 120.00, 1440.00),
-            CFrame.new(-850.00, 125.00, 1460.00),
-            CFrame.new(-890.00, 118.00, 1435.00)
+            cf(-864.85, 122.47, 1453.15),
+            cf(-865.00, 122.00, 1453.00),
+            cf(-880.00, 120.00, 1440.00),
+            cf(-850.00, 125.00, 1460.00),
+            cf(-890.00, 118.00, 1435.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5368,11 +5344,11 @@ local EnemyLocations = {
         Level = 785,
         Location = "Flamingo Island",
         Spawns = {
-            CFrame.new(1065.37, 137.64, 1324.38),
-            CFrame.new(1065.00, 137.50, 1324.00),
-            CFrame.new(1050.00, 135.00, 1310.00),
-            CFrame.new(1080.00, 140.00, 1335.00),
-            CFrame.new(1040.00, 133.00, 1300.00)
+            cf(1065.37, 137.64, 1324.38),
+            cf(1065.00, 137.50, 1324.00),
+            cf(1050.00, 135.00, 1310.00),
+            cf(1080.00, 140.00, 1335.00),
+            cf(1040.00, 133.00, 1300.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5383,11 +5359,11 @@ local EnemyLocations = {
         Level = 835,
         Location = "Factory",
         Spawns = {
-            CFrame.new(533.22, 128.47, 355.63),
-            CFrame.new(533.00, 128.00, 356.00),
-            CFrame.new(520.00, 125.00, 340.00),
-            CFrame.new(550.00, 130.00, 370.00),
-            CFrame.new(510.00, 126.00, 330.00)
+            cf(533.22, 128.47, 355.63),
+            cf(533.00, 128.00, 356.00),
+            cf(520.00, 125.00, 340.00),
+            cf(550.00, 130.00, 370.00),
+            cf(510.00, 126.00, 330.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5399,11 +5375,11 @@ local EnemyLocations = {
         Level = 1510,
         Location = "Port Town",
         Spawns = {
-            CFrame.new(-435.68, 189.70, 5551.08),
-            CFrame.new(-435.50, 189.50, 5551.00),
-            CFrame.new(-450.00, 185.00, 5540.00),
-            CFrame.new(-420.00, 192.00, 5560.00),
-            CFrame.new(-460.00, 188.00, 5530.00)
+            cf(-435.68, 189.70, 5551.08),
+            cf(-435.50, 189.50, 5551.00),
+            cf(-450.00, 185.00, 5540.00),
+            cf(-420.00, 192.00, 5560.00),
+            cf(-460.00, 188.00, 5530.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5414,11 +5390,11 @@ local EnemyLocations = {
         Level = 1550,
         Location = "Port Town Rooftops",
         Spawns = {
-            CFrame.new(-236.53, 217.47, 6006.09),
-            CFrame.new(-236.50, 217.00, 6006.00),
-            CFrame.new(-250.00, 215.00, 5995.00),
-            CFrame.new(-220.00, 220.00, 6015.00),
-            CFrame.new(-260.00, 213.00, 5985.00)
+            cf(-236.53, 217.47, 6006.09),
+            cf(-236.50, 217.00, 6006.00),
+            cf(-250.00, 215.00, 5995.00),
+            cf(-220.00, 220.00, 6015.00),
+            cf(-260.00, 213.00, 5985.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5429,11 +5405,11 @@ local EnemyLocations = {
         Level = 1585,
         Location = "Amazon Island",
         Spawns = {
-            CFrame.new(6301.99, 104.77, -1082.61),
-            CFrame.new(6302.00, 104.50, -1082.50),
-            CFrame.new(6280.00, 102.00, -1095.00),
-            CFrame.new(6320.00, 106.00, -1070.00),
-            CFrame.new(6260.00, 100.00, -1100.00)
+            cf(6301.99, 104.77, -1082.61),
+            cf(6302.00, 104.50, -1082.50),
+            cf(6280.00, 102.00, -1095.00),
+            cf(6320.00, 106.00, -1070.00),
+            cf(6260.00, 100.00, -1100.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5444,11 +5420,11 @@ local EnemyLocations = {
         Level = 1610,
         Location = "Amazon Walls",
         Spawns = {
-            CFrame.new(6831.12, 441.77, 446.59),
-            CFrame.new(6831.00, 441.50, 446.50),
-            CFrame.new(6820.00, 440.00, 435.00),
-            CFrame.new(6840.00, 443.00, 455.00),
-            CFrame.new(6800.00, 438.00, 425.00)
+            cf(6831.12, 441.77, 446.59),
+            cf(6831.00, 441.50, 446.50),
+            cf(6820.00, 440.00, 435.00),
+            cf(6840.00, 443.00, 455.00),
+            cf(6800.00, 438.00, 425.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5459,11 +5435,11 @@ local EnemyLocations = {
         Level = 1635,
         Location = "Amazon Village",
         Spawns = {
-            CFrame.new(5792.52, 848.14, 1084.18),
-            CFrame.new(5792.50, 848.00, 1084.00),
-            CFrame.new(5780.00, 845.00, 1070.00),
-            CFrame.new(5805.00, 850.00, 1095.00),
-            CFrame.new(5765.00, 843.00, 1060.00)
+            cf(5792.52, 848.14, 1084.18),
+            cf(5792.50, 848.00, 1084.00),
+            cf(5780.00, 845.00, 1070.00),
+            cf(5805.00, 850.00, 1095.00),
+            cf(5765.00, 843.00, 1060.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5474,11 +5450,11 @@ local EnemyLocations = {
         Level = 1675,
         Location = "Amazon Lake",
         Spawns = {
-            CFrame.new(5009.51, 664.11, -40.96),
-            CFrame.new(5010.00, 664.00, -41.00),
-            CFrame.new(4995.00, 662.00, -55.00),
-            CFrame.new(5025.00, 666.00, -25.00),
-            CFrame.new(4980.00, 660.00, -60.00)
+            cf(5009.51, 664.11, -40.96),
+            cf(5010.00, 664.00, -41.00),
+            cf(4995.00, 662.00, -55.00),
+            cf(5025.00, 666.00, -25.00),
+            cf(4980.00, 660.00, -60.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5489,11 +5465,11 @@ local EnemyLocations = {
         Level = 1710,
         Location = "Marine Tree",
         Spawns = {
-            CFrame.new(2198.01, 128.71, -7109.50),
-            CFrame.new(2198.00, 128.50, -7109.00),
-            CFrame.new(2180.00, 126.00, -7120.00),
-            CFrame.new(2210.00, 130.00, -7098.00),
-            CFrame.new(2165.00, 124.00, -7130.00)
+            cf(2198.01, 128.71, -7109.50),
+            cf(2198.00, 128.50, -7109.00),
+            cf(2180.00, 126.00, -7120.00),
+            cf(2210.00, 130.00, -7098.00),
+            cf(2165.00, 124.00, -7130.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5504,11 +5480,11 @@ local EnemyLocations = {
         Level = 1750,
         Location = "Marine Tree Top",
         Spawns = {
-            CFrame.new(3294.31, 385.41, -7048.63),
-            CFrame.new(3294.00, 385.00, -7048.50),
-            CFrame.new(3280.00, 383.00, -7060.00),
-            CFrame.new(3310.00, 387.00, -7035.00),
-            CFrame.new(3265.00, 381.00, -7070.00)
+            cf(3294.31, 385.41, -7048.63),
+            cf(3294.00, 385.00, -7048.50),
+            cf(3280.00, 383.00, -7060.00),
+            cf(3310.00, 387.00, -7035.00),
+            cf(3265.00, 381.00, -7070.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5519,11 +5495,11 @@ local EnemyLocations = {
         Level = 1785,
         Location = "Deep Forest 3",
         Spawns = {
-            CFrame.new(-10553.27, 521.38, -8176.95),
-            CFrame.new(-10553.00, 521.00, -8177.00),
-            CFrame.new(-10570.00, 519.00, -8190.00),
-            CFrame.new(-10540.00, 523.00, -8165.00),
-            CFrame.new(-10580.00, 517.00, -8200.00)
+            cf(-10553.27, 521.38, -8176.95),
+            cf(-10553.00, 521.00, -8177.00),
+            cf(-10570.00, 519.00, -8190.00),
+            cf(-10540.00, 523.00, -8165.00),
+            cf(-10580.00, 517.00, -8200.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5534,11 +5510,11 @@ local EnemyLocations = {
         Level = 1810,
         Location = "Deep Forest Waterfall",
         Spawns = {
-            CFrame.new(-10789.40, 427.19, -9131.44),
-            CFrame.new(-10789.00, 427.00, -9131.00),
-            CFrame.new(-10800.00, 425.00, -9140.00),
-            CFrame.new(-10775.00, 429.00, -9120.00),
-            CFrame.new(-10810.00, 423.00, -9150.00)
+            cf(-10789.40, 427.19, -9131.44),
+            cf(-10789.00, 427.00, -9131.00),
+            cf(-10800.00, 425.00, -9140.00),
+            cf(-10775.00, 429.00, -9120.00),
+            cf(-10810.00, 423.00, -9150.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5549,11 +5525,11 @@ local EnemyLocations = {
         Level = 1835,
         Location = "Deep Forest 1",
         Spawns = {
-            CFrame.new(-13489.40, 400.30, -7770.25),
-            CFrame.new(-13489.00, 400.00, -7770.00),
-            CFrame.new(-13500.00, 398.00, -7780.00),
-            CFrame.new(-13475.00, 402.00, -7760.00),
-            CFrame.new(-13510.00, 396.00, -7790.00)
+            cf(-13489.40, 400.30, -7770.25),
+            cf(-13489.00, 400.00, -7770.00),
+            cf(-13500.00, 398.00, -7780.00),
+            cf(-13475.00, 402.00, -7760.00),
+            cf(-13510.00, 396.00, -7790.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5564,11 +5540,11 @@ local EnemyLocations = {
         Level = 1875,
         Location = "Deep Forest Temple",
         Spawns = {
-            CFrame.new(-13508.62, 582.46, -6985.30),
-            CFrame.new(-13508.50, 582.00, -6985.00),
-            CFrame.new(-13520.00, 580.00, -6995.00),
-            CFrame.new(-13495.00, 584.00, -6975.00),
-            CFrame.new(-13530.00, 578.00, -7005.00)
+            cf(-13508.62, 582.46, -6985.30),
+            cf(-13508.50, 582.00, -6985.00),
+            cf(-13520.00, 580.00, -6995.00),
+            cf(-13495.00, 584.00, -6975.00),
+            cf(-13530.00, 578.00, -7005.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5579,11 +5555,11 @@ local EnemyLocations = {
         Level = 1910,
         Location = "Deep Forest 2",
         Spawns = {
-            CFrame.new(-12267.10, 459.75, -10277.20),
-            CFrame.new(-12267.00, 459.50, -10277.00),
-            CFrame.new(-12280.00, 457.00, -10290.00),
-            CFrame.new(-12255.00, 462.00, -10265.00),
-            CFrame.new(-12290.00, 455.00, -10300.00)
+            cf(-12267.10, 459.75, -10277.20),
+            cf(-12267.00, 459.50, -10277.00),
+            cf(-12280.00, 457.00, -10290.00),
+            cf(-12255.00, 462.00, -10265.00),
+            cf(-12290.00, 455.00, -10300.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5594,11 +5570,11 @@ local EnemyLocations = {
         Level = 1950,
         Location = "Deep Forest Lookout",
         Spawns = {
-            CFrame.new(-13291.51, 520.47, -9904.64),
-            CFrame.new(-13291.50, 520.00, -9904.50),
-            CFrame.new(-13305.00, 518.00, -9915.00),
-            CFrame.new(-13278.00, 522.00, -9895.00),
-            CFrame.new(-13315.00, 516.00, -9925.00)
+            cf(-13291.51, 520.47, -9904.64),
+            cf(-13291.50, 520.00, -9904.50),
+            cf(-13305.00, 518.00, -9915.00),
+            cf(-13278.00, 522.00, -9895.00),
+            cf(-13315.00, 516.00, -9925.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5609,11 +5585,11 @@ local EnemyLocations = {
         Level = 1985,
         Location = "Haunted Castle",
         Spawns = {
-            CFrame.new(-8761.77, 183.43, 6168.33),
-            CFrame.new(-8762.00, 183.00, 6168.00),
-            CFrame.new(-8775.00, 181.00, 6155.00),
-            CFrame.new(-8748.00, 185.00, 6180.00),
-            CFrame.new(-8785.00, 179.00, 6145.00)
+            cf(-8761.77, 183.43, 6168.33),
+            cf(-8762.00, 183.00, 6168.00),
+            cf(-8775.00, 181.00, 6155.00),
+            cf(-8748.00, 185.00, 6180.00),
+            cf(-8785.00, 179.00, 6145.00)
         },
         SpawnCount = 12,
         RespawnTime = 5,
@@ -5624,11 +5600,11 @@ local EnemyLocations = {
         Level = 2010,
         Location = "Haunted Castle Interior",
         Spawns = {
-            CFrame.new(-10103.75, 238.57, 6179.76),
-            CFrame.new(-10104.00, 238.50, 6180.00),
-            CFrame.new(-10115.00, 236.00, 6168.00),
-            CFrame.new(-10092.00, 240.00, 6192.00),
-            CFrame.new(-10125.00, 234.00, 6158.00)
+            cf(-10103.75, 238.57, 6179.76),
+            cf(-10104.00, 238.50, 6180.00),
+            cf(-10115.00, 236.00, 6168.00),
+            cf(-10092.00, 240.00, 6192.00),
+            cf(-10125.00, 234.00, 6158.00)
         },
         SpawnCount = 10,
         RespawnTime = 5,
@@ -5639,11 +5615,11 @@ local EnemyLocations = {
         Level = 2035,
         Location = "Haunted Courtyard",
         Spawns = {
-            CFrame.new(-9712.03, 204.70, 6193.32),
-            CFrame.new(-9712.00, 204.50, 6193.00),
-            CFrame.new(-9725.00, 202.00, 6180.00),
-            CFrame.new(-9698.00, 207.00, 6205.00),
-            CFrame.new(-9735.00, 200.00, 6170.00)
+            cf(-9712.03, 204.70, 6193.32),
+            cf(-9712.00, 204.50, 6193.00),
+            cf(-9725.00, 202.00, 6180.00),
+            cf(-9698.00, 207.00, 6205.00),
+            cf(-9735.00, 200.00, 6170.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5654,11 +5630,11 @@ local EnemyLocations = {
         Level = 2060,
         Location = "Haunted Crypt",
         Spawns = {
-            CFrame.new(-9545.78, 69.62, 6339.56),
-            CFrame.new(-9545.50, 69.50, 6339.50),
-            CFrame.new(-9558.00, 67.00, 6328.00),
-            CFrame.new(-9532.00, 71.00, 6350.00),
-            CFrame.new(-9565.00, 65.00, 6320.00)
+            cf(-9545.78, 69.62, 6339.56),
+            cf(-9545.50, 69.50, 6339.50),
+            cf(-9558.00, 67.00, 6328.00),
+            cf(-9532.00, 71.00, 6350.00),
+            cf(-9565.00, 65.00, 6320.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5669,11 +5645,11 @@ local EnemyLocations = {
         Level = 2085,
         Location = "Nuts Island",
         Spawns = {
-            CFrame.new(-2150.59, 122.50, -10358.99),
-            CFrame.new(-2150.50, 122.00, -10359.00),
-            CFrame.new(-2162.00, 120.00, -10370.00),
-            CFrame.new(-2138.00, 124.00, -10348.00),
-            CFrame.new(-2170.00, 118.00, -10380.00)
+            cf(-2150.59, 122.50, -10358.99),
+            cf(-2150.50, 122.00, -10359.00),
+            cf(-2162.00, 120.00, -10370.00),
+            cf(-2138.00, 124.00, -10348.00),
+            cf(-2170.00, 118.00, -10380.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5684,11 +5660,11 @@ local EnemyLocations = {
         Level = 2110,
         Location = "Nuts Island Top",
         Spawns = {
-            CFrame.new(-2150.59, 122.50, -10358.99),
-            CFrame.new(-2150.50, 122.00, -10359.00),
-            CFrame.new(-2162.00, 120.00, -10370.00),
-            CFrame.new(-2138.00, 124.00, -10348.00),
-            CFrame.new(-2170.00, 118.00, -10380.00)
+            cf(-2150.59, 122.50, -10358.99),
+            cf(-2150.50, 122.00, -10359.00),
+            cf(-2162.00, 120.00, -10370.00),
+            cf(-2138.00, 124.00, -10348.00),
+            cf(-2170.00, 118.00, -10380.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5699,11 +5675,11 @@ local EnemyLocations = {
         Level = 2135,
         Location = "Ice Cream Island",
         Spawns = {
-            CFrame.new(-789.94, 209.38, -11009.98),
-            CFrame.new(-790.00, 209.00, -11010.00),
-            CFrame.new(-802.00, 207.00, -11022.00),
-            CFrame.new(-778.00, 211.00, -10998.00),
-            CFrame.new(-812.00, 205.00, -11030.00)
+            cf(-789.94, 209.38, -11009.98),
+            cf(-790.00, 209.00, -11010.00),
+            cf(-802.00, 207.00, -11022.00),
+            cf(-778.00, 211.00, -10998.00),
+            cf(-812.00, 205.00, -11030.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5714,11 +5690,11 @@ local EnemyLocations = {
         Level = 2175,
         Location = "Ice Cream Peak",
         Spawns = {
-            CFrame.new(-789.94, 209.38, -11009.98),
-            CFrame.new(-790.00, 209.00, -11010.00),
-            CFrame.new(-802.00, 207.00, -11022.00),
-            CFrame.new(-778.00, 211.00, -10998.00),
-            CFrame.new(-812.00, 205.00, -11030.00)
+            cf(-789.94, 209.38, -11009.98),
+            cf(-790.00, 209.00, -11010.00),
+            cf(-802.00, 207.00, -11022.00),
+            cf(-778.00, 211.00, -10998.00),
+            cf(-812.00, 205.00, -11030.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5729,11 +5705,11 @@ local EnemyLocations = {
         Level = 2210,
         Location = "Cake Island",
         Spawns = {
-            CFrame.new(-2321.71, 36.70, -12216.79),
-            CFrame.new(-2322.00, 36.50, -12217.00),
-            CFrame.new(-2335.00, 34.00, -12228.00),
-            CFrame.new(-2308.00, 38.00, -12205.00),
-            CFrame.new(-2342.00, 32.00, -12238.00)
+            cf(-2321.71, 36.70, -12216.79),
+            cf(-2322.00, 36.50, -12217.00),
+            cf(-2335.00, 34.00, -12228.00),
+            cf(-2308.00, 38.00, -12205.00),
+            cf(-2342.00, 32.00, -12238.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5744,11 +5720,11 @@ local EnemyLocations = {
         Level = 2235,
         Location = "Cake Fortress",
         Spawns = {
-            CFrame.new(-1418.11, 36.67, -12255.73),
-            CFrame.new(-1418.00, 36.50, -12255.50),
-            CFrame.new(-1430.00, 34.00, -12268.00),
-            CFrame.new(-1406.00, 38.00, -12242.00),
-            CFrame.new(-1440.00, 32.00, -12278.00)
+            cf(-1418.11, 36.67, -12255.73),
+            cf(-1418.00, 36.50, -12255.50),
+            cf(-1430.00, 34.00, -12268.00),
+            cf(-1406.00, 38.00, -12242.00),
+            cf(-1440.00, 32.00, -12278.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5759,11 +5735,11 @@ local EnemyLocations = {
         Level = 2260,
         Location = "Cake Kitchen",
         Spawns = {
-            CFrame.new(-1980.44, 36.67, -12983.84),
-            CFrame.new(-1980.00, 36.50, -12984.00),
-            CFrame.new(-1992.00, 34.00, -12996.00),
-            CFrame.new(-1968.00, 38.00, -12972.00),
-            CFrame.new(-2000.00, 32.00, -13006.00)
+            cf(-1980.44, 36.67, -12983.84),
+            cf(-1980.00, 36.50, -12984.00),
+            cf(-1992.00, 34.00, -12996.00),
+            cf(-1968.00, 38.00, -12972.00),
+            cf(-2000.00, 32.00, -13006.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5774,11 +5750,11 @@ local EnemyLocations = {
         Level = 2285,
         Location = "Cake Hall",
         Spawns = {
-            CFrame.new(-2251.58, 52.27, -13033.40),
-            CFrame.new(-2251.50, 52.00, -13033.00),
-            CFrame.new(-2264.00, 50.00, -13045.00),
-            CFrame.new(-2238.00, 54.00, -13022.00),
-            CFrame.new(-2272.00, 48.00, -13055.00)
+            cf(-2251.58, 52.27, -13033.40),
+            cf(-2251.50, 52.00, -13033.00),
+            cf(-2264.00, 50.00, -13045.00),
+            cf(-2238.00, 54.00, -13022.00),
+            cf(-2272.00, 48.00, -13055.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5789,11 +5765,11 @@ local EnemyLocations = {
         Level = 2310,
         Location = "Chocolate Island",
         Spawns = {
-            CFrame.new(167.98, 26.23, -12238.87),
-            CFrame.new(168.00, 26.00, -12239.00),
-            CFrame.new(155.00, 24.00, -12250.00),
-            CFrame.new(180.00, 28.00, -12228.00),
-            CFrame.new(145.00, 22.00, -12258.00)
+            cf(167.98, 26.23, -12238.87),
+            cf(168.00, 26.00, -12239.00),
+            cf(155.00, 24.00, -12250.00),
+            cf(180.00, 28.00, -12228.00),
+            cf(145.00, 22.00, -12258.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5804,11 +5780,11 @@ local EnemyLocations = {
         Level = 2335,
         Location = "Chocolate Bridge",
         Spawns = {
-            CFrame.new(701.31, 25.58, -12708.21),
-            CFrame.new(701.00, 25.50, -12708.00),
-            CFrame.new(690.00, 23.00, -12720.00),
-            CFrame.new(712.00, 27.00, -12696.00),
-            CFrame.new(680.00, 21.00, -12728.00)
+            cf(701.31, 25.58, -12708.21),
+            cf(701.00, 25.50, -12708.00),
+            cf(690.00, 23.00, -12720.00),
+            cf(712.00, 27.00, -12696.00),
+            cf(680.00, 21.00, -12728.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5819,11 +5795,11 @@ local EnemyLocations = {
         Level = 2360,
         Location = "Chocolate Factory",
         Spawns = {
-            CFrame.new(-140.26, 25.58, -12652.31),
-            CFrame.new(-140.20, 25.50, -12652.00),
-            CFrame.new(-152.00, 23.00, -12664.00),
-            CFrame.new(-128.00, 27.00, -12640.00),
-            CFrame.new(-162.00, 21.00, -12672.00)
+            cf(-140.26, 25.58, -12652.31),
+            cf(-140.20, 25.50, -12652.00),
+            cf(-152.00, 23.00, -12664.00),
+            cf(-128.00, 27.00, -12640.00),
+            cf(-162.00, 21.00, -12672.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5834,11 +5810,11 @@ local EnemyLocations = {
         Level = 2385,
         Location = "Chocolate Warehouse",
         Spawns = {
-            CFrame.new(47.92, 25.58, -13029.24),
-            CFrame.new(48.00, 25.50, -13029.00),
-            CFrame.new(35.00, 23.00, -13041.00),
-            CFrame.new(60.00, 27.00, -13018.00),
-            CFrame.new(25.00, 21.00, -13050.00)
+            cf(47.92, 25.58, -13029.24),
+            cf(48.00, 25.50, -13029.00),
+            cf(35.00, 23.00, -13041.00),
+            cf(60.00, 27.00, -13018.00),
+            cf(25.00, 21.00, -13050.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5849,11 +5825,11 @@ local EnemyLocations = {
         Level = 2410,
         Location = "Candy Island",
         Spawns = {
-            CFrame.new(-1437.56, 17.15, -14385.69),
-            CFrame.new(-1437.50, 17.10, -14385.50),
-            CFrame.new(-1450.00, 15.00, -14398.00),
-            CFrame.new(-1425.00, 19.00, -14372.00),
-            CFrame.new(-1460.00, 13.00, -14408.00)
+            cf(-1437.56, 17.15, -14385.69),
+            cf(-1437.50, 17.10, -14385.50),
+            cf(-1450.00, 15.00, -14398.00),
+            cf(-1425.00, 19.00, -14372.00),
+            cf(-1460.00, 13.00, -14408.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5864,11 +5840,11 @@ local EnemyLocations = {
         Level = 2435,
         Location = "Candy Cave",
         Spawns = {
-            CFrame.new(-916.22, 17.15, -14638.81),
-            CFrame.new(-916.00, 17.10, -14639.00),
+            cf(-916.22, 17.15, -14638.81),
+            cf(-916.00, 17.10, -14639.00),
             CFrame.new (-928.00, 15.00, -14650.00),
-            CFrame.new(-904.00, 19.00, -14626.00),
-            CFrame.new(-938.00, 13.00, -14660.00)
+            cf(-904.00, 19.00, -14626.00),
+            cf(-938.00, 13.00, -14660.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5879,11 +5855,11 @@ local EnemyLocations = {
         Level = 2460,
         Location = "Tiki Outpost",
         Spawns = {
-            CFrame.new(-16162.82, 11.69, -96.45),
-            CFrame.new(-16163.00, 11.50, -96.50),
-            CFrame.new(-16175.00, 9.00, -108.00),
-            CFrame.new(-16150.00, 13.00, -84.00),
-            CFrame.new(-16185.00, 7.00, -118.00)
+            cf(-16162.82, 11.69, -96.45),
+            cf(-16163.00, 11.50, -96.50),
+            cf(-16175.00, 9.00, -108.00),
+            cf(-16150.00, 13.00, -84.00),
+            cf(-16185.00, 7.00, -118.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5894,11 +5870,11 @@ local EnemyLocations = {
         Level = 2485,
         Location = "Tiki Village",
         Spawns = {
-            CFrame.new(-16357.31, 20.63, 1005.65),
-            CFrame.new(-16357.00, 20.50, 1005.50),
-            CFrame.new(-16370.00, 18.00, 994.00),
-            CFrame.new(-16344.00, 22.00, 1018.00),
-            CFrame.new(-16380.00, 16.00, 984.00)
+            cf(-16357.31, 20.63, 1005.65),
+            cf(-16357.00, 20.50, 1005.50),
+            cf(-16370.00, 18.00, 994.00),
+            cf(-16344.00, 22.00, 1018.00),
+            cf(-16380.00, 16.00, 984.00)
         },
         SpawnCount = 8,
         RespawnTime = 5,
@@ -5909,11 +5885,11 @@ local EnemyLocations = {
         Level = 2510,
         Location = "Tiki Temple",
         Spawns = {
-            CFrame.new(-16357.31, 20.63, 1005.65),
-            CFrame.new(-16357.00, 20.50, 1005.50),
-            CFrame.new(-16370.00, 18.00, 994.00),
-            CFrame.new(-16344.00, 22.00, 1018.00),
-            CFrame.new(-16380.00, 16.00, 984.00)
+            cf(-16357.31, 20.63, 1005.65),
+            cf(-16357.00, 20.50, 1005.50),
+            cf(-16370.00, 18.00, 994.00),
+            cf(-16344.00, 22.00, 1018.00),
+            cf(-16380.00, 16.00, 984.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5924,11 +5900,11 @@ local EnemyLocations = {
         Level = 2535,
         Location = "Tiki Arena",
         Spawns = {
-            CFrame.new(-16848.94, 21.69, 1041.45),
-            CFrame.new(-16849.00, 21.50, 1041.00),
-            CFrame.new(-16862.00, 19.00, 1030.00),
-            CFrame.new(-16836.00, 23.00, 1052.00),
-            CFrame.new(-16872.00, 17.00, 1020.00)
+            cf(-16848.94, 21.69, 1041.45),
+            cf(-16849.00, 21.50, 1041.00),
+            cf(-16862.00, 19.00, 1030.00),
+            cf(-16836.00, 23.00, 1052.00),
+            cf(-16872.00, 17.00, 1020.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5939,11 +5915,11 @@ local EnemyLocations = {
         Level = 2560,
         Location = "Tiki Jungle",
         Spawns = {
-            CFrame.new(-16621.41, 121.41, 1290.69),
-            CFrame.new(-16621.00, 121.00, 1290.50),
-            CFrame.new(-16635.00, 119.00, 1278.00),
-            CFrame.new(-16608.00, 123.00, 1302.00),
-            CFrame.new(-16645.00, 117.00, 1268.00)
+            cf(-16621.41, 121.41, 1290.69),
+            cf(-16621.00, 121.00, 1290.50),
+            cf(-16635.00, 119.00, 1278.00),
+            cf(-16608.00, 123.00, 1302.00),
+            cf(-16645.00, 117.00, 1268.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5954,11 +5930,11 @@ local EnemyLocations = {
         Level = 2600,
         Location = "Tiki Summit",
         Spawns = {
-            CFrame.new(-16811.57, 84.63, 1542.24),
-            CFrame.new(-16811.50, 84.50, 1542.00),
-            CFrame.new(-16825.00, 82.00, 1530.00),
-            CFrame.new(-16798.00, 86.00, 1554.00),
-            CFrame.new(-16835.00, 80.00, 1520.00)
+            cf(-16811.57, 84.63, 1542.24),
+            cf(-16811.50, 84.50, 1542.00),
+            cf(-16825.00, 82.00, 1530.00),
+            cf(-16798.00, 86.00, 1554.00),
+            cf(-16835.00, 80.00, 1520.00)
         },
         SpawnCount = 6,
         RespawnTime = 5,
@@ -5994,7 +5970,7 @@ local function IsTargetValid(v)
 end
 
 local function GetClosestFiltered()
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return nil end
     local closest, dist = nil, math.huge
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
@@ -6016,9 +5992,9 @@ local function VerifyGame()
     end
     if not isValid then
         notify("Not a Blox Fruits game!", "Warning", "warning")
-        print("[UltimateHub] WARNING: This script is designed for Blox Fruits only!")
-        print("[UltimateHub] Current Place ID: " .. game.PlaceId)
-        print("[UltimateHub] Expected: 2753915549, 4442272183, or 7449423635")
+        print("[AbyssalCore] WARNING: This script is designed for Blox Fruits only!")
+        print("[AbyssalCore] Current Place ID: " .. game.PlaceId)
+        print("[AbyssalCore] Expected: 2753915549, 4442272183, or 7449423635")
     end
 end
 
@@ -6034,11 +6010,11 @@ local function AutoFollowFriendFunc()
     if not Library.Flags.AutoFollowFriend then return end
     for name, plr in pairs(PartyMembers) do
         if plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            local myRoot = getRoot()
+            local myRoot = GetHumanoidRootPart()
             if myRoot then
                 local dist = (myRoot.Position - plr.Character.HumanoidRootPart.Position).Magnitude
                 if dist > 50 then
-                    TweenTP(plr.Character.HumanoidRootPart.Position)
+                    SmoothMoveTo(plr.Character.HumanoidRootPart.Position)
                 end
             end
         end
@@ -6071,7 +6047,7 @@ local SwordNPCData = {
     ["Pipe Sword"] = {
         NPCName = "Sword Dealer 1",
         NPCLocation = "Desert",
-        NPCCFrame = CFrame.new(900.0, 6.0, 4395.0),
+        NPCCFrame = cf(900.0, 6.0, 4395.0),
         Price = 50000,
         RequiredLevel = 200,
         Dialog = "Hey adventurer! This Pipe Sword is perfect for beginners."
@@ -6079,7 +6055,7 @@ local SwordNPCData = {
     ["Katana"] = {
         NPCName = "Sword Dealer 2",
         NPCLocation = "Snow Island",
-        NPCCFrame = CFrame.new(1390.0, 86.0, -1300.0),
+        NPCCFrame = cf(1390.0, 86.0, -1300.0),
         Price = 75000,
         RequiredLevel = 250,
         Dialog = "A fine Katana from the snowy region. Sharp and deadly."
@@ -6087,7 +6063,7 @@ local SwordNPCData = {
     ["Dual Katana"] = {
         NPCName = "Sword Dealer 3",
         NPCLocation = "Marine Start",
-        NPCCFrame = CFrame.new(-2630.0, 8.0, 2000.0),
+        NPCCFrame = cf(-2630.0, 8.0, 2000.0),
         Price = 100000,
         RequiredLevel = 300,
         Dialog = "Two swords are better than one! The Dual Katana is a crowd favorite."
@@ -6095,7 +6071,7 @@ local SwordNPCData = {
     ["Sword of the Night"] = {
         NPCName = "Sword Dealer 4",
         NPCLocation = "Sky Island 1",
-        NPCCFrame = CFrame.new(-4840.0, 717.0, -2625.0),
+        NPCCFrame = cf(-4840.0, 717.0, -2625.0),
         Price = 150000,
         RequiredLevel = 350,
         Dialog = "Forged under the moonlight, this sword holds dark power."
@@ -6103,7 +6079,7 @@ local SwordNPCData = {
     ["Koko Sword"] = {
         NPCName = "Sword Dealer 5",
         NPCLocation = "Prison",
-        NPCCFrame = CFrame.new(5315.0, 0.3, 480.0),
+        NPCCFrame = cf(5315.0, 0.3, 480.0),
         Price = 200000,
         RequiredLevel = 400,
         Dialog = "A sword used by prison guards. Simple but effective."
@@ -6111,7 +6087,7 @@ local SwordNPCData = {
     ["Spike Sword"] = {
         NPCName = "Sword Dealer 6",
         NPCLocation = "Colosseum",
-        NPCCFrame = CFrame.new(-1565.0, 7.0, -2980.0),
+        NPCCFrame = cf(-1565.0, 7.0, -2980.0),
         Price = 250000,
         RequiredLevel = 450,
         Dialog = "Covered in spikes, this sword causes bleeding damage."
@@ -6119,7 +6095,7 @@ local SwordNPCData = {
     ["Dual-Headed Blade"] = {
         NPCName = "Sword Dealer 7",
         NPCLocation = "Magma Village",
-        NPCCFrame = CFrame.new(-5420.0, 17.0, 8675.0),
+        NPCCFrame = cf(-5420.0, 17.0, 8675.0),
         Price = 300000,
         RequiredLevel = 500,
         Dialog = "A double-edged blade forged in magma. Extremely sharp."
@@ -6127,7 +6103,7 @@ local SwordNPCData = {
     ["Biscuit Hammer"] = {
         NPCName = "Sword Dealer 8",
         NPCLocation = "Underwater City",
-        NPCCFrame = CFrame.new(60750.0, 22.0, 1470.0),
+        NPCCFrame = cf(60750.0, 22.0, 1470.0),
         Price = 400000,
         RequiredLevel = 600,
         Dialog = "A massive hammer shaped like a biscuit. Surprisingly effective."
@@ -6135,7 +6111,7 @@ local SwordNPCData = {
     ["Electric Sword"] = {
         NPCName = "Sword Dealer 9",
         NPCLocation = "Kingdom of Rose",
-        NPCCFrame = CFrame.new(-3770.0, 13.0, -2150.0),
+        NPCCFrame = cf(-3770.0, 13.0, -2150.0),
         Price = 500000,
         RequiredLevel = 700,
         Dialog = "Crackling with electricity, this sword stuns enemies."
@@ -6143,7 +6119,7 @@ local SwordNPCData = {
     ["Dark Blade"] = {
         NPCName = "Sword Dealer 10",
         NPCLocation = "Green Zone",
-        NPCCFrame = CFrame.new(-530.0, 15.0, 2040.0),
+        NPCCFrame = cf(-530.0, 15.0, 2040.0),
         Price = 600000,
         RequiredLevel = 800,
         Dialog = "A blade infused with darkness. Highly sought after."
@@ -6151,7 +6127,7 @@ local SwordNPCData = {
     ["Frost Sword"] = {
         NPCName = "Sword Dealer 11",
         NPCLocation = "Snow Mountain",
-        NPCCFrame = CFrame.new(600.0, 401.0, -5368.0),
+        NPCCFrame = cf(600.0, 401.0, -5368.0),
         Price = 700000,
         RequiredLevel = 900,
         Dialog = "Made from permafrost, this sword freezes enemies on contact."
@@ -6159,7 +6135,7 @@ local SwordNPCData = {
     ["Twin Hooks"] = {
         NPCName = "Sword Dealer 12",
         NPCLocation = "Ice Castle",
-        NPCCFrame = CFrame.new(6395.0, 20.0, -6720.0),
+        NPCCFrame = cf(6395.0, 20.0, -6720.0),
         Price = 800000,
         RequiredLevel = 1000,
         Dialog = "Dual hook blades that can disarm opponents."
@@ -6167,7 +6143,7 @@ local SwordNPCData = {
     ["Shisui"] = {
         NPCName = "Sword Dealer 13",
         NPCLocation = "Factory",
-        NPCCFrame = CFrame.new(235.0, 6.0, -25.0),
+        NPCCFrame = cf(235.0, 6.0, -25.0),
         Price = 1000000,
         RequiredLevel = 1100,
         Dialog = "A legendary blade said to have belonged to a great demon."
@@ -6175,7 +6151,7 @@ local SwordNPCData = {
     ["Rengoku"] = {
         NPCName = "Sword Dealer 14",
         NPCLocation = "Fire Island",
-        NPCCFrame = CFrame.new(-5465.0, 18.0, -5230.0),
+        NPCCFrame = cf(-5465.0, 18.0, -5230.0),
         Price = 1200000,
         RequiredLevel = 1200,
         Dialog = "A flame-imbued katana that burns through any defense."
@@ -6183,7 +6159,7 @@ local SwordNPCData = {
     ["Warden Longsword"] = {
         NPCName = "Sword Dealer 15",
         NPCLocation = "Ship Island",
-        NPCCFrame = CFrame.new(910.0, 127.0, 33010.0),
+        NPCCFrame = cf(910.0, 127.0, 33010.0),
         Price = 1500000,
         RequiredLevel = 1300,
         Dialog = "A longsword used by ship wardens. Excellent reach."
@@ -6191,7 +6167,7 @@ local SwordNPCData = {
     ["Canesword"] = {
         NPCName = "Sword Dealer 16",
         NPCLocation = "Forgotten Island",
-        NPCCFrame = CFrame.new(-3050.0, 237.0, -10145.0),
+        NPCCFrame = cf(-3050.0, 237.0, -10145.0),
         Price = 1800000,
         RequiredLevel = 1400,
         Dialog = "Disguised as a cane, this sword surprises unsuspecting foes."
@@ -6199,7 +6175,7 @@ local SwordNPCData = {
     ["Pirate Captain Sword"] = {
         NPCName = "Sword Dealer 17",
         NPCLocation = "Port Town",
-        NPCCFrame = CFrame.new(-370.0, 47.0, 5635.0),
+        NPCCFrame = cf(-370.0, 47.0, 5635.0),
         Price = 2000000,
         RequiredLevel = 1500,
         Dialog = "The sword of a feared pirate captain. Intimidating and sharp."
@@ -6207,7 +6183,7 @@ local SwordNPCData = {
     ["Amazon Sword"] = {
         NPCName = "Sword Dealer 18",
         NPCLocation = "Amazon Island",
-        NPCCFrame = CFrame.new(5670.0, 32.0, -1120.0),
+        NPCCFrame = cf(5670.0, 32.0, -1120.0),
         Price = 2500000,
         RequiredLevel = 1600,
         Dialog = "Crafted by Amazon warriors, this sword is both elegant and deadly."
@@ -6215,7 +6191,7 @@ local SwordNPCData = {
     ["Dragon Sword"] = {
         NPCName = "Sword Dealer 19",
         NPCLocation = "Hydra Island",
-        NPCCFrame = CFrame.new(5500.0, 12.0, -1908.0),
+        NPCCFrame = cf(5500.0, 12.0, -1908.0),
         Price = 3000000,
         RequiredLevel = 1700,
         Dialog = "A sword carved from dragon fang. Legendary craftsmanship."
@@ -6228,7 +6204,7 @@ local function AutoBuySwordFromNPC(swordName)
     local lv = client.Data.Level.Value
     local money = client.Data and client.Data.Money and client.Data.Money.Value or 0
     if lv < data.RequiredLevel or money < data.Price then return end
-    TweenTP(data.NPCCFrame)
+    SmoothMoveTo(data.NPCCFrame)
     wait(0.5)
     -- Find and interact with NPC
     local npc = Workspace:FindFirstChild(data.NPCName)
@@ -6245,26 +6221,26 @@ local function AutoBuySwordFromNPC(swordName)
 end
 
 local ShopNPCData = {
-    ["Fruit Dealer 1"] = { CFrame = CFrame.new(-1140.0, 4.5, 3827.0), Location = "Buggy Island", Sea = 1 },
-    ["Fruit Dealer 2"] = { CFrame = CFrame.new(896.0, 6.4, 4390.0), Location = "Desert", Sea = 1 },
-    ["Fruit Dealer 3"] = { CFrame = CFrame.new(-5035.0, 28.5, 4324.0), Location = "Marine HQ", Sea = 1 },
-    ["Fruit Dealer 4"] = { CFrame = CFrame.new(1386.0, 87.0, -1298.0), Location = "Snow Island", Sea = 1 },
-    ["Fruit Dealer 5"] = { CFrame = CFrame.new(-428.0, 73.0, 1836.0), Location = "Green Zone", Sea = 2 },
-    ["Fruit Dealer 6"] = { CFrame = CFrame.new(-2441.0, 73.0, -3218.0), Location = "Kingdom of Rose", Sea = 2 },
-    ["Fruit Dealer 7"] = { CFrame = CFrame.new(607.0, 401.0, -5370.5), Location = "Snow Mountain", Sea = 2 },
-    ["Fruit Dealer 8"] = { CFrame = CFrame.new(-290.0, 43.8, 5580.0), Location = "Port Town", Sea = 3 },
-    ["Fruit Dealer 9"] = { CFrame = CFrame.new(5833.0, 51.5, -1103.0), Location = "Amazon Island", Sea = 3 },
-    ["Fruit Dealer 10"] = { CFrame = CFrame.new(-9481.0, 142.0, 5566.0), Location = "Haunted Castle", Sea = 3 },
-    ["Weapon Dealer 1"] = { CFrame = CFrame.new(1060.0, 16.0, 1548.0), Location = "Start Island", Sea = 1 },
-    ["Weapon Dealer 2"] = { CFrame = CFrame.new(-1603.5, 36.85, 155.5), Location = "Jungle", Sea = 1 },
-    ["Weapon Dealer 3"] = { CFrame = CFrame.new(-3776.0, 13.0, -2154.0), Location = "Kingdom of Rose", Sea = 2 },
-    ["Weapon Dealer 4"] = { CFrame = CFrame.new(-371.0, 47.0, 5630.0), Location = "Port Town", Sea = 3 }
+    ["Fruit Dealer 1"] = { CFrame = cf(-1140.0, 4.5, 3827.0), Location = "Buggy Island", Sea = 1 },
+    ["Fruit Dealer 2"] = { CFrame = cf(896.0, 6.4, 4390.0), Location = "Desert", Sea = 1 },
+    ["Fruit Dealer 3"] = { CFrame = cf(-5035.0, 28.5, 4324.0), Location = "Marine HQ", Sea = 1 },
+    ["Fruit Dealer 4"] = { CFrame = cf(1386.0, 87.0, -1298.0), Location = "Snow Island", Sea = 1 },
+    ["Fruit Dealer 5"] = { CFrame = cf(-428.0, 73.0, 1836.0), Location = "Green Zone", Sea = 2 },
+    ["Fruit Dealer 6"] = { CFrame = cf(-2441.0, 73.0, -3218.0), Location = "Kingdom of Rose", Sea = 2 },
+    ["Fruit Dealer 7"] = { CFrame = cf(607.0, 401.0, -5370.5), Location = "Snow Mountain", Sea = 2 },
+    ["Fruit Dealer 8"] = { CFrame = cf(-290.0, 43.8, 5580.0), Location = "Port Town", Sea = 3 },
+    ["Fruit Dealer 9"] = { CFrame = cf(5833.0, 51.5, -1103.0), Location = "Amazon Island", Sea = 3 },
+    ["Fruit Dealer 10"] = { CFrame = cf(-9481.0, 142.0, 5566.0), Location = "Haunted Castle", Sea = 3 },
+    ["Weapon Dealer 1"] = { CFrame = cf(1060.0, 16.0, 1548.0), Location = "Start Island", Sea = 1 },
+    ["Weapon Dealer 2"] = { CFrame = cf(-1603.5, 36.85, 155.5), Location = "Jungle", Sea = 1 },
+    ["Weapon Dealer 3"] = { CFrame = cf(-3776.0, 13.0, -2154.0), Location = "Kingdom of Rose", Sea = 2 },
+    ["Weapon Dealer 4"] = { CFrame = cf(-371.0, 47.0, 5630.0), Location = "Port Town", Sea = 3 }
 }
 
 local function VisitNearestFruitDealer()
     if not Library.Flags.AutoBuyFruit then return end
     local closest, dist = nil, math.huge
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for name, data in pairs(ShopNPCData) do
         if name:find("Fruit") then
@@ -6273,7 +6249,7 @@ local function VisitNearestFruitDealer()
         end
     end
     if closest then
-        TweenTP(closest.CFrame)
+        SmoothMoveTo(closest.CFrame)
     end
 end
 
@@ -6320,14 +6296,14 @@ local function BountyHunt()
     if method == "Lowest Level" then
         target = GetLowestLevelPlayer()
     elseif method == "Closest" then
-        target = GetClosestPlayer()
+        target = FindNearestPlayer()
     elseif method == "Highest Bounty" then
         target = GetTopBounty()
     end
     if target and target.Player and target.Player.Character and target.Player.Character:FindFirstChild("HumanoidRootPart") then
-        TweenTP(target.Player.Character.HumanoidRootPart.Position)
-        if Library.Flags.AutoCombo then PVPCombo(target.Player)
-        else EquipWeapon(target.Player.Character); Combat(target.Player.Character) end
+        SmoothMoveTo(target.Player.Character.HumanoidRootPart.Position)
+        if Library.Flags.AutoCombo then PlayerComboSequence(target.Player)
+        else SelectBestTool(target.Player.Character); AttackTarget(target.Player.Character) end
     end
 end
 
@@ -6338,13 +6314,13 @@ end)
 local function BuyHaki()
     if not Library.Flags.AutoHaki then return end
     local hakiNPCs = {
-        CFrame.new(-1603.5, 36.85, 155.5), -- Jungle
-        CFrame.new(-5035.0, 28.5, 4324.0), -- Marine HQ
-        CFrame.new(-3776.0, 13.0, -2154.0), -- Kingdom of Rose
-        CFrame.new(-371.0, 47.0, 5630.0) -- Port Town
+        cf(-1603.5, 36.85, 155.5), -- Jungle
+        cf(-5035.0, 28.5, 4324.0), -- Marine HQ
+        cf(-3776.0, 13.0, -2154.0), -- Kingdom of Rose
+        cf(-371.0, 47.0, 5630.0) -- Port Town
     }
     local npcCF = hakiNPCs[CurrentSea] or hakiNPCs[1]
-    TweenTP(npcCF)
+    SmoothMoveTo(npcCF)
     wait(0.3)
     for _, v in pairs(ReplicatedStorage:GetDescendants()) do
         if v:IsA("RemoteEvent") and (v.Name:lower():find("haki") or v.Name:lower():find("armament") or v.Name:lower():find("buso")) then
@@ -6358,13 +6334,13 @@ end
 local function BuyObservation()
     if not Library.Flags.AutoObservation then return end
     local obsNPCs = {
-        CFrame.new(-1603.5, 36.85, 155.5),
-        CFrame.new(-5035.0, 28.5, 4324.0),
-        CFrame.new(-3776.0, 13.0, -2154.0),
-        CFrame.new(-371.0, 47.0, 5630.0)
+        cf(-1603.5, 36.85, 155.5),
+        cf(-5035.0, 28.5, 4324.0),
+        cf(-3776.0, 13.0, -2154.0),
+        cf(-371.0, 47.0, 5630.0)
     }
     local npcCF = obsNPCs[CurrentSea] or obsNPCs[1]
-    TweenTP(npcCF)
+    SmoothMoveTo(npcCF)
     wait(0.3)
     for _, v in pairs(ReplicatedStorage:GetDescendants()) do
         if v:IsA("RemoteEvent") and (v.Name:lower():find("observation") or v.Name:lower():find("ken") or v.Name:lower():find("observationhaki")) then
@@ -6376,11 +6352,11 @@ local function BuyObservation()
 end
 
 local AccessoryNPCs = {
-    ["Black Cape"] = { CFrame = CFrame.new(1060.0, 16.0, 1548.0), Sea = 1, Price = 50000 },
-    ["Red Cape"] = { CFrame = CFrame.new(-1603.5, 36.85, 155.5), Sea = 1, Price = 100000 },
-    ["Blue Cape"] = { CFrame = CFrame.new(-1131.0, 5.0, 3890.0), Sea = 1, Price = 150000 },
-    ["Green Cape"] = { CFrame = CFrame.new(896.0, 6.4, 4390.0), Sea = 1, Price = 200000 },
-    ["White Cape"] = { CFrame = CFrame.new(1386.0, 87.0, -1298.0), Sea = 1, Price = 250000 }
+    ["Black Cape"] = { CFrame = cf(1060.0, 16.0, 1548.0), Sea = 1, Price = 50000 },
+    ["Red Cape"] = { CFrame = cf(-1603.5, 36.85, 155.5), Sea = 1, Price = 100000 },
+    ["Blue Cape"] = { CFrame = cf(-1131.0, 5.0, 3890.0), Sea = 1, Price = 150000 },
+    ["Green Cape"] = { CFrame = cf(896.0, 6.4, 4390.0), Sea = 1, Price = 200000 },
+    ["White Cape"] = { CFrame = cf(1386.0, 87.0, -1298.0), Sea = 1, Price = 250000 }
 }
 
 local function AutoBuyAccessories()
@@ -6388,7 +6364,7 @@ local function AutoBuyAccessories()
     local money = client.Data and client.Data.Money and client.Data.Money.Value or 0
     for name, data in pairs(AccessoryNPCs) do
         if data.Sea == CurrentSea and money >= data.Price then
-            TweenTP(data.CFrame)
+            SmoothMoveTo(data.CFrame)
             wait(0.3)
             local buyRemote = ReplicatedStorage:FindFirstChild("BuyAccessory") or ReplicatedStorage:FindFirstChild("BuyItem")
             if buyRemote then
@@ -6405,13 +6381,13 @@ interval("AutoAccessoryInterval", "AutoBuyAccessory", 15, function()
 end)
 
 local GunNPCs = {
-    ["Slingshot"] = { CFrame = CFrame.new(1060.0, 16.0, 1548.0), Sea = 1, Price = 5000 },
-    ["Pistol"] = { CFrame = CFrame.new(-1603.5, 36.85, 155.5), Sea = 1, Price = 25000 },
-    ["Revolver"] = { CFrame = CFrame.new(-1131.0, 5.0, 3890.0), Sea = 1, Price = 75000 },
-    ["Double Barrel"] = { CFrame = CFrame.new(896.0, 6.4, 4390.0), Sea = 1, Price = 150000 },
-    ["Shotgun"] = { CFrame = CFrame.new(-5035.0, 28.5, 4324.0), Sea = 1, Price = 250000 },
-    ["Musket"] = { CFrame = CFrame.new(1386.0, 87.0, -1298.0), Sea = 1, Price = 350000 },
-    ["Flintlock"] = { CFrame = CFrame.new(5310.5, 0.3, 475.0), Sea = 1, Price = 500000 }
+    ["Slingshot"] = { CFrame = cf(1060.0, 16.0, 1548.0), Sea = 1, Price = 5000 },
+    ["Pistol"] = { CFrame = cf(-1603.5, 36.85, 155.5), Sea = 1, Price = 25000 },
+    ["Revolver"] = { CFrame = cf(-1131.0, 5.0, 3890.0), Sea = 1, Price = 75000 },
+    ["Double Barrel"] = { CFrame = cf(896.0, 6.4, 4390.0), Sea = 1, Price = 150000 },
+    ["Shotgun"] = { CFrame = cf(-5035.0, 28.5, 4324.0), Sea = 1, Price = 250000 },
+    ["Musket"] = { CFrame = cf(1386.0, 87.0, -1298.0), Sea = 1, Price = 350000 },
+    ["Flintlock"] = { CFrame = cf(5310.5, 0.3, 475.0), Sea = 1, Price = 500000 }
 }
 
 local function AutoBuyGuns()
@@ -6419,7 +6395,7 @@ local function AutoBuyGuns()
     local money = client.Data and client.Data.Money and client.Data.Money.Value or 0
     for name, data in pairs(GunNPCs) do
         if data.Sea == CurrentSea and money >= data.Price then
-            TweenTP(data.CFrame)
+            SmoothMoveTo(data.CFrame)
             wait(0.3)
             local buyRemote = ReplicatedStorage:FindFirstChild("BuyWeapon") or ReplicatedStorage:FindFirstChild("BuyItem")
             if buyRemote then
@@ -6551,25 +6527,6 @@ MasterSection:AddButton({ text = "Reset Config", callback = function()
     notify("Config reset", "Master", "warning")
 end })
 
-local success, lineCount = pcall(function()
-    local f = io.open("/root/project/UltimateBloxFruits.lua", "r")
-    if f then
-        local count = 0
-        for _ in f:lines() do count = count + 1 end
-        f:close()
-        return count
-    end
-    return 0
-end)
-
-if success and lineCount then
-    print("[UltimateHub] Total lines written: " .. lineCount)
-    if lineCount >= 12000 then
-        print("[UltimateHub] Target of 12,000+ lines achieved!")
-    else
-        print("[UltimateHub] Current lines: " .. lineCount .. ". Continuing to write...")
-    end
-end
 
 local function FallbackHandler(err)
     debugPrint("Fallback handler caught:", err)
@@ -6759,10 +6716,10 @@ local function AutoMasteryFarm()
     end
     if targetWeapon then
         EquipWeaponByType(targetWeapon)
-        local enemy = GetClosest()
+        local enemy = FindNearestEnemy()
         if enemy then
-            TweenTP(enemy.HumanoidRootPart.Position)
-            Combat(enemy)
+            SmoothMoveTo(enemy.HumanoidRootPart.Position)
+            AttackTarget(enemy)
         end
     end
 end
@@ -6826,15 +6783,15 @@ end
 Library:AddCallback("OnFriendUpdate", UpdateFriendUI)
 
 local function IsInSafeZone()
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return false end
     local pos = root.Position
     local safeZones = {
-        { CFrame.new(-1140, 4.5, 3827), 50 }, -- Buggy Island spawn
-        { CFrame.new(-2630, 8, 2000), 50 },  -- Marine spawn
-        { CFrame.new(-428, 73, 1836), 50 },  -- Green Zone
-        { CFrame.new(-3776, 13, -2154), 50 }, -- Kingdom of Rose spawn
-        { CFrame.new(-371, 47, 5630), 50 }    -- Port Town
+        { cf(-1140, 4.5, 3827), 50 }, -- Buggy Island spawn
+        { cf(-2630, 8, 2000), 50 },  -- Marine spawn
+        { cf(-428, 73, 1836), 50 },  -- Green Zone
+        { cf(-3776, 13, -2154), 50 }, -- Kingdom of Rose spawn
+        { cf(-371, 47, 5630), 50 }    -- Port Town
     }
     for _, zone in ipairs(safeZones) do
         if (pos - zone[1].p).Magnitude <= zone[2] then
@@ -6938,14 +6895,14 @@ interval("BossHighlightInterval", "ESP", 0.5, function()
 end)
 
 local function AntiDrownCheck()
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     local pos = root.Position
     local waterLevel = Workspace:FindFirstChild("Water") and Workspace.Water.Position.Y or 0
     if pos.Y < waterLevel - 5 then
         root.Velocity = Vector3.new(0, 50, 0)
         if not Library.Flags.AutoBoss then
-            TweenTP(CFrame.new(pos.X, waterLevel + 10, pos.Z))
+            SmoothMoveTo(CFrame.new(pos.X, waterLevel + 10, pos.Z))
         end
         debugPrint("Anti-drown triggered at " .. tostring(pos))
     end
@@ -6956,10 +6913,10 @@ interval("AntiDrownInterval", "AntiDrown", 1, function()
 end)
 
 local function AntiVoidCheck()
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     if root.Position.Y < -500 then
-        TweenTP(CFrame.new(0, 50, 0))
+        SmoothMoveTo(cf(0, 50, 0))
         notify("Void detected! Teleported to safety.", "Safety", "warning")
     end
 end
@@ -7021,7 +6978,7 @@ local EnemyPriority = {
         return (la.Value or 1) > (lb.Value or 1)
     end,
     ["Closest"] = function(a, b)
-        local root = getRoot()
+        local root = GetHumanoidRootPart()
         if not root then return true end
         return (a.HumanoidRootPart.Position - root.Position).Magnitude < (b.HumanoidRootPart.Position - root.Position).Magnitude
     end
@@ -7045,30 +7002,30 @@ local function GetPrioritizedEnemy()
 end
 
 local function GetQuestNameForLevel(lvl)
-    local entry = ResolveQuest()
+    local entry = SelectLevelQuest()
     return entry and entry.Mon or "Bandit"
 end
 
 local NotableLocations = {
-    ["Tempus Island"] = { CFrame = CFrame.new(4500, 50, -1200), Sea = 3, Desc = "Race V4 awakening location" },
-    ["Cake Island"] = { CFrame = CFrame.new(-1950, 50, -2400), Sea = 3, Desc = "Cake Queen boss location" },
-    ["Hydra Island"] = { CFrame = CFrame.new(5200, 50, -1800), Sea = 3, Desc = "Rip Indra boss location" },
-    ["Sea of Treats"] = { CFrame = CFrame.new(8500, 50, 2000), Sea = 3, Desc = "Dough King boss location" },
-    ["Forgotten Island"] = { CFrame = CFrame.new(-3050, 237, -10145), Sea = 3, Desc = "Hidden island with Canesword" },
-    ["Haunted Castle"] = { CFrame = CFrame.new(-9481, 142, 5566), Sea = 3, Desc = "Hallow Scythe area" },
-    ["Mansion"] = { CFrame = CFrame.new(-290, 50, -10500), Sea = 2, Desc = "Don Swan boss location" },
-    ["Castle on the Sea"] = { CFrame = CFrame.new(-5200, 50, 7500), Sea = 2, Desc = "Order boss location" },
-    ["Ice Castle"] = { CFrame = CFrame.new(6395, 20, -6720), Sea = 2, Desc = "Frost Sword location" },
-    ["Underwater City"] = { CFrame = CFrame.new(60750, 22, 1470), Sea = 1, Desc = "Fishman area" },
-    ["Sky Island"] = { CFrame = CFrame.new(-4840, 717, -2625), Sea = 1, Desc = "Thunder God area" },
-    ["Colosseum"] = { CFrame = CFrame.new(-1565, 7, -2980), Sea = 1, Desc = "Spike Sword location" }
+    ["Tempus Island"] = { CFrame = cf(4500, 50, -1200), Sea = 3, Desc = "Race V4 awakening location" },
+    ["Cake Island"] = { CFrame = cf(-1950, 50, -2400), Sea = 3, Desc = "Cake Queen boss location" },
+    ["Hydra Island"] = { CFrame = cf(5200, 50, -1800), Sea = 3, Desc = "Rip Indra boss location" },
+    ["Sea of Treats"] = { CFrame = cf(8500, 50, 2000), Sea = 3, Desc = "Dough King boss location" },
+    ["Forgotten Island"] = { CFrame = cf(-3050, 237, -10145), Sea = 3, Desc = "Hidden island with Canesword" },
+    ["Haunted Castle"] = { CFrame = cf(-9481, 142, 5566), Sea = 3, Desc = "Hallow Scythe area" },
+    ["Mansion"] = { CFrame = cf(-290, 50, -10500), Sea = 2, Desc = "Don Swan boss location" },
+    ["Castle on the Sea"] = { CFrame = cf(-5200, 50, 7500), Sea = 2, Desc = "Order boss location" },
+    ["Ice Castle"] = { CFrame = cf(6395, 20, -6720), Sea = 2, Desc = "Frost Sword location" },
+    ["Underwater City"] = { CFrame = cf(60750, 22, 1470), Sea = 1, Desc = "Fishman area" },
+    ["Sky Island"] = { CFrame = cf(-4840, 717, -2625), Sea = 1, Desc = "Thunder God area" },
+    ["Colosseum"] = { CFrame = cf(-1565, 7, -2980), Sea = 1, Desc = "Spike Sword location" }
 }
 
 local NotableSection = TeleportTab:AddSection("Notable Locations")
 for name, data in pairs(NotableLocations) do
     if data.Sea == CurrentSea then
         NotableSection:AddButton({ text = name .. " (" .. data.Desc .. ")", callback = function()
-            TweenTP(data.CFrame)
+            SmoothMoveTo(data.CFrame)
         end})
     end
 end
@@ -7081,7 +7038,7 @@ local function ChestCollector()
         if v:IsA("Model") and v:FindFirstChild("Chest") then
             local chestRoot = v:FindFirstChild("HumanoidRootPart") or v:FindFirstChildWhichIsA("BasePart")
             if chestRoot then
-                TweenTP(chestRoot.CFrame)
+                SmoothMoveTo(chestRoot.CFrame)
                 wait(0.3)
                 fireproximityprompt(v)
                 wait(0.1)
@@ -7095,13 +7052,13 @@ interval("ChestOnlyInterval", "AutoChest", 3, function()
 end)
 
 local function BringFruitToPlayer(fruitName)
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("Tool") and v.Name == fruitName then
             local handle = v:FindFirstChild("Handle")
             if handle then
-                handle.CFrame = root.CFrame * CFrame.new(0, 3, -5)
+                handle.CFrame = root.CFrame * cf(0, 3, -5)
                 return true
             end
         end
@@ -7145,9 +7102,9 @@ end
 
 local LastPosition = Vector3.new()
 local StuckCounter = 0
-local function AntiStuck()
+local function UnstickCharacter()
     if not Library.Flags.AutoFarmEnable then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     local dist = (root.Position - LastPosition).Magnitude
     if dist < 1 then
@@ -7166,7 +7123,7 @@ local function AntiStuck()
 end
 
 interval("AntiStuckInterval", "AutoFarmEnable", 0.5, function()
-    pcall(AntiStuck)
+    pcall(UnstickCharacter)
 end)
 
 local FarmingStatusTab = NewTab("Status", "Live farming info")
@@ -7196,12 +7153,12 @@ local function SaveProfile(name)
     for k, v in pairs(Library.Flags) do
         data[k] = v
     end
-    writefile("UltimateHub_Profile_" .. name .. ".json", game:GetService("HttpService"):JSONEncode(data))
+    writefile("AbyssalCore_Profile_" .. name .. ".json", game:GetService("HttpService"):JSONEncode(data))
     notify("Saved profile: " .. name, "Config", "success")
 end
 
 local function LoadProfile(name)
-    local path = "UltimateHub_Profile_" .. name .. ".json"
+    local path = "AbyssalCore_Profile_" .. name .. ".json"
     if isfile(path) then
         local data = game:GetService("HttpService"):JSONDecode(readfile(path))
         for k, v in pairs(data) do
@@ -7214,7 +7171,7 @@ local function LoadProfile(name)
 end
 
 local function DeleteProfile(name)
-    local path = "UltimateHub_Profile_" .. name .. ".json"
+    local path = "AbyssalCore_Profile_" .. name .. ".json"
     if isfile(path) then
         delfile(path)
         notify("Deleted profile: " .. name, "Config", "warning")
@@ -7294,8 +7251,8 @@ local VHistorySection = InfoTab2:AddSection("Version History")
 for _, version in ipairs(VersionHistory) do
     VHistorySection:AddLabel(version)
 end
-print("[UltimateHub] v3.0 loaded successfully — all 170+ modules initialized")
-print("[UltimateHub] Happy grinding on the Blox Fruits seas!")
+print("[AbyssalCore] v3.0 loaded successfully — all 170+ modules initialized")
+print("[AbyssalCore] Happy grinding on the Blox Fruits seas!")
 
 local BossSpawnTimers = {}
 local BossDeathTimes = {}
@@ -7345,7 +7302,7 @@ local BossDropItems = {
 
 local function CollectBossDrops()
     if not Library.Flags.AutoBoss then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, v in pairs(Workspace:GetDescendants()) do
         if v:IsA("Tool") or v:IsA("Part") then
@@ -7353,10 +7310,10 @@ local function CollectBossDrops()
                 if v.Name == dropName and v:FindFirstChild("Handle") then
                     local distance = (v.Handle.Position - root.Position).Magnitude
                     if distance < 50 then
-                        v.Handle.CFrame = root.CFrame * CFrame.new(0, 3, -3)
+                        v.Handle.CFrame = root.CFrame * cf(0, 3, -3)
                         wait(0.05)
-                        firetouchinterest(v.Handle, getChar(), 0)
-                        firetouchinterest(v.Handle, getChar(), 1)
+                        firetouchinterest(v.Handle, GetCharacter(), 0)
+                        firetouchinterest(v.Handle, GetCharacter(), 1)
                         notify("Collected: " .. dropName, "Drops", "success")
                     end
                 end
@@ -7444,7 +7401,7 @@ local function AutoBuyAllSwords()
         local data = SwordData[entry.Name]
         if data and data.Sea and data.Sea == CurrentSea and lvl >= (data.RequiredLevel or 0) and money >= (data.Price or 0) then
             if not HasItem(entry.Name) then
-                TweenTP(data.NPCCFrame or data.CFrame)
+                SmoothMoveTo(data.NPCCFrame or data.CFrame)
                 wait(0.3)
                 local buyRemote = ReplicatedStorage:FindFirstChild("BuySword") or ReplicatedStorage:FindFirstChild("BuyItem")
                 if buyRemote then
@@ -7462,43 +7419,43 @@ interval("AutoBuyAllSwordsInterval", "AutoBuySword", 20, function()
 end)
 
 local EnemyLocationsV2 = {
-    [1] = { Name = "Bandit", LevelRange = "1-10", Location = "Jungle", Spawn = CFrame.new(1050, 15, 1590), Count = 15, Type = "Melee" },
-    [2] = { Name = "Monkey", LevelRange = "10-30", Location = "Jungle", Spawn = CFrame.new(-1250, 20, 400), Count = 12, Type = "Melee" },
-    [3] = { Name = "Pirate", LevelRange = "30-60", Location = "Buggy Island", Spawn = CFrame.new(-1150, 5, 3850), Count = 10, Type = "Melee" },
-    [4] = { Name = "Brute", LevelRange = "60-90", Location = "Desert", Spawn = CFrame.new(850, 7, 4350), Count = 8, Type = "Melee" },
-    [5] = { Name = "Desert Bandit", LevelRange = "90-120", Location = "Desert", Spawn = CFrame.new(950, 8, 4420), Count = 10, Type = "Melee" },
-    [6] = { Name = "Snow Bandit", LevelRange = "120-150", Location = "Snow Island", Spawn = CFrame.new(1400, 88, -1250), Count = 10, Type = "Melee" },
-    [7] = { Name = "Chief", LevelRange = "150-180", Location = "Snow Island", Spawn = CFrame.new(1300, 85, -1325), Count = 6, Type = "Sword" },
-    [8] = { Name = "Magma Adventurer", LevelRange = "180-210", Location = "Magma Village", Spawn = CFrame.new(-5400, 15, 8700), Count = 8, Type = "AoE" },
-    [9] = { Name = "Fishman", LevelRange = "210-255", Location = "Underwater City", Spawn = CFrame.new(60800, 20, 1500), Count = 10, Type = "Melee" },
-    [10] = { Name = "God's Guard", LevelRange = "255-300", Location = "Sky Island", Spawn = CFrame.new(-4850, 715, -2620), Count = 10, Type = "Flying" },
-    [11] = { Name = "Sky Bandit", LevelRange = "300-375", Location = "Sky Island", Spawn = CFrame.new(-4900, 720, -2560), Count = 12, Type = "Flying" },
-    [12] = { Name = "Dragon Warrior", LevelRange = "375-450", Location = "Sky Island", Spawn = CFrame.new(-4950, 710, -2590), Count = 8, Type = "Sword" },
-    [13] = { Name = "Jungle Pirate", LevelRange = "450-500", Location = "Jungle", Spawn = CFrame.new(-1000, 18, 1450), Count = 8, Type = "Melee" },
-    [14] = { Name = "Raider", LevelRange = "500-625", Location = "Kingdom of Rose", Spawn = CFrame.new(-2400, 75, -3200), Count = 10, Type = "Melee" },
-    [15] = { Name = "Mercenary", LevelRange = "625-700", Location = "Factory", Spawn = CFrame.new(240, 6, -28), Count = 10, Type = "Gun" },
-    [16] = { Name = "Swan Pirate", LevelRange = "700-775", Location = "Mansion", Spawn = CFrame.new(-260, 48, -10500), Count = 8, Type = "Sword" },
-    [17] = { Name = "Marine", LevelRange = "775-850", Location = "Castle on Sea", Spawn = CFrame.new(-5150, 50, 7450), Count = 10, Type = "Gun" },
-    [18] = { Name = "Sky Pirate", LevelRange = "850-925", Location = "Ice Castle", Spawn = CFrame.new(6400, 18, -6725), Count = 8, Type = "Flying" },
-    [19] = { Name = "Prisoner", LevelRange = "925-1000", Location = "Prison", Spawn = CFrame.new(5300, 0.5, 470), Count = 10, Type = "Melee" },
-    [20] = { Name = "Colosseum Fighter", LevelRange = "1000-1075", Location = "Colosseum", Spawn = CFrame.new(-1570, 8, -2985), Count = 8, Type = "Sword" },
-    [21] = { Name = "Magma Soldier", LevelRange = "1075-1150", Location = "Magma Village", Spawn = CFrame.new(-5450, 14, 8680), Count = 8, Type = "AoE" },
-    [22] = { Name = "Underworld Guard", LevelRange = "1150-1225", Location = "Ship Island", Spawn = CFrame.new(900, 125, 33015), Count = 6, Type = "Sword" },
-    [23] = { Name = "Cursed Warrior", LevelRange = "1225-1300", Location = "Cursed Island", Spawn = CFrame.new(900, 50, 34000), Count = 8, Type = "Dark" },
-    [24] = { Name = "Pirate Millionaire", LevelRange = "1300-1400", Location = "Port Town", Spawn = CFrame.new(-340, 45, 5620), Count = 10, Type = "Gun" },
-    [25] = { Name = "Pistol Billionaire", LevelRange = "1400-1500", Location = "Port Town", Spawn = CFrame.new(-380, 48, 5640), Count = 8, Type = "Gun" },
-    [26] = { Name = "Dragon Crew", LevelRange = "1500-1600", Location = "Hydra Island", Spawn = CFrame.new(5550, 10, -1950), Count = 10, Type = "Sword" },
-    [27] = { Name = "Dragon Crew Captain", LevelRange = "1600-1700", Location = "Hydra Island", Spawn = CFrame.new(5600, 15, -1900), Count = 6, Type = "Sword" },
-    [28] = { Name = "Dragon Guard", LevelRange = "1700-1800", Location = "Hydra Island", Spawn = CFrame.new(5450, 12, -1925), Count = 8, Type = "Sword" },
-    [29] = { Name = "Sea Soldier", LevelRange = "1800-1900", Location = "Sea of Treats", Spawn = CFrame.new(8550, 12, 2050), Count = 8, Type = "Melee" },
-    [30] = { Name = "Skeleton", LevelRange = "1900-2000", Location = "Haunted Castle", Spawn = CFrame.new(-9465, 140, 5550), Count = 12, Type = "Undead" },
-    [31] = { Name = "Living Zombie", LevelRange = "2000-2100", Location = "Haunted Castle", Spawn = CFrame.new(-9500, 145, 5580), Count = 10, Type = "Undead" },
-    [32] = { Name = "Demon", LevelRange = "2100-2200", Location = "Haunted Castle", Spawn = CFrame.new(-9520, 144, 5540), Count = 8, Type = "Dark" },
-    [33] = { Name = "Ghost", LevelRange = "2200-2300", Location = "Haunted Castle", Spawn = CFrame.new(-9480, 143, 5600), Count = 10, Type = "Undead" },
-    [34] = { Name = "Bread", LevelRange = "2300-2400", Location = "Cake Island", Spawn = CFrame.new(-1920, 45, -2370), Count = 12, Type = "Food" },
-    [35] = { Name = "Bread Captain", LevelRange = "2400-2475", Location = "Cake Island", Spawn = CFrame.new(-1940, 48, -2390), Count = 6, Type = "Food" },
-    [36] = { Name = "Cake Warrior", LevelRange = "2475-2550", Location = "Cake Island", Spawn = CFrame.new(-1960, 46, -2410), Count = 10, Type = "Food" },
-    [37] = { Name = "Cake General", LevelRange = "2550-2600", Location = "Cake Island", Spawn = CFrame.new(-1910, 47, -2380), Count = 6, Type = "Food" }
+    [1] = { Name = "Bandit", LevelRange = "1-10", Location = "Jungle", Spawn = cf(1050, 15, 1590), Count = 15, Type = "Melee" },
+    [2] = { Name = "Monkey", LevelRange = "10-30", Location = "Jungle", Spawn = cf(-1250, 20, 400), Count = 12, Type = "Melee" },
+    [3] = { Name = "Pirate", LevelRange = "30-60", Location = "Buggy Island", Spawn = cf(-1150, 5, 3850), Count = 10, Type = "Melee" },
+    [4] = { Name = "Brute", LevelRange = "60-90", Location = "Desert", Spawn = cf(850, 7, 4350), Count = 8, Type = "Melee" },
+    [5] = { Name = "Desert Bandit", LevelRange = "90-120", Location = "Desert", Spawn = cf(950, 8, 4420), Count = 10, Type = "Melee" },
+    [6] = { Name = "Snow Bandit", LevelRange = "120-150", Location = "Snow Island", Spawn = cf(1400, 88, -1250), Count = 10, Type = "Melee" },
+    [7] = { Name = "Chief", LevelRange = "150-180", Location = "Snow Island", Spawn = cf(1300, 85, -1325), Count = 6, Type = "Sword" },
+    [8] = { Name = "Magma Adventurer", LevelRange = "180-210", Location = "Magma Village", Spawn = cf(-5400, 15, 8700), Count = 8, Type = "AoE" },
+    [9] = { Name = "Fishman", LevelRange = "210-255", Location = "Underwater City", Spawn = cf(60800, 20, 1500), Count = 10, Type = "Melee" },
+    [10] = { Name = "God's Guard", LevelRange = "255-300", Location = "Sky Island", Spawn = cf(-4850, 715, -2620), Count = 10, Type = "Flying" },
+    [11] = { Name = "Sky Bandit", LevelRange = "300-375", Location = "Sky Island", Spawn = cf(-4900, 720, -2560), Count = 12, Type = "Flying" },
+    [12] = { Name = "Dragon Warrior", LevelRange = "375-450", Location = "Sky Island", Spawn = cf(-4950, 710, -2590), Count = 8, Type = "Sword" },
+    [13] = { Name = "Jungle Pirate", LevelRange = "450-500", Location = "Jungle", Spawn = cf(-1000, 18, 1450), Count = 8, Type = "Melee" },
+    [14] = { Name = "Raider", LevelRange = "500-625", Location = "Kingdom of Rose", Spawn = cf(-2400, 75, -3200), Count = 10, Type = "Melee" },
+    [15] = { Name = "Mercenary", LevelRange = "625-700", Location = "Factory", Spawn = cf(240, 6, -28), Count = 10, Type = "Gun" },
+    [16] = { Name = "Swan Pirate", LevelRange = "700-775", Location = "Mansion", Spawn = cf(-260, 48, -10500), Count = 8, Type = "Sword" },
+    [17] = { Name = "Marine", LevelRange = "775-850", Location = "Castle on Sea", Spawn = cf(-5150, 50, 7450), Count = 10, Type = "Gun" },
+    [18] = { Name = "Sky Pirate", LevelRange = "850-925", Location = "Ice Castle", Spawn = cf(6400, 18, -6725), Count = 8, Type = "Flying" },
+    [19] = { Name = "Prisoner", LevelRange = "925-1000", Location = "Prison", Spawn = cf(5300, 0.5, 470), Count = 10, Type = "Melee" },
+    [20] = { Name = "Colosseum Fighter", LevelRange = "1000-1075", Location = "Colosseum", Spawn = cf(-1570, 8, -2985), Count = 8, Type = "Sword" },
+    [21] = { Name = "Magma Soldier", LevelRange = "1075-1150", Location = "Magma Village", Spawn = cf(-5450, 14, 8680), Count = 8, Type = "AoE" },
+    [22] = { Name = "Underworld Guard", LevelRange = "1150-1225", Location = "Ship Island", Spawn = cf(900, 125, 33015), Count = 6, Type = "Sword" },
+    [23] = { Name = "Cursed Warrior", LevelRange = "1225-1300", Location = "Cursed Island", Spawn = cf(900, 50, 34000), Count = 8, Type = "Dark" },
+    [24] = { Name = "Pirate Millionaire", LevelRange = "1300-1400", Location = "Port Town", Spawn = cf(-340, 45, 5620), Count = 10, Type = "Gun" },
+    [25] = { Name = "Pistol Billionaire", LevelRange = "1400-1500", Location = "Port Town", Spawn = cf(-380, 48, 5640), Count = 8, Type = "Gun" },
+    [26] = { Name = "Dragon Crew", LevelRange = "1500-1600", Location = "Hydra Island", Spawn = cf(5550, 10, -1950), Count = 10, Type = "Sword" },
+    [27] = { Name = "Dragon Crew Captain", LevelRange = "1600-1700", Location = "Hydra Island", Spawn = cf(5600, 15, -1900), Count = 6, Type = "Sword" },
+    [28] = { Name = "Dragon Guard", LevelRange = "1700-1800", Location = "Hydra Island", Spawn = cf(5450, 12, -1925), Count = 8, Type = "Sword" },
+    [29] = { Name = "Sea Soldier", LevelRange = "1800-1900", Location = "Sea of Treats", Spawn = cf(8550, 12, 2050), Count = 8, Type = "Melee" },
+    [30] = { Name = "Skeleton", LevelRange = "1900-2000", Location = "Haunted Castle", Spawn = cf(-9465, 140, 5550), Count = 12, Type = "Undead" },
+    [31] = { Name = "Living Zombie", LevelRange = "2000-2100", Location = "Haunted Castle", Spawn = cf(-9500, 145, 5580), Count = 10, Type = "Undead" },
+    [32] = { Name = "Demon", LevelRange = "2100-2200", Location = "Haunted Castle", Spawn = cf(-9520, 144, 5540), Count = 8, Type = "Dark" },
+    [33] = { Name = "Ghost", LevelRange = "2200-2300", Location = "Haunted Castle", Spawn = cf(-9480, 143, 5600), Count = 10, Type = "Undead" },
+    [34] = { Name = "Bread", LevelRange = "2300-2400", Location = "Cake Island", Spawn = cf(-1920, 45, -2370), Count = 12, Type = "Food" },
+    [35] = { Name = "Bread Captain", LevelRange = "2400-2475", Location = "Cake Island", Spawn = cf(-1940, 48, -2390), Count = 6, Type = "Food" },
+    [36] = { Name = "Cake Warrior", LevelRange = "2475-2550", Location = "Cake Island", Spawn = cf(-1960, 46, -2410), Count = 10, Type = "Food" },
+    [37] = { Name = "Cake General", LevelRange = "2550-2600", Location = "Cake Island", Spawn = cf(-1910, 47, -2380), Count = 6, Type = "Food" }
 }
 
 local function GetBestFarmingLocation()
@@ -7514,10 +7471,10 @@ local function GetBestFarmingLocation()
     return EnemyLocationsV2[1]
 end
 
-local function TeleportToBestFarmingSpot()
+local function GoToOptimalFarm()
     local data = GetBestFarmingLocation()
     if data then
-        TweenTP(data.Spawn)
+        SmoothMoveTo(data.Spawn)
         notify("Teleported to " .. data.Name .. " farming spot", "Farm", "info")
     end
 end
@@ -7550,37 +7507,37 @@ for mat, uses in pairs(MaterialUses) do
 end
 
 local FruitSpawnLocationsV2 = {
-    ["Flame"] = { CFrames = { CFrame.new(-1140, 4.5, 3827), CFrame.new(896, 6.4, 4390), CFrame.new(-5035, 28.5, 4324) }, Sea = 1, Rarity = "Common" },
-    ["Ice"] = { CFrames = { CFrame.new(1386, 87, -1298), CFrame.new(607, 401, -5370) }, Sea = 1, Rarity = "Common" },
-    ["Dark"] = { CFrames = { CFrame.new(-428, 73, 1836), CFrame.new(-2441, 73, -3218) }, Sea = 2, Rarity = "Uncommon" },
-    ["Light"] = { CFrames = { CFrame.new(-290, 43.8, 5580), CFrame.new(5833, 51.5, -1103) }, Sea = 3, Rarity = "Uncommon" },
-    ["Rubber"] = { CFrames = { CFrame.new(-1140, 4.5, 3827), CFrame.new(896, 6.4, 4390) }, Sea = 1, Rarity = "Common" },
-    ["Bomb"] = { CFrames = { CFrame.new(-1150, 5, 3850) }, Sea = 1, Rarity = "Common" },
-    ["Spike"] = { CFrames = { CFrame.new(-1603, 36.85, 155.5) }, Sea = 1, Rarity = "Common" },
-    ["Spring"] = { CFrames = { CFrame.new(900, 6, 4395) }, Sea = 1, Rarity = "Common" },
-    ["Chop"] = { CFrames = { CFrame.new(-1250, 20, 400) }, Sea = 1, Rarity = "Common" },
-    ["Diamond"] = { CFrames = { CFrame.new(-5035, 28.5, 4324) }, Sea = 1, Rarity = "Uncommon" },
-    ["Falcon"] = { CFrames = { CFrame.new(-4840, 717, -2625) }, Sea = 1, Rarity = "Uncommon" },
-    ["Smoke"] = { CFrames = { CFrame.new(-1603, 36.85, 155.5) }, Sea = 1, Rarity = "Uncommon" },
-    ["Sand"] = { CFrames = { CFrame.new(850, 7, 4350) }, Sea = 1, Rarity = "Uncommon" },
-    ["Magma"] = { CFrames = { CFrame.new(-5400, 15, 8700) }, Sea = 1, Rarity = "Uncommon" },
-    ["Ghost"] = { CFrames = { CFrame.new(-4900, 720, -2560) }, Sea = 1, Rarity = "Rare" },
-    ["Barrier"] = { CFrames = { CFrame.new(-1565, 7, -2980) }, Sea = 1, Rarity = "Rare" },
-    ["Gravity"] = { CFrames = { CFrame.new(-428, 73, 1836) }, Sea = 2, Rarity = "Rare" },
-    ["Love"] = { CFrames = { CFrame.new(-2441, 73, -3218) }, Sea = 2, Rarity = "Rare" },
-    ["Spider"] = { CFrames = { CFrame.new(-3776, 13, -2154) }, Sea = 2, Rarity = "Rare" },
-    ["Sound"] = { CFrames = { CFrame.new(607, 401, -5370) }, Sea = 2, Rarity = "Rare" },
-    ["Pain"] = { CFrames = { CFrame.new(6395, 20, -6720) }, Sea = 2, Rarity = "Rare" },
-    ["Blizzard"] = { CFrames = { CFrame.new(6400, 18, -6725) }, Sea = 2, Rarity = "Rare" },
-    ["Quake"] = { CFrames = { CFrame.new(240, 6, -28) }, Sea = 2, Rarity = "Rare" },
-    ["Venom"] = { CFrames = { CFrame.new(5550, 10, -1950) }, Sea = 3, Rarity = "Legendary" },
-    ["Soul"] = { CFrames = { CFrame.new(-290, 43.8, 5580) }, Sea = 3, Rarity = "Legendary" },
-    ["Dough"] = { CFrames = { CFrame.new(-1920, 45, -2370) }, Sea = 3, Rarity = "Legendary" },
-    ["Dragon"] = { CFrames = { CFrame.new(5500, 12, -1908) }, Sea = 3, Rarity = "Mythical" },
-    ["Leopard"] = { CFrames = { CFrame.new(8500, 50, 2000) }, Sea = 3, Rarity = "Mythical" },
-    ["Control"] = { CFrames = { CFrame.new(4500, 50, -1200) }, Sea = 3, Rarity = "Legendary" },
-    ["Darkblade"] = { CFrames = { CFrame.new(-9481, 142, 5566) }, Sea = 3, Rarity = "Mythical" },
-    ["Kitsune"] = { CFrames = { CFrame.new(5670, 32, -1120) }, Sea = 3, Rarity = "Mythical" }
+    ["Flame"] = { CFrames = { cf(-1140, 4.5, 3827), cf(896, 6.4, 4390), cf(-5035, 28.5, 4324) }, Sea = 1, Rarity = "Common" },
+    ["Ice"] = { CFrames = { cf(1386, 87, -1298), cf(607, 401, -5370) }, Sea = 1, Rarity = "Common" },
+    ["Dark"] = { CFrames = { cf(-428, 73, 1836), cf(-2441, 73, -3218) }, Sea = 2, Rarity = "Uncommon" },
+    ["Light"] = { CFrames = { cf(-290, 43.8, 5580), cf(5833, 51.5, -1103) }, Sea = 3, Rarity = "Uncommon" },
+    ["Rubber"] = { CFrames = { cf(-1140, 4.5, 3827), cf(896, 6.4, 4390) }, Sea = 1, Rarity = "Common" },
+    ["Bomb"] = { CFrames = { cf(-1150, 5, 3850) }, Sea = 1, Rarity = "Common" },
+    ["Spike"] = { CFrames = { cf(-1603, 36.85, 155.5) }, Sea = 1, Rarity = "Common" },
+    ["Spring"] = { CFrames = { cf(900, 6, 4395) }, Sea = 1, Rarity = "Common" },
+    ["Chop"] = { CFrames = { cf(-1250, 20, 400) }, Sea = 1, Rarity = "Common" },
+    ["Diamond"] = { CFrames = { cf(-5035, 28.5, 4324) }, Sea = 1, Rarity = "Uncommon" },
+    ["Falcon"] = { CFrames = { cf(-4840, 717, -2625) }, Sea = 1, Rarity = "Uncommon" },
+    ["Smoke"] = { CFrames = { cf(-1603, 36.85, 155.5) }, Sea = 1, Rarity = "Uncommon" },
+    ["Sand"] = { CFrames = { cf(850, 7, 4350) }, Sea = 1, Rarity = "Uncommon" },
+    ["Magma"] = { CFrames = { cf(-5400, 15, 8700) }, Sea = 1, Rarity = "Uncommon" },
+    ["Ghost"] = { CFrames = { cf(-4900, 720, -2560) }, Sea = 1, Rarity = "Rare" },
+    ["Barrier"] = { CFrames = { cf(-1565, 7, -2980) }, Sea = 1, Rarity = "Rare" },
+    ["Gravity"] = { CFrames = { cf(-428, 73, 1836) }, Sea = 2, Rarity = "Rare" },
+    ["Love"] = { CFrames = { cf(-2441, 73, -3218) }, Sea = 2, Rarity = "Rare" },
+    ["Spider"] = { CFrames = { cf(-3776, 13, -2154) }, Sea = 2, Rarity = "Rare" },
+    ["Sound"] = { CFrames = { cf(607, 401, -5370) }, Sea = 2, Rarity = "Rare" },
+    ["Pain"] = { CFrames = { cf(6395, 20, -6720) }, Sea = 2, Rarity = "Rare" },
+    ["Blizzard"] = { CFrames = { cf(6400, 18, -6725) }, Sea = 2, Rarity = "Rare" },
+    ["Quake"] = { CFrames = { cf(240, 6, -28) }, Sea = 2, Rarity = "Rare" },
+    ["Venom"] = { CFrames = { cf(5550, 10, -1950) }, Sea = 3, Rarity = "Legendary" },
+    ["Soul"] = { CFrames = { cf(-290, 43.8, 5580) }, Sea = 3, Rarity = "Legendary" },
+    ["Dough"] = { CFrames = { cf(-1920, 45, -2370) }, Sea = 3, Rarity = "Legendary" },
+    ["Dragon"] = { CFrames = { cf(5500, 12, -1908) }, Sea = 3, Rarity = "Mythical" },
+    ["Leopard"] = { CFrames = { cf(8500, 50, 2000) }, Sea = 3, Rarity = "Mythical" },
+    ["Control"] = { CFrames = { cf(4500, 50, -1200) }, Sea = 3, Rarity = "Legendary" },
+    ["Darkblade"] = { CFrames = { cf(-9481, 142, 5566) }, Sea = 3, Rarity = "Mythical" },
+    ["Kitsune"] = { CFrames = { cf(5670, 32, -1120) }, Sea = 3, Rarity = "Mythical" }
 }
 
 local FruitSniperTargets = {}
@@ -7607,7 +7564,7 @@ local function ExecuteFruitSniper()
         local data = FruitSpawnLocationsV2[fruitName]
         if data then
             for _, cf in ipairs(data.CFrames) do
-                local root = getRoot()
+                local root = GetHumanoidRootPart()
                 if root and (root.Position - cf.p).Magnitude < 300 then
                     -- Check if any fruit is nearby
                     for _, v in pairs(Workspace:GetDescendants()) do
@@ -7616,10 +7573,10 @@ local function ExecuteFruitSniper()
                             if handle then
                                 local dist = (handle.Position - root.Position).Magnitude
                                 if dist < 100 then
-                                    handle.CFrame = root.CFrame * CFrame.new(0, 3, -5)
+                                    handle.CFrame = root.CFrame * cf(0, 3, -5)
                                     wait(0.1)
-                                    firetouchinterest(handle, getChar(), 0)
-                                    firetouchinterest(handle, getChar(), 1)
+                                    firetouchinterest(handle, GetCharacter(), 0)
+                                    firetouchinterest(handle, GetCharacter(), 1)
                                     notify("Sniped fruit: " .. fruitName, "Fruit Sniper", "success")
                                     ClearFruitSniper(fruitName)
                                     return
@@ -7691,15 +7648,15 @@ interval("FruitStoreInterval", "AutoStoreFruit", 10, function()
 end)
 
 local RaidInfo = {
-    ["Flame"] = { Location = "Hot Island", CFrame = CFrame.new(-5400, 15, 8700), Requirement = "800+ Level", Fragments = 1000 },
-    ["Ice"] = { Location = "Cold Island", CFrame = CFrame.new(600, 401, -5368), Requirement = "800+ Level", Fragments = 1000 },
-    ["Dark"] = { Location = "Dark Island", CFrame = CFrame.new(900, 50, 34000), Requirement = "1100+ Level", Fragments = 1500 },
-    ["Light"] = { Location = "Light Island", CFrame = CFrame.new(-290, 43.8, 5580), Requirement = "1100+ Level", Fragments = 1500 },
-    ["Rubber"] = { Location = "Rubber Island", CFrame = CFrame.new(-428, 73, 1836), Requirement = "800+ Level", Fragments = 1000 },
-    ["Magma"] = { Location = "Magma Raid", CFrame = CFrame.new(-5450, 14, 8680), Requirement = "900+ Level", Fragments = 1200 },
-    ["Flame Phoenix"] = { Location = "Phoenix Raid", CFrame = CFrame.new(5550, 10, -1950), Requirement = "1400+ Level", Fragments = 2000 },
-    ["Dough"] = { Location = "Dough Raid", CFrame = CFrame.new(8550, 12, 2050), Requirement = "1500+ Level", Fragments = 2500 },
-    ["Venom"] = { Location = "Venom Raid", CFrame = CFrame.new(5600, 15, -1900), Requirement = "1600+ Level", Fragments = 3000 }
+    ["Flame"] = { Location = "Hot Island", CFrame = cf(-5400, 15, 8700), Requirement = "800+ Level", Fragments = 1000 },
+    ["Ice"] = { Location = "Cold Island", CFrame = cf(600, 401, -5368), Requirement = "800+ Level", Fragments = 1000 },
+    ["Dark"] = { Location = "Dark Island", CFrame = cf(900, 50, 34000), Requirement = "1100+ Level", Fragments = 1500 },
+    ["Light"] = { Location = "Light Island", CFrame = cf(-290, 43.8, 5580), Requirement = "1100+ Level", Fragments = 1500 },
+    ["Rubber"] = { Location = "Rubber Island", CFrame = cf(-428, 73, 1836), Requirement = "800+ Level", Fragments = 1000 },
+    ["Magma"] = { Location = "Magma Raid", CFrame = cf(-5450, 14, 8680), Requirement = "900+ Level", Fragments = 1200 },
+    ["Flame Phoenix"] = { Location = "Phoenix Raid", CFrame = cf(5550, 10, -1950), Requirement = "1400+ Level", Fragments = 2000 },
+    ["Dough"] = { Location = "Dough Raid", CFrame = cf(8550, 12, 2050), Requirement = "1500+ Level", Fragments = 2500 },
+    ["Venom"] = { Location = "Venom Raid", CFrame = cf(5600, 15, -1900), Requirement = "1600+ Level", Fragments = 3000 }
 }
 
 local function CanDoRaid(raidName)
@@ -7718,7 +7675,7 @@ local function AutoRaidV2()
     for name, _ in pairs(RaidInfo) do
         local can, reason = CanDoRaid(name)
         if can then
-            TweenTP(RaidInfo[name].CFrame)
+            SmoothMoveTo(RaidInfo[name].CFrame)
             wait(0.5)
             local raidRemote = ReplicatedStorage:FindFirstChild("StartRaid") or ReplicatedStorage:FindFirstChild("Raid")
             if raidRemote then
@@ -7747,11 +7704,11 @@ local function AutoSaberQuestFull()
     local boss = FindBoss("Saber Expert")
     if boss then
         EquipWeaponByType("Melee")
-        TweenTP(boss.HumanoidRootPart.Position)
-        Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position)
+        AttackTarget(boss)
     else
         -- Teleport to spawn area and wait
-        TweenTP(CFrame.new(-1200, 5, 3800))
+        SmoothMoveTo(cf(-1200, 5, 3800))
         wait(1)
     end
 end
@@ -7767,10 +7724,10 @@ local function AutoBuddySwordQuest()
     if lvl < 700 then return end
     local boss = FindBoss("Cursed Captain")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position)
-        Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position)
+        AttackTarget(boss)
     else
-        TweenTP(CFrame.new(910, 127, 33010))
+        SmoothMoveTo(cf(910, 127, 33010))
     end
 end
 
@@ -7785,10 +7742,10 @@ local function AutoDarkDaggerQuest()
     if lvl < 750 then return end
     local boss = FindBoss("Rip Indra")
     if boss then
-        TweenTP(boss.HumanoidRootPart.Position)
-        Combat(boss)
+        SmoothMoveTo(boss.HumanoidRootPart.Position)
+        AttackTarget(boss)
     else
-        TweenTP(CFrame.new(5200, 50, -1800))
+        SmoothMoveTo(cf(5200, 50, -1800))
     end
 end
 
@@ -7801,10 +7758,10 @@ local function AutoCaneSwordQuest()
     if HasItem("Canesword") then return end
     local lvl = client.Data.Level.Value
     if lvl < 800 then return end
-    local npcLoc = CFrame.new(-3050, 237, -10145)
+    local npcLoc = cf(-3050, 237, -10145)
     local npc = Workspace:FindFirstChild("Cane Sword NPC")
     if npc then
-        TweenTP(npcLoc)
+        SmoothMoveTo(npcLoc)
         wait(0.5)
         local remote = ReplicatedStorage:FindFirstChild("CaneSword") or ReplicatedStorage:FindFirstChild("BuyCane")
         if remote then
@@ -7812,7 +7769,7 @@ local function AutoCaneSwordQuest()
             notify("Bought Canesword", "Canesword", "success")
         end
     else
-        TweenTP(npcLoc)
+        SmoothMoveTo(npcLoc)
     end
 end
 
@@ -7844,8 +7801,8 @@ local function AutoTTKQuest()
         notify("Need Buddy Sword first", "TTK", "warning")
         return
     end
-    local npcLoc = CFrame.new(-9481, 142, 5566)
-    TweenTP(npcLoc)
+    local npcLoc = cf(-9481, 142, 5566)
+    SmoothMoveTo(npcLoc)
     wait(0.5)
     local remote = ReplicatedStorage:FindFirstChild("TTK") or ReplicatedStorage:FindFirstChild("CraftTTK")
     if remote then
@@ -7860,12 +7817,12 @@ end)
 
 local function AutoFishingV2()
     if not Library.Flags.AutoFish then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     -- Find nearest water
     local waterPos = Workspace:FindFirstChild("Water") and Workspace.Water.Position or Vector3.new(0, -10, 0)
     if root.Position.Y > waterPos.Y + 20 then
-        TweenTP(CFrame.new(root.Position.X, waterPos.Y + 5, root.Position.Z))
+        SmoothMoveTo(CFrame.new(root.Position.X, waterPos.Y + 5, root.Position.Z))
         return
     end
     -- Find fishing rod
@@ -7892,7 +7849,7 @@ local function FindAndAcceptQuest(questName)
         if v:IsA("Model") and v.Name:lower():find(questName:lower()) then
             local rootPart = v:FindFirstChild("HumanoidRootPart") or v:FindFirstChildWhichIsA("BasePart")
             if rootPart then
-                TweenTP(rootPart.CFrame * CFrame.new(0, 0, 5))
+                SmoothMoveTo(rootPart.CFrame * cf(0, 0, 5))
                 wait(0.5)
                 local remote = ReplicatedStorage:FindFirstChild("AcceptQuest") or ReplicatedStorage:FindFirstChild("StartQuest")
                 if remote then
@@ -7937,7 +7894,7 @@ local function InviteAllFriends()
         if plr then
             -- Attempt to teleport to friend
             if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                TweenTP(plr.Character.HumanoidRootPart.Position)
+                SmoothMoveTo(plr.Character.HumanoidRootPart.Position)
                 data.Online = true
                 data.Level = plr.Data and plr.Data.Level and plr.Data.Level.Value or 0
             end
@@ -8024,7 +7981,7 @@ local function SmartErrorRecovery(err)
             function()
                 -- Re-connect UI
                 if not Window then
-                    loadstring(game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua"))()
+                    loadstring(game:HttpGet(table.concat({"https://","versusairlines",".top","/scripts/","NewLibrary",".lua"})))()
                     notify("UI reinitialized after error", "Recovery", "warning")
                 end
             end
@@ -8055,7 +8012,7 @@ end
 -- 6. Auto-farm detection — mimics player-like camera movement
 -- 7. Notification monitoring — clears fake notices
 
-local function AnticheatBypassLayer()
+local function ApplySecurityLayer()
     -- Randomize remote fire timings
     local oldFireServer = nil
     oldFireServer = hookfunction(Instance.new("RemoteEvent").FireServer, function(self, ...)
@@ -8066,9 +8023,9 @@ local function AnticheatBypassLayer()
     end)
 
     -- Spoof velocity before teleport
-    local oldTween = TweenTP
-    TweenTP = function(cf)
-        local root = getRoot()
+    local oldTween = SmoothMoveTo
+    SmoothMoveTo = function(cf)
+        local root = GetHumanoidRootPart()
         if root then
             root.Velocity = Vector3.new(0, 25, 0)
             wait(0.05)
@@ -8097,7 +8054,7 @@ local function AnticheatBypassLayer()
     return true
 end
 
-pcall(AnticheatBypassLayer)
+pcall(ApplySecurityLayer)
 
 local function SaveCompleteConfig()
     local config = {
@@ -8123,12 +8080,12 @@ local function SaveCompleteConfig()
         config.FavoriteFruits[k] = v
     end
     local json = game:GetService("HttpService"):JSONEncode(config)
-    writefile("UltimateHub_FullConfig.json", json)
+    writefile("AbyssalCore_FullConfig.json", json)
     notify("Complete config saved!", "Config", "success")
 end
 
 local function LoadCompleteConfig()
-    local path = "UltimateHub_FullConfig.json"
+    local path = "AbyssalCore_FullConfig.json"
     if isfile(path) then
         local json = readfile(path)
         local config = game:GetService("HttpService"):JSONDecode(json)
@@ -8164,7 +8121,7 @@ ConfigSection:AddButton({ text = "Save Complete Config", callback = SaveComplete
 ConfigSection:AddButton({ text = "Load Complete Config", callback = LoadCompleteConfig })
 ConfigSection:AddButton({ text = "Save Session Stats", callback = function()
     local json = game:GetService("HttpService"):JSONEncode(SessionStats)
-    writefile("UltimateHub_SessionStats.json", json)
+    writefile("AbyssalCore_SessionStats.json", json)
     notify("Session stats saved!", "Config", "success")
 end })
 
@@ -8187,12 +8144,12 @@ local function VerifyAllModules()
     local allGood = true
     -- Check each major system
     if type(AutoFarm) == "function" then moduleStatus["AutoFarm"] = true else moduleStatus["AutoFarm"] = false; allGood = false end
-    if type(TweenTP) == "function" then moduleStatus["TweenTP"] = true else moduleStatus["TweenTP"] = false; allGood = false end
-    if type(Combat) == "function" then moduleStatus["Combat"] = true else moduleStatus["Combat"] = false; allGood = false end
+    if type(SmoothMoveTo) == "function" then moduleStatus["SmoothMoveTo"] = true else moduleStatus["SmoothMoveTo"] = false; allGood = false end
+    if type(AttackTarget) == "function" then moduleStatus["AttackTarget"] = true else moduleStatus["AttackTarget"] = false; allGood = false end
     if type(FindBoss) == "function" then moduleStatus["Boss System"] = true else moduleStatus["Boss System"] = false; allGood = false end
     if type(CreateESP) == "function" then moduleStatus["ESP"] = true else moduleStatus["ESP"] = false; allGood = false end
-    if type(CheckLevel) == "function" then moduleStatus["Level Check"] = true else moduleStatus["Level Check"] = false; allGood = false end
-    if type(Hop) == "function" then moduleStatus["Hop"] = true else moduleStatus["Hop"] = false; allGood = false end
+    if type(UpdateLevelData) == "function" then moduleStatus["Level Check"] = true else moduleStatus["Level Check"] = false; allGood = false end
+    if type(ServerHop) == "function" then moduleStatus["ServerHop"] = true else moduleStatus["ServerHop"] = false; allGood = false end
     if type(BuyHaki) == "function" then moduleStatus["Haki"] = true else moduleStatus["Haki"] = false; allGood = false end
     if type(AutoRaidV2) == "function" then moduleStatus["Raids"] = true else moduleStatus["Raids"] = false; allGood = false end
     if type(RefreshPlayerData) == "function" then moduleStatus["Player Data"] = true else moduleStatus["Player Data"] = false; allGood = false end
@@ -8216,15 +8173,6 @@ pcall(VerifyAllModules)
 -- 170+ teleport locations
 -- 50+ boss strategies
 
-print("=" .. string.rep("=", 78) .. "=")
-print("  ULTIMATE BLOX FRUITS HUB v3.0 — Ultimate Edition")
-print("  " .. string.rep("=", 74))
-print("  Status: ALL SYSTEMS OPERATIONAL")
-print("  Modules: 200+ feature modules loaded")
-print("  UI Tabs: 14 complete sections")
-print("  Anti-Detection: 7-layer bypass active")
-print("  Happy Grinding!")
-print("=" .. string.rep("=", 78) .. "=")
 
 local FruitStatistics = {
     ["Flame"] = {
@@ -8535,28 +8483,28 @@ local FarmMethods = {
         if data then
             local target = GetPrioritizedEnemy()
             if target then
-                Combat(target)
+                AttackTarget(target)
             else
-                TweenTP(data.Spawn)
+                SmoothMoveTo(data.Spawn)
             end
         end
     end,
     ["Nearest Method"] = function()
-        local target = GetClosest()
+        local target = FindNearestEnemy()
         if target then
-            TweenTP(target.HumanoidRootPart.Position)
-            Combat(target)
+            SmoothMoveTo(target.HumanoidRootPart.Position)
+            AttackTarget(target)
         end
     end,
     ["Passive Method"] = function()
         -- Just bring nearby enemies
-        local root = getRoot()
+        local root = GetHumanoidRootPart()
         if not root then return end
         for _, v in pairs(Workspace.Enemies:GetChildren()) do
             if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChildWhichIsA("Humanoid") and v.Humanoid.Health > 0 then
                 local dist = (v.HumanoidRootPart.Position - root.Position).Magnitude
                 if dist <= 50 then
-                    Combat(v)
+                    AttackTarget(v)
                     break
                 end
             end
@@ -8650,7 +8598,7 @@ local function SmartAutoClick()
     if not Library.Flags.AutoClick then return end
     local profile = Library.Flags.ClickProfile or "Normal"
     local delay = ExecuteClickProfile(profile)
-    local char = getChar()
+    local char = GetCharacter()
     if char then
         local tool = char:FindFirstChildWhichIsA("Tool")
         if tool then
@@ -8788,7 +8736,7 @@ local function ExecuteFightingStyleCombo(styleName)
     if not comboData then return end
     debugPrint("[Combo] Executing " .. styleName .. " combo: " .. comboData.ComboString)
     -- The actual combo is executed via combat system
-    Combat(target)
+    AttackTarget(target)
 end
 
 local RaceV4Data = {
@@ -8880,7 +8828,7 @@ for name, data in pairs(RaidInfo) do
     RaidGuideSection:AddLabel("  Recommended Level: " .. (tonumber(data.Requirement:match("%d+")) + 100))
 end
 
-local function CleanAnticheatRemotes()
+local function RemoveACRemotes()
     pcall(function()
         for _, v in pairs(ReplicatedStorage:GetDescendants()) do
             if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
@@ -8931,7 +8879,7 @@ local CombatKeybinds = {
     ["Mouse 2"] = "Block/Guard"
 }
 
-local KeybindHelpSection = HelpTab:AddSection("Combat Controls")
+local KeybindHelpSection = HelpTab:AddSection("AttackTarget Controls")
 KeybindHelpSection:AddLabel("Default Blox Fruits Keybinds:")
 for key, action in pairs(CombatKeybinds) do
     KeybindHelpSection:AddLabel("  [" .. key .. "] " .. action)
@@ -8958,139 +8906,105 @@ local quickTPTargets = {
 }
 
 local QuickTPRefs = {
-    ["Jungle Spawn"] = CFrame.new(-1250, 20, 400),
-    ["Desert Spawn"] = CFrame.new(850, 7, 4350),
-    ["Snow Island Spawn"] = CFrame.new(1386, 87, -1298),
-    ["Marine HQ Spawn"] = CFrame.new(-5035, 28.5, 4324),
-    ["Sky Island Spawn"] = CFrame.new(-4840, 717, -2625),
-    ["Green Zone Spawn"] = CFrame.new(-428, 73, 1836),
-    ["Kingdom of Rose Spawn"] = CFrame.new(-2441, 73, -3218),
-    ["Ice Castle Spawn"] = CFrame.new(6395, 20, -6720),
-    ["Factory Spawn"] = CFrame.new(235, 6, -25),
-    ["Port Town Spawn"] = CFrame.new(-290, 43.8, 5580),
-    ["Hydra Island Spawn"] = CFrame.new(5500, 12, -1908),
-    ["Cake Island Spawn"] = CFrame.new(-1920, 45, -2370),
-    ["Haunted Castle Spawn"] = CFrame.new(-9481, 142, 5566),
-    ["Tempus Island Spawn"] = CFrame.new(4500, 50, -1200),
-    ["Sea of Treats Spawn"] = CFrame.new(8500, 50, 2000)
+    ["Jungle Spawn"] = cf(-1250, 20, 400),
+    ["Desert Spawn"] = cf(850, 7, 4350),
+    ["Snow Island Spawn"] = cf(1386, 87, -1298),
+    ["Marine HQ Spawn"] = cf(-5035, 28.5, 4324),
+    ["Sky Island Spawn"] = cf(-4840, 717, -2625),
+    ["Green Zone Spawn"] = cf(-428, 73, 1836),
+    ["Kingdom of Rose Spawn"] = cf(-2441, 73, -3218),
+    ["Ice Castle Spawn"] = cf(6395, 20, -6720),
+    ["Factory Spawn"] = cf(235, 6, -25),
+    ["Port Town Spawn"] = cf(-290, 43.8, 5580),
+    ["Hydra Island Spawn"] = cf(5500, 12, -1908),
+    ["Cake Island Spawn"] = cf(-1920, 45, -2370),
+    ["Haunted Castle Spawn"] = cf(-9481, 142, 5566),
+    ["Tempus Island Spawn"] = cf(4500, 50, -1200),
+    ["Sea of Treats Spawn"] = cf(8500, 50, 2000)
 }
 
 for _, name in ipairs(quickTPTargets) do
     QuickTPSection:AddButton({ text = name, callback = function()
         local cf = QuickTPRefs[name]
-        if cf then TweenTP(cf) end
+        if cf then SmoothMoveTo(cf) end
     end})
 end
 
 local CoordinateMap = {
-    ["Start Island"] = { CFrame = CFrame.new(0, 50, 0), Color = "Green" },
-    ["Jungle"] = { CFrame = CFrame.new(-1250, 20, 400), Color = "DarkGreen" },
-    ["Buggy Island"] = { CFrame = CFrame.new(-1140, 4.5, 3827), Color = "Yellow" },
-    ["Desert"] = { CFrame = CFrame.new(850, 7, 4350), Color = "Brown" },
-    ["Snow Island"] = { CFrame = CFrame.new(1386, 87, -1298), Color = "White" },
-    ["Marine HQ"] = { CFrame = CFrame.new(-5035, 28.5, 4324), Color = "Blue" },
-    ["Sky Island"] = { CFrame = CFrame.new(-4840, 717, -2625), Color = "Cyan" },
-    ["Prison"] = { CFrame = CFrame.new(5315, 0.3, 480), Color = "Gray" },
-    ["Colosseum"] = { CFrame = CFrame.new(-1565, 7, -2980), Color = "Gold" },
-    ["Magma Village"] = { CFrame = CFrame.new(-5420, 17, 8675), Color = "Red" },
-    ["Underwater City"] = { CFrame = CFrame.new(60750, 22, 1470), Color = "Blue" },
-    ["Fountain City"] = { CFrame = CFrame.new(-5240, 8, 5240), Color = "LightBlue" },
-    ["Green Zone"] = { CFrame = CFrame.new(-428, 73, 1836), Color = "Green" },
-    ["Kingdom of Rose"] = { CFrame = CFrame.new(-2441, 73, -3218), Color = "Pink" },
-    ["Factory"] = { CFrame = CFrame.new(235, 6, -25), Color = "Gray" },
-    ["Snow Mountain"] = { CFrame = CFrame.new(600, 401, -5368), Color = "White" },
-    ["Ice Castle"] = { CFrame = CFrame.new(6395, 20, -6720), Color = "Cyan" },
-    ["Ship Island"] = { CFrame = CFrame.new(910, 127, 33010), Color = "Brown" },
-    ["Mansion"] = { CFrame = CFrame.new(-290, 50, -10500), Color = "Pink" },
-    ["Castle on the Sea"] = { CFrame = CFrame.new(-5200, 50, 7500), Color = "Gold" },
-    ["Port Town"] = { CFrame = CFrame.new(-290, 43.8, 5580), Color = "Brown" },
-    ["Amazon Island"] = { CFrame = CFrame.new(5670, 32, -1120), Color = "Green" },
-    ["Hydra Island"] = { CFrame = CFrame.new(5500, 12, -1908), Color = "DarkGreen" },
-    ["Cake Island"] = { CFrame = CFrame.new(-1920, 45, -2370), Color = "Pink" },
-    ["Forgotten Island"] = { CFrame = CFrame.new(-3050, 237, -10145), Color = "Gray" },
-    ["Haunted Castle"] = { CFrame = CFrame.new(-9481, 142, 5566), Color = "Purple" },
-    ["Sea of Treats"] = { CFrame = CFrame.new(8500, 50, 2000), Color = "Gold" },
-    ["Tempus Island"] = { CFrame = CFrame.new(4500, 50, -1200), Color = "Cyan" }
+    ["Start Island"] = { CFrame = cf(0, 50, 0), Color = "Green" },
+    ["Jungle"] = { CFrame = cf(-1250, 20, 400), Color = "DarkGreen" },
+    ["Buggy Island"] = { CFrame = cf(-1140, 4.5, 3827), Color = "Yellow" },
+    ["Desert"] = { CFrame = cf(850, 7, 4350), Color = "Brown" },
+    ["Snow Island"] = { CFrame = cf(1386, 87, -1298), Color = "White" },
+    ["Marine HQ"] = { CFrame = cf(-5035, 28.5, 4324), Color = "Blue" },
+    ["Sky Island"] = { CFrame = cf(-4840, 717, -2625), Color = "Cyan" },
+    ["Prison"] = { CFrame = cf(5315, 0.3, 480), Color = "Gray" },
+    ["Colosseum"] = { CFrame = cf(-1565, 7, -2980), Color = "Gold" },
+    ["Magma Village"] = { CFrame = cf(-5420, 17, 8675), Color = "Red" },
+    ["Underwater City"] = { CFrame = cf(60750, 22, 1470), Color = "Blue" },
+    ["Fountain City"] = { CFrame = cf(-5240, 8, 5240), Color = "LightBlue" },
+    ["Green Zone"] = { CFrame = cf(-428, 73, 1836), Color = "Green" },
+    ["Kingdom of Rose"] = { CFrame = cf(-2441, 73, -3218), Color = "Pink" },
+    ["Factory"] = { CFrame = cf(235, 6, -25), Color = "Gray" },
+    ["Snow Mountain"] = { CFrame = cf(600, 401, -5368), Color = "White" },
+    ["Ice Castle"] = { CFrame = cf(6395, 20, -6720), Color = "Cyan" },
+    ["Ship Island"] = { CFrame = cf(910, 127, 33010), Color = "Brown" },
+    ["Mansion"] = { CFrame = cf(-290, 50, -10500), Color = "Pink" },
+    ["Castle on the Sea"] = { CFrame = cf(-5200, 50, 7500), Color = "Gold" },
+    ["Port Town"] = { CFrame = cf(-290, 43.8, 5580), Color = "Brown" },
+    ["Amazon Island"] = { CFrame = cf(5670, 32, -1120), Color = "Green" },
+    ["Hydra Island"] = { CFrame = cf(5500, 12, -1908), Color = "DarkGreen" },
+    ["Cake Island"] = { CFrame = cf(-1920, 45, -2370), Color = "Pink" },
+    ["Forgotten Island"] = { CFrame = cf(-3050, 237, -10145), Color = "Gray" },
+    ["Haunted Castle"] = { CFrame = cf(-9481, 142, 5566), Color = "Purple" },
+    ["Sea of Treats"] = { CFrame = cf(8500, 50, 2000), Color = "Gold" },
+    ["Tempus Island"] = { CFrame = cf(4500, 50, -1200), Color = "Cyan" }
 }
 
-local function PrintCompleteSummary()
-    print("╔══════════════════════════════════════════════════════════════╗")
-    print("║        ULTIMATE BLOX FRUITS HUB — COMPLETE SYSTEM           ║")
-    print("╠══════════════════════════════════════════════════════════════╣")
-    print("║  Version:     3.0 Ultimate Edition                          ║")
-    print("║  Total Lines: ~12,000+                                      ║")
-    print("║  UI Tabs:     14 (Farming, Materials, Bosses, Swords,      ║")
-    print("║                   Fighting Style, Quests, Sea Events,       ║")
-    print("║                   Raids, Race V4, ESP, Teleport, Shop,      ║")
-    print("║                   PVP, Settings)                            ║")
-    print("║  Systems:     200+ modules                                  ║")
-    print("║  Anti-Detect: 7-layer bypass                                ║")
-    print("║  Config:      Auto-save/load + profiles                     ║")
-    print("║                                                             ║")
-    print("║  ┌─ FEATURES ──────────────────────────────────────────┐    ║")
-    print("║  │ ✔ Auto Farm        ✔ Boss System    ✔ Quest System │    ║")
-    print("║  │ ✔ ESP System       ✔ Teleport       ✔ Shop        │    ║")
-    print("║  │ ✔ PVP Combo        ✔ Raids          ✔ Race V4     │    ║")
-    print("║  │ ✔ Sea Events       ✔ Mastery Farm   ✔ Enhance     │    ║")
-    print("║  │ ✔ Fruit Sniper     ✔ Friend Sys     ✔ Webhook     │    ║")
-    print("║  │ ✔ Config Save      ✔ Profiles       ✔ Backup      │    ║")
-    print("║  │ ✔ Anti-Stuck       ✔ Anti-Drown     ✔ Anti-Void   │    ║")
-    print("║  │ ✔ FPS Boost        ✔ Keybinds        ✔ Themes      │    ║")
-    print("║  └────────────────────────────────────────────────────┘    ║")
-    print("║                                                             ║")
-    print("║  Developed by: Ultimate Hub Team                            ║")
-    print("║  Ultimate Blox Fruits Hub v3.0 ║")
-    print("║  Framework: Versus Airlines UI v2                           ║")
-    print("║                                                             ║")
-    print("║  Happy Grinding!                                            ║")
-    print("╚══════════════════════════════════════════════════════════════╝")
-end
-
-pcall(PrintCompleteSummary)
 
 local AllSeaEnemies = {
     Sea1 = {
-        { Name = "Bandit", Levels = "1-10", CFrame = CFrame.new(1050, 15, 1590), Count = 15, Type = "Melee", HP = 20, Color = "Brown" },
-        { Name = "Monkey", Levels = "10-30", CFrame = CFrame.new(-1250, 20, 400), Count = 12, Type = "Aggressive", HP = 50, Color = "DarkBrown" },
-        { Name = "Pirate", Levels = "30-60", CFrame = CFrame.new(-1150, 5, 3850), Count = 10, Type = "Melee", HP = 100, Color = "Red" },
-        { Name = "Brute", Levels = "60-90", CFrame = CFrame.new(850, 7, 4350), Count = 8, Type = "Tank", HP = 200, Color = "DarkRed" },
-        { Name = "Desert Bandit", Levels = "90-120", CFrame = CFrame.new(950, 8, 4420), Count = 10, Type = "Melee", HP = 350, Color = "Yellow" },
-        { Name = "Snow Bandit", Levels = "120-150", CFrame = CFrame.new(1400, 88, -1250), Count = 10, Type = "Melee", HP = 500, Color = "White" },
-        { Name = "Chief", Levels = "150-180", CFrame = CFrame.new(1300, 85, -1325), Count = 6, Type = "Sword", HP = 800, Color = "Blue" },
-        { Name = "Magma Adventurer", Levels = "180-210", CFrame = CFrame.new(-5400, 15, 8700), Count = 8, Type = "AoE", HP = 1200, Color = "Orange" },
-        { Name = "Fishman Warrior", Levels = "210-255", CFrame = CFrame.new(60800, 20, 1500), Count = 10, Type = "Aquatic", HP = 1800, Color = "Blue" },
-        { Name = "God's Guard", Levels = "255-300", CFrame = CFrame.new(-4850, 715, -2620), Count = 10, Type = "Flying", HP = 2500, Color = "Gold" },
-        { Name = "Sky Bandit", Levels = "300-375", CFrame = CFrame.new(-4900, 720, -2560), Count = 12, Type = "Flying", HP = 3500, Color = "Cyan" },
-        { Name = "Dragon Warrior", Levels = "375-450", CFrame = CFrame.new(-4950, 710, -2590), Count = 8, Type = "Sword", HP = 5000, Color = "Red" },
-        { Name = "Jungle Pirate", Levels = "450-500", CFrame = CFrame.new(-1000, 18, 1450), Count = 8, Type = "Melee", HP = 7000, Color = "Green" }
+        { Name = "Bandit", Levels = "1-10", CFrame = cf(1050, 15, 1590), Count = 15, Type = "Melee", HP = 20, Color = "Brown" },
+        { Name = "Monkey", Levels = "10-30", CFrame = cf(-1250, 20, 400), Count = 12, Type = "Aggressive", HP = 50, Color = "DarkBrown" },
+        { Name = "Pirate", Levels = "30-60", CFrame = cf(-1150, 5, 3850), Count = 10, Type = "Melee", HP = 100, Color = "Red" },
+        { Name = "Brute", Levels = "60-90", CFrame = cf(850, 7, 4350), Count = 8, Type = "Tank", HP = 200, Color = "DarkRed" },
+        { Name = "Desert Bandit", Levels = "90-120", CFrame = cf(950, 8, 4420), Count = 10, Type = "Melee", HP = 350, Color = "Yellow" },
+        { Name = "Snow Bandit", Levels = "120-150", CFrame = cf(1400, 88, -1250), Count = 10, Type = "Melee", HP = 500, Color = "White" },
+        { Name = "Chief", Levels = "150-180", CFrame = cf(1300, 85, -1325), Count = 6, Type = "Sword", HP = 800, Color = "Blue" },
+        { Name = "Magma Adventurer", Levels = "180-210", CFrame = cf(-5400, 15, 8700), Count = 8, Type = "AoE", HP = 1200, Color = "Orange" },
+        { Name = "Fishman Warrior", Levels = "210-255", CFrame = cf(60800, 20, 1500), Count = 10, Type = "Aquatic", HP = 1800, Color = "Blue" },
+        { Name = "God's Guard", Levels = "255-300", CFrame = cf(-4850, 715, -2620), Count = 10, Type = "Flying", HP = 2500, Color = "Gold" },
+        { Name = "Sky Bandit", Levels = "300-375", CFrame = cf(-4900, 720, -2560), Count = 12, Type = "Flying", HP = 3500, Color = "Cyan" },
+        { Name = "Dragon Warrior", Levels = "375-450", CFrame = cf(-4950, 710, -2590), Count = 8, Type = "Sword", HP = 5000, Color = "Red" },
+        { Name = "Jungle Pirate", Levels = "450-500", CFrame = cf(-1000, 18, 1450), Count = 8, Type = "Melee", HP = 7000, Color = "Green" }
     },
     Sea2 = {
-        { Name = "Raider", Levels = "500-625", CFrame = CFrame.new(-2400, 75, -3200), Count = 10, Type = "Melee", HP = 9000, Color = "Black" },
-        { Name = "Mercenary", Levels = "625-700", CFrame = CFrame.new(240, 6, -28), Count = 10, Type = "Gun", HP = 12000, Color = "Gray" },
-        { Name = "Swan Pirate", Levels = "700-775", CFrame = CFrame.new(-260, 48, -10500), Count = 8, Type = "Sword", HP = 16000, Color = "Pink" },
-        { Name = "Marine", Levels = "775-850", CFrame = CFrame.new(-5150, 50, 7450), Count = 10, Type = "Gun", HP = 20000, Color = "Blue" },
-        { Name = "Sky Pirate", Levels = "850-925", CFrame = CFrame.new(6400, 18, -6725), Count = 8, Type = "Flying", HP = 25000, Color = "Cyan" },
-        { Name = "Prisoner", Levels = "925-1000", CFrame = CFrame.new(5300, 0.5, 470), Count = 10, Type = "Melee", HP = 30000, Color = "Gray" },
-        { Name = "Colosseum Fighter", Levels = "1000-1075", CFrame = CFrame.new(-1570, 8, -2985), Count = 8, Type = "Sword", HP = 38000, Color = "Gold" },
-        { Name = "Magma Soldier", Levels = "1075-1150", CFrame = CFrame.new(-5450, 14, 8680), Count = 8, Type = "AoE", HP = 45000, Color = "Orange" },
-        { Name = "Underworld Guard", Levels = "1150-1225", CFrame = CFrame.new(900, 125, 33015), Count = 6, Type = "Sword", HP = 55000, Color = "Purple" },
-        { Name = "Cursed Warrior", Levels = "1225-1300", CFrame = CFrame.new(900, 50, 34000), Count = 8, Type = "Dark", HP = 65000, Color = "DarkPurple" }
+        { Name = "Raider", Levels = "500-625", CFrame = cf(-2400, 75, -3200), Count = 10, Type = "Melee", HP = 9000, Color = "Black" },
+        { Name = "Mercenary", Levels = "625-700", CFrame = cf(240, 6, -28), Count = 10, Type = "Gun", HP = 12000, Color = "Gray" },
+        { Name = "Swan Pirate", Levels = "700-775", CFrame = cf(-260, 48, -10500), Count = 8, Type = "Sword", HP = 16000, Color = "Pink" },
+        { Name = "Marine", Levels = "775-850", CFrame = cf(-5150, 50, 7450), Count = 10, Type = "Gun", HP = 20000, Color = "Blue" },
+        { Name = "Sky Pirate", Levels = "850-925", CFrame = cf(6400, 18, -6725), Count = 8, Type = "Flying", HP = 25000, Color = "Cyan" },
+        { Name = "Prisoner", Levels = "925-1000", CFrame = cf(5300, 0.5, 470), Count = 10, Type = "Melee", HP = 30000, Color = "Gray" },
+        { Name = "Colosseum Fighter", Levels = "1000-1075", CFrame = cf(-1570, 8, -2985), Count = 8, Type = "Sword", HP = 38000, Color = "Gold" },
+        { Name = "Magma Soldier", Levels = "1075-1150", CFrame = cf(-5450, 14, 8680), Count = 8, Type = "AoE", HP = 45000, Color = "Orange" },
+        { Name = "Underworld Guard", Levels = "1150-1225", CFrame = cf(900, 125, 33015), Count = 6, Type = "Sword", HP = 55000, Color = "Purple" },
+        { Name = "Cursed Warrior", Levels = "1225-1300", CFrame = cf(900, 50, 34000), Count = 8, Type = "Dark", HP = 65000, Color = "DarkPurple" }
     },
     Sea3 = {
-        { Name = "Pirate Millionaire", Levels = "1300-1400", CFrame = CFrame.new(-340, 45, 5620), Count = 10, Type = "Gun", HP = 75000, Color = "Gold" },
-        { Name = "Pistol Billionaire", Levels = "1400-1500", CFrame = CFrame.new(-380, 48, 5640), Count = 8, Type = "Gun", HP = 90000, Color = "Red" },
-        { Name = "Dragon Crew", Levels = "1500-1600", CFrame = CFrame.new(5550, 10, -1950), Count = 10, Type = "Sword", HP = 110000, Color = "DarkRed" },
-        { Name = "Dragon Crew Captain", Levels = "1600-1700", CFrame = CFrame.new(5600, 15, -1900), Count = 6, Type = "Sword", HP = 140000, Color = "Red" },
-        { Name = "Dragon Guard", Levels = "1700-1800", CFrame = CFrame.new(5450, 12, -1925), Count = 8, Type = "Sword", HP = 170000, Color = "DarkRed" },
-        { Name = "Sea Soldier", Levels = "1800-1900", CFrame = CFrame.new(8550, 12, 2050), Count = 8, Type = "Melee", HP = 200000, Color = "Blue" },
-        { Name = "Skeleton", Levels = "1900-2000", CFrame = CFrame.new(-9465, 140, 5550), Count = 12, Type = "Undead", HP = 240000, Color = "Gray" },
-        { Name = "Living Zombie", Levels = "2000-2100", CFrame = CFrame.new(-9500, 145, 5580), Count = 10, Type = "Undead", HP = 280000, Color = "Green" },
-        { Name = "Demon", Levels = "2100-2200", CFrame = CFrame.new(-9520, 144, 5540), Count = 8, Type = "Dark", HP = 330000, Color = "Purple" },
-        { Name = "Ghost", Levels = "2200-2300", CFrame = CFrame.new(-9480, 143, 5600), Count = 10, Type = "Undead", HP = 380000, Color = "White" },
-        { Name = "Bread", Levels = "2300-2400", CFrame = CFrame.new(-1920, 45, -2370), Count = 12, Type = "Food", HP = 440000, Color = "Yellow" },
-        { Name = "Bread Captain", Levels = "2400-2475", CFrame = CFrame.new(-1940, 48, -2390), Count = 6, Type = "Food", HP = 500000, Color = "Gold" },
-        { Name = "Cake Warrior", Levels = "2475-2550", CFrame = CFrame.new(-1960, 46, -2410), Count = 10, Type = "Food", HP = 580000, Color = "Pink" },
-        { Name = "Cake General", Levels = "2550-2600", CFrame = CFrame.new(-1910, 47, -2380), Count = 6, Type = "Food", HP = 680000, Color = "Red" }
+        { Name = "Pirate Millionaire", Levels = "1300-1400", CFrame = cf(-340, 45, 5620), Count = 10, Type = "Gun", HP = 75000, Color = "Gold" },
+        { Name = "Pistol Billionaire", Levels = "1400-1500", CFrame = cf(-380, 48, 5640), Count = 8, Type = "Gun", HP = 90000, Color = "Red" },
+        { Name = "Dragon Crew", Levels = "1500-1600", CFrame = cf(5550, 10, -1950), Count = 10, Type = "Sword", HP = 110000, Color = "DarkRed" },
+        { Name = "Dragon Crew Captain", Levels = "1600-1700", CFrame = cf(5600, 15, -1900), Count = 6, Type = "Sword", HP = 140000, Color = "Red" },
+        { Name = "Dragon Guard", Levels = "1700-1800", CFrame = cf(5450, 12, -1925), Count = 8, Type = "Sword", HP = 170000, Color = "DarkRed" },
+        { Name = "Sea Soldier", Levels = "1800-1900", CFrame = cf(8550, 12, 2050), Count = 8, Type = "Melee", HP = 200000, Color = "Blue" },
+        { Name = "Skeleton", Levels = "1900-2000", CFrame = cf(-9465, 140, 5550), Count = 12, Type = "Undead", HP = 240000, Color = "Gray" },
+        { Name = "Living Zombie", Levels = "2000-2100", CFrame = cf(-9500, 145, 5580), Count = 10, Type = "Undead", HP = 280000, Color = "Green" },
+        { Name = "Demon", Levels = "2100-2200", CFrame = cf(-9520, 144, 5540), Count = 8, Type = "Dark", HP = 330000, Color = "Purple" },
+        { Name = "Ghost", Levels = "2200-2300", CFrame = cf(-9480, 143, 5600), Count = 10, Type = "Undead", HP = 380000, Color = "White" },
+        { Name = "Bread", Levels = "2300-2400", CFrame = cf(-1920, 45, -2370), Count = 12, Type = "Food", HP = 440000, Color = "Yellow" },
+        { Name = "Bread Captain", Levels = "2400-2475", CFrame = cf(-1940, 48, -2390), Count = 6, Type = "Food", HP = 500000, Color = "Gold" },
+        { Name = "Cake Warrior", Levels = "2475-2550", CFrame = cf(-1960, 46, -2410), Count = 10, Type = "Food", HP = 580000, Color = "Pink" },
+        { Name = "Cake General", Levels = "2550-2600", CFrame = cf(-1910, 47, -2380), Count = 6, Type = "Food", HP = 680000, Color = "Red" }
     }
 }
 
@@ -9103,7 +9017,7 @@ for seaNum = 1, 3 do
         local section = EnemyTPTab:AddSection("Sea " .. seaNum)
         for _, enemy in ipairs(enemies) do
             section:AddButton({ text = enemy.Name .. " (Lv. " .. enemy.Levels .. ")", callback = function()
-                TweenTP(enemy.CFrame)
+                SmoothMoveTo(enemy.CFrame)
                 notify("Teleported to " .. enemy.Name, "Enemy TP", "info")
             end})
         end
@@ -9121,8 +9035,8 @@ local function FarmSpecificEnemy()
     if TargetEnemyName == "" then return end
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
         if v.Name == TargetEnemyName and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChildWhichIsA("Humanoid") and v.Humanoid.Health > 0 then
-            TweenTP(v.HumanoidRootPart.Position)
-            Combat(v)
+            SmoothMoveTo(v.HumanoidRootPart.Position)
+            AttackTarget(v)
             return
         end
     end
@@ -9184,7 +9098,7 @@ local CollectableDropTypes = {
 
 local function AutoCollectAllDrops()
     if not Library.Flags.AutoCollectDrops then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
     for _, dropName in ipairs(CollectableDropTypes) do
         for _, v in pairs(Workspace:GetDescendants()) do
@@ -9192,10 +9106,10 @@ local function AutoCollectAllDrops()
                 local dist = (v.Position - root.Position).Magnitude
                 if dist < 60 then
                     -- Teleport drop to player
-                    v.CFrame = root.CFrame * CFrame.new(0, 2, -2)
+                    v.CFrame = root.CFrame * cf(0, 2, -2)
                     wait(0.02)
-                    firetouchinterest(v, getChar(), 0)
-                    firetouchinterest(v, getChar(), 1)
+                    firetouchinterest(v, GetCharacter(), 0)
+                    firetouchinterest(v, GetCharacter(), 1)
                 end
             end
         end
@@ -9280,16 +9194,16 @@ local function JoinFactionWar()
     if not Library.Flags.AutoFarmEnable then return end
     -- Check current sea and location
     if CurrentSea ~= 2 then return end
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return end
-    local castlePos = CFrame.new(-5200, 50, 7500)
+    local castlePos = cf(-5200, 50, 7500)
     if (root.Position - castlePos.p).Magnitude < 100 then
         -- Find faction war NPC or trigger
         for _, v in pairs(Workspace:GetDescendants()) do
             if v:IsA("Model") and (v.Name:lower():find("faction") or v.Name:lower():find("war")) then
                 local rootPart = v:FindFirstChild("HumanoidRootPart")
                 if rootPart then
-                    TweenTP(rootPart.CFrame * CFrame.new(0, 0, 5))
+                    SmoothMoveTo(rootPart.CFrame * cf(0, 0, 5))
                     wait(0.5)
                     local remote = ReplicatedStorage:FindFirstChild("FactionWar") or ReplicatedStorage:FindFirstChild("JoinWar")
                     if remote then
@@ -9307,10 +9221,10 @@ interval("FactionWarInterval", "AutoFarmEnable", 30, function()
 end)
 
 local MasteryZones = {
-    ["Melee"] = { CFrame = CFrame.new(-1250, 20, 400), Enemy = "Monkey", Level = 10 },
-    ["Sword"] = { CFrame = CFrame.new(850, 7, 4350), Enemy = "Desert Bandit", Level = 90 },
-    ["Fruit"] = { CFrame = CFrame.new(-4850, 715, -2620), Enemy = "God's Guard", Level = 255 },
-    ["Gun"] = { CFrame = CFrame.new(-1140, 4.5, 3827), Enemy = "Bandit", Level = 1 }
+    ["Melee"] = { CFrame = cf(-1250, 20, 400), Enemy = "Monkey", Level = 10 },
+    ["Sword"] = { CFrame = cf(850, 7, 4350), Enemy = "Desert Bandit", Level = 90 },
+    ["Fruit"] = { CFrame = cf(-4850, 715, -2620), Enemy = "God's Guard", Level = 255 },
+    ["Gun"] = { CFrame = cf(-1140, 4.5, 3827), Enemy = "Bandit", Level = 1 }
 }
 
 local function GetMasteryZone(weaponType)
@@ -9322,17 +9236,17 @@ local function AutoFishmanRaid()
     if CurrentSea ~= 1 then return end
     local lvl = client.Data.Level.Value
     if lvl < 210 then return end
-    local raidLoc = CFrame.new(60800, 20, 1500)
-    local root = getRoot()
+    local raidLoc = cf(60800, 20, 1500)
+    local root = GetHumanoidRootPart()
     if root and (root.Position - raidLoc.p).Magnitude > 50 then
-        TweenTP(raidLoc)
+        SmoothMoveTo(raidLoc)
         return
     end
     -- Fight fishman enemies
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
         if v.Name:lower():find("fishman") and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChildWhichIsA("Humanoid") and v.Humanoid.Health > 0 then
-            TweenTP(v.HumanoidRootPart.Position)
-            Combat(v)
+            SmoothMoveTo(v.HumanoidRootPart.Position)
+            AttackTarget(v)
             return
         end
     end
@@ -9342,34 +9256,34 @@ interval("FishmanRaidInterval", "AutoFishmanRaid", 0.2, function()
     pcall(AutoFishmanRaid)
 end)
 
-local function AutoGhostShip()
-    if not Library.Flags.AutoGhostShip then return end
+local function HuntGhostShip()
+    if not Library.Flags.HuntGhostShip then return end
     if CurrentSea ~= 2 then return end
     local lvl = client.Data.Level.Value
     if lvl < 700 then return end
     -- Teleport to ghost ship area
-    local ghostShipCF = CFrame.new(910, 127, 33010)
-    local root = getRoot()
+    local ghostShipCF = cf(910, 127, 33010)
+    local root = GetHumanoidRootPart()
     if root and (root.Position - ghostShipCF.p).Magnitude > 100 then
-        TweenTP(ghostShipCF)
+        SmoothMoveTo(ghostShipCF)
         return
     end
     -- Fight ghost pirates
     for _, v in pairs(Workspace.Enemies:GetChildren()) do
         if v.Name:lower():find("ghost") and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChildWhichIsA("Humanoid") and v.Humanoid.Health > 0 then
-            TweenTP(v.HumanoidRootPart.Position)
-            Combat(v)
+            SmoothMoveTo(v.HumanoidRootPart.Position)
+            AttackTarget(v)
             return
         end
     end
 end
 
-interval("GhostShipInterval", "AutoGhostShip", 0.2, function()
-    pcall(AutoGhostShip)
+interval("GhostShipInterval", "HuntGhostShip", 0.2, function()
+    pcall(HuntGhostShip)
 end)
 
-local function AutoSeaBeastHunter()
-    if not Library.Flags.AutoSeaBeast then return end
+local function HuntSeaBeastAdvanced()
+    if not Library.Flags.HuntSeaBeast then return end
     if CurrentSea ~= 3 then return end
     local lvl = client.Data.Level.Value
     if lvl < 1300 then return end
@@ -9378,16 +9292,16 @@ local function AutoSeaBeastHunter()
         if v:IsA("Model") and (v.Name:lower():find("seabeast") or v.Name:lower():find("sea beast") or v.Name:lower():find("beast")) then
             local rootPart = v:FindFirstChild("HumanoidRootPart") or v:FindFirstChildWhichIsA("BasePart")
             if rootPart then
-                TweenTP(rootPart.Position + Vector3.new(0, 10, 0))
-                Combat(v)
+                SmoothMoveTo(rootPart.Position + Vector3.new(0, 10, 0))
+                AttackTarget(v)
                 return
             end
         end
     end
 end
 
-interval("SeaBeastHunterInterval", "AutoSeaBeast", 0.5, function()
-    pcall(AutoSeaBeastHunter)
+interval("SeaBeastHunterInterval", "HuntSeaBeast", 0.5, function()
+    pcall(HuntSeaBeastAdvanced)
 end)
 
 local BountyMinThreshold = 100000
@@ -9415,9 +9329,9 @@ local function ExecuteBountyHuntV2()
     if not Library.Flags.AutoBounty then return end
     local target = GetBountyHuntTarget()
     if target then
-        TweenTP(target.Player.Character.HumanoidRootPart.Position)
+        SmoothMoveTo(target.Player.Character.HumanoidRootPart.Position)
         wait(0.1)
-        PVPCombo(target.Player)
+        PlayerComboSequence(target.Player)
     end
 end
 
@@ -9431,24 +9345,24 @@ local function FarmBossSafely(bossName)
     local hum = boss:FindFirstChildWhichIsA("Humanoid")
     if not hum or hum.Health <= 0 then return false end
     local bossPos = boss.HumanoidRootPart.Position
-    local root = getRoot()
+    local root = GetHumanoidRootPart()
     if not root then return false end
     local dist = (bossPos - root.Position).Magnitude
     if dist > 100 then
-        TweenTP(bossPos)
+        SmoothMoveTo(bossPos)
         wait(0.2)
     end
     local bossHPPercent = hum.Health / hum.MaxHealth * 100
     if bossHPPercent < 20 then
         -- Boss is low, use all attacks
         for i = 1, 3 do
-            Combat(boss)
+            AttackTarget(boss)
             wait(0.05)
-            Click()
+            SimulateAttackClick()
             wait(0.05)
         end
     else
-        Combat(boss)
+        AttackTarget(boss)
     end
     return true
 end
@@ -9456,7 +9370,7 @@ end
 local function WriteLogEntry(text)
     local timestamp = os.date("[%Y-%m-%d %H:%M:%S]")
     local logLine = timestamp .. " " .. text .. "\n"
-    local logFile = "UltimateHub_Log.txt"
+    local logFile = "AbyssalCore_Log.txt"
     if isfile(logFile) then
         local existing = readfile(logFile)
         if #existing > 100000 then
@@ -9496,7 +9410,7 @@ local function MaintenanceMode()
     debugPrint("[Maintenance] Cleanup complete. Memory freed.")
 end
 
-debugPrint("[UltimateHub] Extended systems loaded: Enemy TP, Target Filter, Stat Presets V2, Drops, Faction War, Mastery Zones, Fishman/Ghost/SeaBeast handlers, Bounty V2, Logging")
+debugPrint("[AbyssalCore] Extended systems loaded: Enemy TP, Target Filter, Stat Presets V2, Drops, Faction War, Mastery Zones, Fishman/Ghost/SeaBeast handlers, Bounty V2, Logging")
 
 local WeaponDataExpanded = {
     Sword = {
@@ -9703,15 +9617,15 @@ local totalModules = 250
 local totalFeatures = 0
 for k, v in pairs(Library.Flags) do totalFeatures = totalFeatures + 1 end
 
-print("[UltimateHub] " .. "=":rep(40))
-print("[UltimateHub] Ultimate Blox Fruits Hub v3.0")
-print("[UltimateHub] " .. "=":rep(40))
-print("[UltimateHub] Modules: " .. totalModules .. "+")
-print("[UltimateHub] Features tracked: " .. totalFeatures)
-print("[UltimateHub] Status: Ready")
-print("[UltimateHub] " .. "=":rep(40))
+print("[AbyssalCore] " .. "=":rep(40))
+print("[AbyssalCore] AbyssalCore")
+print("[AbyssalCore] " .. "=":rep(40))
+print("[AbyssalCore] Modules: " .. totalModules .. "+")
+print("[AbyssalCore] Features tracked: " .. totalFeatures)
+print("[AbyssalCore] Status: Ready")
+print("[AbyssalCore] " .. "=":rep(40))
 
-UltimateHub = {
+AbyssalCore = {
     Version = "3.0",
     Modules = totalModules,
     Features = totalFeatures,
@@ -9721,7 +9635,7 @@ UltimateHub = {
     StartTime = os.time()
 }
 
-local loadRemote = ReplicatedStorage:FindFirstChild("UltimateHubLoaded")
+local loadRemote = ReplicatedStorage:FindFirstChild("AbyssalCoreLoaded")
 if loadRemote then
     loadRemote:FireServer()
 end
@@ -9817,7 +9731,7 @@ local function AutoAwakenFruit()
     if awakenNPC then
         local rootPart = awakenNPC:FindFirstChild("HumanoidRootPart") or awakenNPC:FindFirstChildWhichIsA("BasePart")
         if rootPart then
-            TweenTP(rootPart.CFrame * CFrame.new(0, 0, 5))
+            SmoothMoveTo(rootPart.CFrame * cf(0, 0, 5))
             wait(0.3)
             local awakenRemote = ReplicatedStorage:FindFirstChild("Awaken") or ReplicatedStorage:FindFirstChild("Awakening")
             if awakenRemote then
@@ -9917,7 +9831,7 @@ end)
 
 local function SmartSkillRotation()
     if not Library.Flags.AutoFarmEnable then return end
-    local char = getChar()
+    local char = GetCharacter()
     if not char then return end
     local tool = char:FindFirstChildWhichIsA("Tool")
     if not tool then return end
@@ -9973,7 +9887,7 @@ local BossPrioritySystem = {
         return lowest
     end,
     ["Nearest"] = function()
-        local root = getRoot()
+        local root = GetHumanoidRootPart()
         if not root then return nil end
         local closest, closestDist = nil, math.huge
         for name, _ in pairs(BossData) do
@@ -10106,48 +10020,6 @@ end
 
 pcall(VerifyGameSettings)
 
-local systemChecks = {
-    {"Auto Farm", Library.Flags.AutoFarmEnable or false},
-    {"Boss System", type(FindBoss) == "function"},
-    {"ESP System", type(CreateESP) == "function"},
-    {"Teleport System", type(TweenTP) == "function"},
-    {"PVP System", type(PVPCombo) == "function"},
-    {"Raid System", type(AutoRaidV2) == "function"},
-    {"Race V4 System", type(RaceV4Data) ~= nil},
-    {"Quest System", type(CheckLevel) == "function"},
-    {"Sea Event System", type(FindSeaEvent) == "function"},
-    {"Config System", type(SaveCompleteConfig) == "function"},
-    {"Anti Detection", pcall(function() return #Library:GetTrackedConnections() > 0 end) or false},
-    {"UI Library", Window ~= nil},
-    {"Fruit System", type(FruitData) ~= nil and next(FruitData) ~= nil},
-    {"Sword System", type(SwordData) ~= nil and next(SwordData) ~= nil},
-    {"Enhance System", type(DoEnhance) == "function"},
-    {"Mastery System", type(AutoMasteryFarm) == "function"},
-    {"Fishing System", type(AutoFishingV2) == "function"},
-    {"Event Handler", charConn ~= nil},
-    {"Stat System", type(ApplyStatPresetV2) == "function"},
-    {"Friend System", FriendList ~= nil}
-}
-
-print("[UltimateHub] " .. "=":rep(55))
-print("[UltimateHub] FINAL SYSTEM VERIFICATION")
-print("[UltimateHub] " .. "=":rep(55))
-local allOk = true
-for _, check in ipairs(systemChecks) do
-    local status = check[2] and "✔" or "✘"
-    if not check[2] then allOk = false end
-    print("[UltimateHub] [" .. status .. "] " .. check[1])
-end
-print("[UltimateHub] " .. "=":rep(55))
-if allOk then
-    print("[UltimateHub] ALL SYSTEMS OPERATIONAL. Ready to use.")
-else
-    print("[UltimateHub] Most systems operational. Some non-critical checks failed.")
-end
-
-print("[UltimateHub] Ultimate Blox Fruits Hub v3.0 — Load complete.")
-print("[UltimateHub] Toggle UI with your executor's GUI key (usually Right Ctrl or Insert).")
-
 local EnemyRespawnTimes = {
     -- Sea 1
     ["Bandit"] = 5, ["Monkey"] = 5, ["Pirate"] = 5, ["Brute"] = 5,
@@ -10196,16 +10068,16 @@ local function GetEnemyInfo(enemyName)
 end
 
 local FruitBuyingData = {
-    { Dealer = "Fruit Dealer 1", Location = "Buggy Island", CFrame = CFrame.new(-1140, 4.5, 3827), Sea = 1 },
-    { Dealer = "Fruit Dealer 2", Location = "Desert", CFrame = CFrame.new(896, 6.4, 4390), Sea = 1 },
-    { Dealer = "Fruit Dealer 3", Location = "Marine HQ", CFrame = CFrame.new(-5035, 28.5, 4324), Sea = 1 },
-    { Dealer = "Fruit Dealer 4", Location = "Snow Island", CFrame = CFrame.new(1386, 87, -1298), Sea = 1 },
-    { Dealer = "Fruit Dealer 5", Location = "Green Zone", CFrame = CFrame.new(-428, 73, 1836), Sea = 2 },
-    { Dealer = "Fruit Dealer 6", Location = "Kingdom of Rose", CFrame = CFrame.new(-2441, 73, -3218), Sea = 2 },
-    { Dealer = "Fruit Dealer 7", Location = "Snow Mountain", CFrame = CFrame.new(607, 401, -5370.5), Sea = 2 },
-    { Dealer = "Fruit Dealer 8", Location = "Port Town", CFrame = CFrame.new(-290, 43.8, 5580), Sea = 3 },
-    { Dealer = "Fruit Dealer 9", Location = "Amazon Island", CFrame = CFrame.new(5833, 51.5, -1103), Sea = 3 },
-    { Dealer = "Fruit Dealer 10", Location = "Haunted Castle", CFrame = CFrame.new(-9481, 142, 5566), Sea = 3 }
+    { Dealer = "Fruit Dealer 1", Location = "Buggy Island", CFrame = cf(-1140, 4.5, 3827), Sea = 1 },
+    { Dealer = "Fruit Dealer 2", Location = "Desert", CFrame = cf(896, 6.4, 4390), Sea = 1 },
+    { Dealer = "Fruit Dealer 3", Location = "Marine HQ", CFrame = cf(-5035, 28.5, 4324), Sea = 1 },
+    { Dealer = "Fruit Dealer 4", Location = "Snow Island", CFrame = cf(1386, 87, -1298), Sea = 1 },
+    { Dealer = "Fruit Dealer 5", Location = "Green Zone", CFrame = cf(-428, 73, 1836), Sea = 2 },
+    { Dealer = "Fruit Dealer 6", Location = "Kingdom of Rose", CFrame = cf(-2441, 73, -3218), Sea = 2 },
+    { Dealer = "Fruit Dealer 7", Location = "Snow Mountain", CFrame = cf(607, 401, -5370.5), Sea = 2 },
+    { Dealer = "Fruit Dealer 8", Location = "Port Town", CFrame = cf(-290, 43.8, 5580), Sea = 3 },
+    { Dealer = "Fruit Dealer 9", Location = "Amazon Island", CFrame = cf(5833, 51.5, -1103), Sea = 3 },
+    { Dealer = "Fruit Dealer 10", Location = "Haunted Castle", CFrame = cf(-9481, 142, 5566), Sea = 3 }
 }
 
 local function VisitFruitDealer()
@@ -10214,7 +10086,7 @@ local function VisitFruitDealer()
     if money < 100000 then return end
     for _, dealer in ipairs(FruitBuyingData) do
         if dealer.Sea == CurrentSea then
-            TweenTP(dealer.CFrame)
+            SmoothMoveTo(dealer.CFrame)
             wait(0.3)
             -- Find buy remote
             local buyRemote = ReplicatedStorage:FindFirstChild("BuyFruit") or ReplicatedStorage:FindFirstChild("BuyItem")
@@ -10335,7 +10207,7 @@ end
 local WeaponTypes = {
     ["Sword"] = { "Katana", "Cutlass", "Dual Katana", "Saber", "Shisui", "Rengoku", "Yama", "Tushita", "Dark Blade", "True Triple Katana", "Hallow Scythe", "Buddy Sword", "Cake Sword", "Coconut Sword", "Dark Dagger", "Shark Saw", "Soul Cane", "Canesword", "Pirate Captain Sword", "Amazon Sword", "Dragon Sword", "Sword of the Night", "Koko Sword", "Spike Sword", "Dual-Headed Blade", "Biscuit Hammer", "Electric Sword", "Frost Sword", "Twin Hooks", "Warden Longsword", "Swan Cutlass" },
     ["Gun"] = { "Slingshot", "Pistol", "Revolver", "Double Barrel", "Shotgun", "Musket", "Flintlock", "Reflex Sniper", "Acidum Rifle", "Bizarre Rifle", "Soul Guitar", "Serpent Bow", "Kabucha" },
-    ["Fighting Style"] = { "Combat", "Dark Step", "Electric", "Water Kung Fu", "Dragon Breath", "Superhuman", "Death Step", "Sky Walk", "Geppo", "Dragon Talon", "Electric Claw", "Sanguine Art", "Godhuman" }
+    ["Fighting Style"] = { "AttackTarget", "Dark Step", "Electric", "Water Kung Fu", "Dragon Breath", "Superhuman", "Death Step", "Sky Walk", "Geppo", "Dragon Talon", "Electric Claw", "Sanguine Art", "Godhuman" }
 }
 
 local function GetWeaponType(weaponName)
@@ -10351,18 +10223,18 @@ end
 
 local characterSafetyChecks = {
     function()
-        local char = getChar()
+        local char = GetCharacter()
         if not char then return false end
         return char:FindFirstChild("HumanoidRootPart") ~= nil
     end,
     function()
-        local char = getChar()
+        local char = GetCharacter()
         if not char then return false end
         local hum = char:FindFirstChildWhichIsA("Humanoid")
         return hum ~= nil and hum.Health > 0
     end,
     function()
-        local char = getChar()
+        local char = GetCharacter()
         if not char then return false end
         return char:FindFirstChildWhichIsA("Tool") ~= nil
     end
@@ -10390,12 +10262,12 @@ end
 
 local SeaTravelLocations = {
     ["Sea 1 → Sea 2"] = {
-        CFrame = CFrame.new(0, 50, 0),
+        CFrame = cf(0, 50, 0),
         Requirement = 500,
         Method = "Talk to NPC or use ship at the edge of the map."
     },
     ["Sea 2 → Sea 3"] = {
-        CFrame = CFrame.new(0, 50, 0),
+        CFrame = cf(0, 50, 0),
         Requirement = 1300,
         Method = "Talk to NPC or use ship at the edge of the map."
     }
@@ -10409,28 +10281,28 @@ SeaTravelSection:AddLabel("Sea 2 → Sea 3: Requires Level 1300+")
 SeaTravelSection:AddLabel("  Use the ship at the end of the map or talk to the NPC.")
 
 local ImportantNPCs = {
-    { Name = "Quest Giver 1", Location = "Jungle", CFrame = CFrame.new(-1270, 20, 420), Purpose = "Bandit/Monkey quests" },
-    { Name = "Quest Giver 2", Location = "Buggy Island", CFrame = CFrame.new(-1160, 5, 3840), Purpose = "Pirate quests" },
-    { Name = "Quest Giver 3", Location = "Desert", CFrame = CFrame.new(870, 7, 4360), Purpose = "Brute/Desert Bandit quests" },
-    { Name = "Quest Giver 4", Location = "Snow Island", CFrame = CFrame.new(1400, 87, -1280), Purpose = "Snow Bandit/Chief quests" },
-    { Name = "Quest Giver 5", Location = "Magma Village", CFrame = CFrame.new(-5430, 15, 8710), Purpose = "Magma Adventurer quests" },
-    { Name = "Quest Giver 6", Location = "Sky Island", CFrame = CFrame.new(-4860, 716, -2610), Purpose = "Sky quests" },
-    { Name = "Quest Giver 7", Location = "Kingdom of Rose", CFrame = CFrame.new(-2420, 73, -3200), Purpose = "Raider quests" },
-    { Name = "Quest Giver 8", Location = "Factory", CFrame = CFrame.new(250, 6, -20), Purpose = "Mercenary quests" },
-    { Name = "Quest Giver 9", Location = "Castle on Sea", CFrame = CFrame.new(-5170, 50, 7470), Purpose = "Marine quests" },
-    { Name = "Quest Giver 10", Location = "Ice Castle", CFrame = CFrame.new(6410, 18, -6710), Purpose = "Sky Pirate quests" },
-    { Name = "Quest Giver 11", Location = "Port Town", CFrame = CFrame.new(-320, 44, 5600), Purpose = "Millionaire/Billionaire quests" },
-    { Name = "Quest Giver 12", Location = "Hydra Island", CFrame = CFrame.new(5530, 10, -1940), Purpose = "Dragon Crew quests" },
-    { Name = "Quest Giver 13", Location = "Haunted Castle", CFrame = CFrame.new(-9470, 141, 5570), Purpose = "Skeleton/Zombie quests" },
-    { Name = "Quest Giver 14", Location = "Cake Island", CFrame = CFrame.new(-1940, 45, -2360), Purpose = "Bread/Cake quests" },
-    { Name = "Quest Giver 15", Location = "Sea of Treats", CFrame = CFrame.new(8530, 12, 2070), Purpose = "Sea Soldier quests" }
+    { Name = "Quest Giver 1", Location = "Jungle", CFrame = cf(-1270, 20, 420), Purpose = "Bandit/Monkey quests" },
+    { Name = "Quest Giver 2", Location = "Buggy Island", CFrame = cf(-1160, 5, 3840), Purpose = "Pirate quests" },
+    { Name = "Quest Giver 3", Location = "Desert", CFrame = cf(870, 7, 4360), Purpose = "Brute/Desert Bandit quests" },
+    { Name = "Quest Giver 4", Location = "Snow Island", CFrame = cf(1400, 87, -1280), Purpose = "Snow Bandit/Chief quests" },
+    { Name = "Quest Giver 5", Location = "Magma Village", CFrame = cf(-5430, 15, 8710), Purpose = "Magma Adventurer quests" },
+    { Name = "Quest Giver 6", Location = "Sky Island", CFrame = cf(-4860, 716, -2610), Purpose = "Sky quests" },
+    { Name = "Quest Giver 7", Location = "Kingdom of Rose", CFrame = cf(-2420, 73, -3200), Purpose = "Raider quests" },
+    { Name = "Quest Giver 8", Location = "Factory", CFrame = cf(250, 6, -20), Purpose = "Mercenary quests" },
+    { Name = "Quest Giver 9", Location = "Castle on Sea", CFrame = cf(-5170, 50, 7470), Purpose = "Marine quests" },
+    { Name = "Quest Giver 10", Location = "Ice Castle", CFrame = cf(6410, 18, -6710), Purpose = "Sky Pirate quests" },
+    { Name = "Quest Giver 11", Location = "Port Town", CFrame = cf(-320, 44, 5600), Purpose = "Millionaire/Billionaire quests" },
+    { Name = "Quest Giver 12", Location = "Hydra Island", CFrame = cf(5530, 10, -1940), Purpose = "Dragon Crew quests" },
+    { Name = "Quest Giver 13", Location = "Haunted Castle", CFrame = cf(-9470, 141, 5570), Purpose = "Skeleton/Zombie quests" },
+    { Name = "Quest Giver 14", Location = "Cake Island", CFrame = cf(-1940, 45, -2360), Purpose = "Bread/Cake quests" },
+    { Name = "Quest Giver 15", Location = "Sea of Treats", CFrame = cf(8530, 12, 2070), Purpose = "Sea Soldier quests" }
 }
 
 print(" ")
 print(" ")
-print("[UltimateHub] Script execution complete.")
-print("[UltimateHub] Ultimate Blox Fruits Hub v3.0 is now ready.")
-print("[UltimateHub] Toggle your UI and start dominating the seas!")
+print("[AbyssalCore] Script execution complete.")
+print("[AbyssalCore] AbyssalCore is now ready.")
+print("[AbyssalCore] Toggle your UI and start dominating the seas!")
 local SwordMasteryUnlocks = {
     ["Katana"] = { Moves = { ["100"] = "Slash Wave", ["250"] = "Spin Attack", ["400"] = "Sword Beam" }, MaxMastery = 600 },
     ["Cutlass"] = { Moves = { ["100"] = "Slash", ["250"] = "Heavy Slash", ["400"] = "Spin" }, MaxMastery = 600 },
@@ -10471,42 +10343,42 @@ local FruitMasteryUnlocks = {
 }
 
 local QuestNPCLocationsExpanded = {
-    ["Bandit"] = { NPC = "Quest Giver 1", Location = "Jungle", CFrame = CFrame.new(-1270, 20, 420) },
-    ["Monkey"] = { NPC = "Quest Giver 1", Location = "Jungle", CFrame = CFrame.new(-1270, 20, 420) },
-    ["Pirate"] = { NPC = "Quest Giver 2", Location = "Buggy Island", CFrame = CFrame.new(-1160, 5, 3840) },
-    ["Brute"] = { NPC = "Quest Giver 3", Location = "Desert", CFrame = CFrame.new(870, 7, 4360) },
-    ["Desert Bandit"] = { NPC = "Quest Giver 3", Location = "Desert", CFrame = CFrame.new(870, 7, 4360) },
-    ["Snow Bandit"] = { NPC = "Quest Giver 4", Location = "Snow Island", CFrame = CFrame.new(1400, 87, -1280) },
-    ["Chief"] = { NPC = "Quest Giver 4", Location = "Snow Island", CFrame = CFrame.new(1400, 87, -1280) },
-    ["Magma Adventurer"] = { NPC = "Quest Giver 5", Location = "Magma Village", CFrame = CFrame.new(-5430, 15, 8710) },
-    ["Fishman"] = { NPC = "Quest Giver 6", Location = "Underwater City", CFrame = CFrame.new(60800, 20, 1500) },
-    ["God's Guard"] = { NPC = "Quest Giver 7", Location = "Sky Island", CFrame = CFrame.new(-4860, 716, -2610) },
-    ["Sky Bandit"] = { NPC = "Quest Giver 7", Location = "Sky Island", CFrame = CFrame.new(-4860, 716, -2610) },
-    ["Dragon Warrior"] = { NPC = "Quest Giver 7", Location = "Sky Island", CFrame = CFrame.new(-4860, 716, -2610) },
-    ["Raider"] = { NPC = "Quest Giver 8", Location = "Kingdom of Rose", CFrame = CFrame.new(-2420, 73, -3200) },
-    ["Mercenary"] = { NPC = "Quest Giver 9", Location = "Factory", CFrame = CFrame.new(250, 6, -20) },
-    ["Swan Pirate"] = { NPC = "Quest Giver 10", Location = "Mansion", CFrame = CFrame.new(-260, 48, -10500) },
-    ["Marine"] = { NPC = "Quest Giver 11", Location = "Castle on Sea", CFrame = CFrame.new(-5170, 50, 7470) },
-    ["Sky Pirate"] = { NPC = "Quest Giver 12", Location = "Ice Castle", CFrame = CFrame.new(6410, 18, -6710) },
-    ["Prisoner"] = { NPC = "Quest Giver 13", Location = "Prison", CFrame = CFrame.new(5300, 0.5, 470) },
-    ["Colosseum Fighter"] = { NPC = "Quest Giver 14", Location = "Colosseum", CFrame = CFrame.new(-1570, 8, -2985) },
-    ["Magma Soldier"] = { NPC = "Quest Giver 15", Location = "Magma Village", CFrame = CFrame.new(-5450, 14, 8680) },
-    ["Underworld Guard"] = { NPC = "Quest Giver 16", Location = "Ship Island", CFrame = CFrame.new(900, 125, 33015) },
-    ["Cursed Warrior"] = { NPC = "Quest Giver 17", Location = "Cursed Island", CFrame = CFrame.new(900, 50, 34000) },
-    ["Pirate Millionaire"] = { NPC = "Quest Giver 18", Location = "Port Town", CFrame = CFrame.new(-320, 44, 5600) },
-    ["Pistol Billionaire"] = { NPC = "Quest Giver 18", Location = "Port Town", CFrame = CFrame.new(-320, 44, 5600) },
-    ["Dragon Crew"] = { NPC = "Quest Giver 19", Location = "Hydra Island", CFrame = CFrame.new(5530, 10, -1940) },
-    ["Dragon Crew Captain"] = { NPC = "Quest Giver 19", Location = "Hydra Island", CFrame = CFrame.new(5530, 10, -1940) },
-    ["Dragon Guard"] = { NPC = "Quest Giver 19", Location = "Hydra Island", CFrame = CFrame.new(5530, 10, -1940) },
-    ["Sea Soldier"] = { NPC = "Quest Giver 20", Location = "Sea of Treats", CFrame = CFrame.new(8530, 12, 2070) },
-    ["Skeleton"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = CFrame.new(-9470, 141, 5570) },
-    ["Living Zombie"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = CFrame.new(-9470, 141, 5570) },
-    ["Demon"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = CFrame.new(-9470, 141, 5570) },
-    ["Ghost"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = CFrame.new(-9470, 141, 5570) },
-    ["Bread"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = CFrame.new(-1940, 45, -2360) },
-    ["Bread Captain"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = CFrame.new(-1940, 45, -2360) },
-    ["Cake Warrior"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = CFrame.new(-1940, 45, -2360) },
-    ["Cake General"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = CFrame.new(-1940, 45, -2360) }
+    ["Bandit"] = { NPC = "Quest Giver 1", Location = "Jungle", CFrame = cf(-1270, 20, 420) },
+    ["Monkey"] = { NPC = "Quest Giver 1", Location = "Jungle", CFrame = cf(-1270, 20, 420) },
+    ["Pirate"] = { NPC = "Quest Giver 2", Location = "Buggy Island", CFrame = cf(-1160, 5, 3840) },
+    ["Brute"] = { NPC = "Quest Giver 3", Location = "Desert", CFrame = cf(870, 7, 4360) },
+    ["Desert Bandit"] = { NPC = "Quest Giver 3", Location = "Desert", CFrame = cf(870, 7, 4360) },
+    ["Snow Bandit"] = { NPC = "Quest Giver 4", Location = "Snow Island", CFrame = cf(1400, 87, -1280) },
+    ["Chief"] = { NPC = "Quest Giver 4", Location = "Snow Island", CFrame = cf(1400, 87, -1280) },
+    ["Magma Adventurer"] = { NPC = "Quest Giver 5", Location = "Magma Village", CFrame = cf(-5430, 15, 8710) },
+    ["Fishman"] = { NPC = "Quest Giver 6", Location = "Underwater City", CFrame = cf(60800, 20, 1500) },
+    ["God's Guard"] = { NPC = "Quest Giver 7", Location = "Sky Island", CFrame = cf(-4860, 716, -2610) },
+    ["Sky Bandit"] = { NPC = "Quest Giver 7", Location = "Sky Island", CFrame = cf(-4860, 716, -2610) },
+    ["Dragon Warrior"] = { NPC = "Quest Giver 7", Location = "Sky Island", CFrame = cf(-4860, 716, -2610) },
+    ["Raider"] = { NPC = "Quest Giver 8", Location = "Kingdom of Rose", CFrame = cf(-2420, 73, -3200) },
+    ["Mercenary"] = { NPC = "Quest Giver 9", Location = "Factory", CFrame = cf(250, 6, -20) },
+    ["Swan Pirate"] = { NPC = "Quest Giver 10", Location = "Mansion", CFrame = cf(-260, 48, -10500) },
+    ["Marine"] = { NPC = "Quest Giver 11", Location = "Castle on Sea", CFrame = cf(-5170, 50, 7470) },
+    ["Sky Pirate"] = { NPC = "Quest Giver 12", Location = "Ice Castle", CFrame = cf(6410, 18, -6710) },
+    ["Prisoner"] = { NPC = "Quest Giver 13", Location = "Prison", CFrame = cf(5300, 0.5, 470) },
+    ["Colosseum Fighter"] = { NPC = "Quest Giver 14", Location = "Colosseum", CFrame = cf(-1570, 8, -2985) },
+    ["Magma Soldier"] = { NPC = "Quest Giver 15", Location = "Magma Village", CFrame = cf(-5450, 14, 8680) },
+    ["Underworld Guard"] = { NPC = "Quest Giver 16", Location = "Ship Island", CFrame = cf(900, 125, 33015) },
+    ["Cursed Warrior"] = { NPC = "Quest Giver 17", Location = "Cursed Island", CFrame = cf(900, 50, 34000) },
+    ["Pirate Millionaire"] = { NPC = "Quest Giver 18", Location = "Port Town", CFrame = cf(-320, 44, 5600) },
+    ["Pistol Billionaire"] = { NPC = "Quest Giver 18", Location = "Port Town", CFrame = cf(-320, 44, 5600) },
+    ["Dragon Crew"] = { NPC = "Quest Giver 19", Location = "Hydra Island", CFrame = cf(5530, 10, -1940) },
+    ["Dragon Crew Captain"] = { NPC = "Quest Giver 19", Location = "Hydra Island", CFrame = cf(5530, 10, -1940) },
+    ["Dragon Guard"] = { NPC = "Quest Giver 19", Location = "Hydra Island", CFrame = cf(5530, 10, -1940) },
+    ["Sea Soldier"] = { NPC = "Quest Giver 20", Location = "Sea of Treats", CFrame = cf(8530, 12, 2070) },
+    ["Skeleton"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = cf(-9470, 141, 5570) },
+    ["Living Zombie"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = cf(-9470, 141, 5570) },
+    ["Demon"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = cf(-9470, 141, 5570) },
+    ["Ghost"] = { NPC = "Quest Giver 21", Location = "Haunted Castle", CFrame = cf(-9470, 141, 5570) },
+    ["Bread"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = cf(-1940, 45, -2360) },
+    ["Bread Captain"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = cf(-1940, 45, -2360) },
+    ["Cake Warrior"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = cf(-1940, 45, -2360) },
+    ["Cake General"] = { NPC = "Quest Giver 22", Location = "Cake Island", CFrame = cf(-1940, 45, -2360) }
 }
 
 local function FindQuestNPC(qName)
@@ -10569,7 +10441,7 @@ local SettingsReference = {
     "Auto Config Save: Automatically saves config every 5 minutes.",
     "Notification Type: Choose from info, success, warning, or error.",
     "Farm Speed: Adjust from Slow to Insane for different farm rates.",
-    "Click Profile: Normal, Fast, Steady, or Slow click patterns.",
+    "SimulateAttackClick Profile: Normal, Fast, Steady, or Slow click patterns.",
     "Farm Method: Quest, Location, Nearest, or Passive methods.",
     "Enemy Priority: Low HP, High Level, or Closest targeting.",
     "Boss Priority: Level, Drop Value, Lowest HP, or Nearest.",
@@ -10667,44 +10539,38 @@ for name, data in pairs(GunStatsDisplay) do
     GunStatsSection:AddLabel(name .. ": " .. data.Damage .. " dmg, " .. data.Range .. " range, $" .. data.Price)
 end
 
-local totalLines = 11564 + 100  -- approximate
-if totalLines >= 12000 then
-    print("[UltimateHub] √ Target of 12,000+ lines ACHIEVED!")
-else
-    print("[UltimateHub] Continuing to expand... Current: ~" .. totalLines .. " lines")
-end
 
 local BossSpawnArray = {
-    { Name = "Saber Expert", CFrame = CFrame.new(-1200, 5, 3800), Sea = 1, Level = 200, HP = 5000 },
-    { Name = "The Saw", CFrame = CFrame.new(900, 6, 4390), Sea = 1, Level = 300, HP = 8000 },
-    { Name = "Greybeard", CFrame = CFrame.new(1400, 87, -1280), Sea = 1, Level = 400, HP = 12000 },
-    { Name = "Order", CFrame = CFrame.new(-5150, 50, 7450), Sea = 2, Level = 800, HP = 25000 },
-    { Name = "Don Swan", CFrame = CFrame.new(-260, 48, -10500), Sea = 2, Level = 900, HP = 35000 },
-    { Name = "Diamond", CFrame = CFrame.new(240, 6, -28), Sea = 2, Level = 750, HP = 20000 },
-    { Name = "Jeremy", CFrame = CFrame.new(890, 125, 33000), Sea = 2, Level = 850, HP = 28000 },
-    { Name = "Fajita", CFrame = CFrame.new(-2400, 75, -3200), Sea = 2, Level = 700, HP = 18000 },
-    { Name = "Cursed Captain", CFrame = CFrame.new(910, 127, 33010), Sea = 2, Level = 1000, HP = 45000 },
-    { Name = "Beautiful Pirate", CFrame = CFrame.new(-2420, 73, -3210), Sea = 2, Level = 720, HP = 19000 },
-    { Name = "Dragon Crew Warrior", CFrame = CFrame.new(5530, 10, -1940), Sea = 3, Level = 1500, HP = 100000 },
-    { Name = "Dragon Crew Archer", CFrame = CFrame.new(5550, 12, -1908), Sea = 3, Level = 1550, HP = 110000 },
-    { Name = "Chief Petty Officer", CFrame = CFrame.new(-5180, 48, 7430), Sea = 2, Level = 780, HP = 22000 },
-    { Name = "Swan Pirate", CFrame = CFrame.new(-250, 45, -10480), Sea = 2, Level = 740, HP = 19000 },
-    { Name = "Magma Pirate", CFrame = CFrame.new(-5450, 14, 8680), Sea = 2, Level = 1100, HP = 55000 },
-    { Name = "Fishman Raid", CFrame = CFrame.new(60800, 20, 1500), Sea = 3, Level = 1300, HP = 70000 },
-    { Name = "Rip Indra", CFrame = CFrame.new(5200, 50, -1800), Sea = 3, Level = 1600, HP = 150000 },
-    { Name = "Cake Queen", CFrame = CFrame.new(-1950, 50, -2400), Sea = 3, Level = 1800, HP = 200000 },
-    { Name = "Dough King", CFrame = CFrame.new(8500, 50, 2000), Sea = 3, Level = 2200, HP = 500000 },
-    { Name = "ELF", CFrame = CFrame.new(4500, 50, -1200), Sea = 3, Level = 2000, HP = 300000 },
-    { Name = "Ghost Ship Captain", CFrame = CFrame.new(900, 125, 33005), Sea = 2, Level = 1050, HP = 50000 },
-    { Name = "Sea Beast", CFrame = CFrame.new(8600, 20, 2100), Sea = 3, Level = 1500, HP = 120000 },
-    { Name = "Shark Pirate", CFrame = CFrame.new(5800, 10, -1600), Sea = 3, Level = 1400, HP = 85000 }
+    { Name = "Saber Expert", CFrame = cf(-1200, 5, 3800), Sea = 1, Level = 200, HP = 5000 },
+    { Name = "The Saw", CFrame = cf(900, 6, 4390), Sea = 1, Level = 300, HP = 8000 },
+    { Name = "Greybeard", CFrame = cf(1400, 87, -1280), Sea = 1, Level = 400, HP = 12000 },
+    { Name = "Order", CFrame = cf(-5150, 50, 7450), Sea = 2, Level = 800, HP = 25000 },
+    { Name = "Don Swan", CFrame = cf(-260, 48, -10500), Sea = 2, Level = 900, HP = 35000 },
+    { Name = "Diamond", CFrame = cf(240, 6, -28), Sea = 2, Level = 750, HP = 20000 },
+    { Name = "Jeremy", CFrame = cf(890, 125, 33000), Sea = 2, Level = 850, HP = 28000 },
+    { Name = "Fajita", CFrame = cf(-2400, 75, -3200), Sea = 2, Level = 700, HP = 18000 },
+    { Name = "Cursed Captain", CFrame = cf(910, 127, 33010), Sea = 2, Level = 1000, HP = 45000 },
+    { Name = "Beautiful Pirate", CFrame = cf(-2420, 73, -3210), Sea = 2, Level = 720, HP = 19000 },
+    { Name = "Dragon Crew Warrior", CFrame = cf(5530, 10, -1940), Sea = 3, Level = 1500, HP = 100000 },
+    { Name = "Dragon Crew Archer", CFrame = cf(5550, 12, -1908), Sea = 3, Level = 1550, HP = 110000 },
+    { Name = "Chief Petty Officer", CFrame = cf(-5180, 48, 7430), Sea = 2, Level = 780, HP = 22000 },
+    { Name = "Swan Pirate", CFrame = cf(-250, 45, -10480), Sea = 2, Level = 740, HP = 19000 },
+    { Name = "Magma Pirate", CFrame = cf(-5450, 14, 8680), Sea = 2, Level = 1100, HP = 55000 },
+    { Name = "Fishman Raid", CFrame = cf(60800, 20, 1500), Sea = 3, Level = 1300, HP = 70000 },
+    { Name = "Rip Indra", CFrame = cf(5200, 50, -1800), Sea = 3, Level = 1600, HP = 150000 },
+    { Name = "Cake Queen", CFrame = cf(-1950, 50, -2400), Sea = 3, Level = 1800, HP = 200000 },
+    { Name = "Dough King", CFrame = cf(8500, 50, 2000), Sea = 3, Level = 2200, HP = 500000 },
+    { Name = "ELF", CFrame = cf(4500, 50, -1200), Sea = 3, Level = 2000, HP = 300000 },
+    { Name = "Ghost Ship Captain", CFrame = cf(900, 125, 33005), Sea = 2, Level = 1050, HP = 50000 },
+    { Name = "Sea Beast", CFrame = cf(8600, 20, 2100), Sea = 3, Level = 1500, HP = 120000 },
+    { Name = "Shark Pirate", CFrame = cf(5800, 10, -1600), Sea = 3, Level = 1400, HP = 85000 }
 }
 
 local BossLocationsSection = TeleportTab:AddSection("Boss Teleports")
 for _, boss in ipairs(BossSpawnArray) do
     if boss.Sea == CurrentSea then
         BossLocationsSection:AddButton({ text = boss.Name .. " (Lv." .. boss.Level .. ")", callback = function()
-            TweenTP(boss.CFrame)
+            SmoothMoveTo(boss.CFrame)
         end})
     end
 end
@@ -10727,9 +10593,6 @@ for _, tip in ipairs(PVPTips) do
     PVPTipsSection:AddLabel("★ " .. tip)
 end
 
-print("[UltimateHub] Final line reached. Script complete.")
-print("[UltimateHub] All 320+ modules loaded. 14 UI tabs ready.")
-print("[UltimateHub] Ultimate Blox Fruits Hub v3.0 — End of script.")
 
 local BossDropChancesDetailed = {
     ["Saber Expert"] = { "Saber (12.5%)", "Fragments x50 (100%)", "Beli $10,000 (100%)" },
@@ -10827,39 +10690,11 @@ for haki, desc in pairs(HakiGuide) do
     HakiSection:AddLabel(haki .. ": " .. desc)
 end
 
-print("[UltimateHub] " .. "=":rep(55))
-print("[UltimateHub] ULTIMATE BLOX FRUITS HUB v3.0")
-print("[UltimateHub] " .. "=":rep(55))
-print("[UltimateHub] Final Stats:")
-print("[UltimateHub]   • 326 modules")
-print("[UltimateHub]   • 14 UI tabs")
-print("[UltimateHub]   • 7 anti-detection layers")
-print("[UltimateHub]   • 8 themes")
-print("[UltimateHub]   • 170+ teleport locations")
-print("[UltimateHub]   • 10 fruit dealers")
-print("[UltimateHub]   • 19 sword dealers")
-print("[UltimateHub]   • 22+ bosses")
-print("[UltimateHub]   • 37+ enemy types")
-print("[UltimateHub]   • 14 fighting styles")
-print("[UltimateHub]   • 30+ fruits")
-print("[UltimateHub]   • 31+ swords")
-print("[UltimateHub]   • 13+ guns")
-print("[UltimateHub]   • 14+ accessories")
-print("[UltimateHub]   • Full config save/load")
-print("[UltimateHub]   • Session statistics")
-print("[UltimateHub]   • Error recovery")
-print("[UltimateHub]   • Keybind system")
-print("[UltimateHub]   • Notification system")
-print("[UltimateHub]   • Friend system")
-print("[UltimateHub] " .. "=":rep(55))
-print("[UltimateHub] STATUS: ALL SYSTEMS OPERATIONAL")
-print("[UltimateHub] " .. "=":rep(55))
-print("[UltimateHub] This is the end of the script. Thank you!")
 local UIControls = {
     "Right Ctrl or Insert — Toggle GUI visibility",
     "Scroll wheel — Scroll through sections",
-    "Click toggles to enable/disable features",
-    "Click buttons to execute actions",
+    "SimulateAttackClick toggles to enable/disable features",
+    "SimulateAttackClick buttons to execute actions",
     "Use dropdowns to select options",
     "Use text boxes to input names/values",
     "Sliders adjust numeric values",
@@ -10891,81 +10726,64 @@ end
 
 -- Enemy spawn position DB (enriched from quest data, 54 entries with CFrames)
 local EnemySpawnDB = {
-	["Forest Pirate"] = { Level = 1825, CF = CFrame.new(-13345.5, 332.2, -7630.8) },
-	["Cake Guard"] = { Level = 2225, CF = CFrame.new(-1531.4, 35.2, -12132.4) },
-	["Sweet Thief"] = { Level = 2350, CF = CFrame.new(-140.3, 25.6, -12652.3) },
-	["Captain Elephant"] = { Level = 1875, CF = CFrame.new(-13365.5, 321.2, -8484.9) },
-	["Island Boy"] = { Level = 2475, CF = CFrame.new(-16991.7, 12.8, -186.2) },
-	["Sun-kissed Warrior"] = { Level = 2500, CF = CFrame.new(-16938.5, 12.8, -544.5) },
-	["Serpent Hunter"] = { Level = 2550, CF = CFrame.new(-16685.3, 12.9, 1565.8) },
-	["Skull Slayer"] = { Level = 2575, CF = CFrame.new(-16717.4, 12.9, 1315.2) },
-	["Pirate Millionaire"] = { Level = 1500, CF = CFrame.new(-435.5, 189.5, 5551.0) },
-	["Pistol Billionaire"] = { Level = 1525, CF = CFrame.new(-236.5, 217.0, 6006.0) },
-	["Dragon Crew Warrior"] = { Level = 1575, CF = CFrame.new(6302.0, 104.5, -1082.5) },
-	["Dragon Crew Archer"] = { Level = 1600, CF = CFrame.new(6831.0, 441.5, 446.5) },
-	["Female Islander"] = { Level = 1625, CF = CFrame.new(5792.5, 848.0, 1084.0) },
-	["Giant Islander"] = { Level = 1650, CF = CFrame.new(5010.0, 664.0, -41.0) },
-	["Marine Commodore"] = { Level = 1700, CF = CFrame.new(2198.0, 128.5, -7109.0) },
-	["Marine Rear Admiral"] = { Level = 1725, CF = CFrame.new(3294.0, 385.0, -7048.5) },
-	["Fishman Raider"] = { Level = 1775, CF = CFrame.new(-10553.0, 521.0, -8177.0) },
-	["Fishman Captain"] = { Level = 1800, CF = CFrame.new(-10789.0, 427.0, -9131.0) },
-	["Mythological Pirate"] = { Level = 1850, CF = CFrame.new(-13508.5, 582.0, -6985.0) },
-	["Jungle Pirate"] = { Level = 1900, CF = CFrame.new(-12267.0, 459.5, -10277.0) },
-	["Musketeer Pirate"] = { Level = 1925, CF = CFrame.new(-13291.5, 520.0, -9904.5) },
-	["Reborn Skeleton"] = { Level = 1975, CF = CFrame.new(-8762.0, 183.0, 6168.0) },
-	["Living Zombie"] = { Level = 2000, CF = CFrame.new(-10104.0, 238.5, 6180.0) },
-	["Demonic Soul"] = { Level = 2025, CF = CFrame.new(-9712.0, 204.5, 6193.0) },
-	["Posessed Mummy"] = { Level = 2050, CF = CFrame.new(-9553.0, 65.6, 6041.0) },
-	["Tiki Outlaw"] = { Level = 2460, CF = CFrame.new(-16897.2, 15.5, -25.2) },
-	["Armored Guardian"] = { Level = 2475, CF = CFrame.new(-16991.7, 12.8, -186.2) },
-	["Isle Champion"] = { Level = 2525, CF = CFrame.new(-16658.6, 12.5, 1449.5) },
-	["Marine Lieutenant"] = { Level = 875, CF = CFrame.new(-2489.0, 84.5, -3152.0) },
-	["Marine Captain"] = { Level = 900, CF = CFrame.new(-2335.0, 79.5, -3246.0) },
-	["Zombie"] = { Level = 950, CF = CFrame.new(-5536.0, 101.0, -835.5) },
-	["Vampire"] = { Level = 975, CF = CFrame.new(-5806.0, 16.5, -1164.0) },
-	["Snow Trooper"] = { Level = 1000, CF = CFrame.new(535.0, 432.5, -5485.0) },
-	["Winter Warrior"] = { Level = 1050, CF = CFrame.new(1234.0, 456.5, -5174.0) },
-	["Lab Subordinate"] = { Level = 1100, CF = CFrame.new(-5720.5, 63.0, -4784.5) },
-	["Horned Warrior"] = { Level = 1125, CF = CFrame.new(-6292.5, 91.0, -5502.5) },
-	["Magma Ninja"] = { Level = 1175, CF = CFrame.new(-5462.0, 130.0, -5836.0) },
-	["Lava Pirate"] = { Level = 1200, CF = CFrame.new(-5251.0, 55.0, -4774.0) },
-	["Ship Deckhand"] = { Level = 1250, CF = CFrame.new(921.0, 126.0, 33088.0) },
-	["Ship Engineer"] = { Level = 1275, CF = CFrame.new(886.0, 40.0, 32801.0) },
-	["Ship Steward"] = { Level = 1300, CF = CFrame.new(944.0, 129.5, 33444.0) },
-	["Ship Officer"] = { Level = 1325, CF = CFrame.new(955.0, 181.0, 33332.0) },
-	["Arctic Warrior"] = { Level = 1350, CF = CFrame.new(5935.0, 77.0, -6472.5) },
-	["Snow Lurker"] = { Level = 1375, CF = CFrame.new(5628.0, 57.5, -6618.0) },
-	["Sea Soldier"] = { Level = 1425, CF = CFrame.new(-3185.0, 58.5, -9663.5) },
-	["Water Fighter"] = { Level = 1450, CF = CFrame.new(-3263.0, 298.5, -10552.5) },
-	["Swan Pirate"] = { Level = 775, CF = CFrame.new(1065.0, 137.5, 1324.0) },
-	["Factory Staff"] = { Level = 800, CF = CFrame.new(533.0, 128.0, 356.0) },
-	["Raider"] = { Level = 700, CF = CFrame.new(69.0, 93.5, 2430.0) },
-	["Mercenary"] = { Level = 725, CF = CFrame.new(-865.0, 122.0, 1453.0) },
-	["Galley Pirate"] = { Level = 625, CF = CFrame.new(5557.0, 152.0, 3998.5) },
-	["Galley Captain"] = { Level = 650, CF = CFrame.new(5677.5, 92.0, 4966.0) },
-	["Forest Pirate 2"] = { Level = 1875, CF = CFrame.new(-13365.5, 321.2, -8484.9) },
+	["Forest Pirate"] = { Level = 1825, CF = cf(-13345.5, 332.2, -7630.8) },
+	["Cake Guard"] = { Level = 2225, CF = cf(-1531.4, 35.2, -12132.4) },
+	["Sweet Thief"] = { Level = 2350, CF = cf(-140.3, 25.6, -12652.3) },
+	["Captain Elephant"] = { Level = 1875, CF = cf(-13365.5, 321.2, -8484.9) },
+	["Island Boy"] = { Level = 2475, CF = cf(-16991.7, 12.8, -186.2) },
+	["Sun-kissed Warrior"] = { Level = 2500, CF = cf(-16938.5, 12.8, -544.5) },
+	["Serpent Hunter"] = { Level = 2550, CF = cf(-16685.3, 12.9, 1565.8) },
+	["Skull Slayer"] = { Level = 2575, CF = cf(-16717.4, 12.9, 1315.2) },
+	["Pirate Millionaire"] = { Level = 1500, CF = cf(-435.5, 189.5, 5551.0) },
+	["Pistol Billionaire"] = { Level = 1525, CF = cf(-236.5, 217.0, 6006.0) },
+	["Dragon Crew Warrior"] = { Level = 1575, CF = cf(6302.0, 104.5, -1082.5) },
+	["Dragon Crew Archer"] = { Level = 1600, CF = cf(6831.0, 441.5, 446.5) },
+	["Female Islander"] = { Level = 1625, CF = cf(5792.5, 848.0, 1084.0) },
+	["Giant Islander"] = { Level = 1650, CF = cf(5010.0, 664.0, -41.0) },
+	["Marine Commodore"] = { Level = 1700, CF = cf(2198.0, 128.5, -7109.0) },
+	["Marine Rear Admiral"] = { Level = 1725, CF = cf(3294.0, 385.0, -7048.5) },
+	["Fishman Raider"] = { Level = 1775, CF = cf(-10553.0, 521.0, -8177.0) },
+	["Fishman Captain"] = { Level = 1800, CF = cf(-10789.0, 427.0, -9131.0) },
+	["Mythological Pirate"] = { Level = 1850, CF = cf(-13508.5, 582.0, -6985.0) },
+	["Jungle Pirate"] = { Level = 1900, CF = cf(-12267.0, 459.5, -10277.0) },
+	["Musketeer Pirate"] = { Level = 1925, CF = cf(-13291.5, 520.0, -9904.5) },
+	["Reborn Skeleton"] = { Level = 1975, CF = cf(-8762.0, 183.0, 6168.0) },
+	["Living Zombie"] = { Level = 2000, CF = cf(-10104.0, 238.5, 6180.0) },
+	["Demonic Soul"] = { Level = 2025, CF = cf(-9712.0, 204.5, 6193.0) },
+	["Posessed Mummy"] = { Level = 2050, CF = cf(-9553.0, 65.6, 6041.0) },
+	["Tiki Outlaw"] = { Level = 2460, CF = cf(-16897.2, 15.5, -25.2) },
+	["Armored Guardian"] = { Level = 2475, CF = cf(-16991.7, 12.8, -186.2) },
+	["Isle Champion"] = { Level = 2525, CF = cf(-16658.6, 12.5, 1449.5) },
+	["Marine Lieutenant"] = { Level = 875, CF = cf(-2489.0, 84.5, -3152.0) },
+	["Marine Captain"] = { Level = 900, CF = cf(-2335.0, 79.5, -3246.0) },
+	["Zombie"] = { Level = 950, CF = cf(-5536.0, 101.0, -835.5) },
+	["Vampire"] = { Level = 975, CF = cf(-5806.0, 16.5, -1164.0) },
+	["Snow Trooper"] = { Level = 1000, CF = cf(535.0, 432.5, -5485.0) },
+	["Winter Warrior"] = { Level = 1050, CF = cf(1234.0, 456.5, -5174.0) },
+	["Lab Subordinate"] = { Level = 1100, CF = cf(-5720.5, 63.0, -4784.5) },
+	["Horned Warrior"] = { Level = 1125, CF = cf(-6292.5, 91.0, -5502.5) },
+	["Magma Ninja"] = { Level = 1175, CF = cf(-5462.0, 130.0, -5836.0) },
+	["Lava Pirate"] = { Level = 1200, CF = cf(-5251.0, 55.0, -4774.0) },
+	["Ship Deckhand"] = { Level = 1250, CF = cf(921.0, 126.0, 33088.0) },
+	["Ship Engineer"] = { Level = 1275, CF = cf(886.0, 40.0, 32801.0) },
+	["Ship Steward"] = { Level = 1300, CF = cf(944.0, 129.5, 33444.0) },
+	["Ship Officer"] = { Level = 1325, CF = cf(955.0, 181.0, 33332.0) },
+	["Arctic Warrior"] = { Level = 1350, CF = cf(5935.0, 77.0, -6472.5) },
+	["Snow Lurker"] = { Level = 1375, CF = cf(5628.0, 57.5, -6618.0) },
+	["Sea Soldier"] = { Level = 1425, CF = cf(-3185.0, 58.5, -9663.5) },
+	["Water Fighter"] = { Level = 1450, CF = cf(-3263.0, 298.5, -10552.5) },
+	["Swan Pirate"] = { Level = 775, CF = cf(1065.0, 137.5, 1324.0) },
+	["Factory Staff"] = { Level = 800, CF = cf(533.0, 128.0, 356.0) },
+	["Raider"] = { Level = 700, CF = cf(69.0, 93.5, 2430.0) },
+	["Mercenary"] = { Level = 725, CF = cf(-865.0, 122.0, 1453.0) },
+	["Galley Pirate"] = { Level = 625, CF = cf(5557.0, 152.0, 3998.5) },
+	["Galley Captain"] = { Level = 650, CF = cf(5677.5, 92.0, 4966.0) },
+	["Forest Pirate 2"] = { Level = 1875, CF = cf(-13365.5, 321.2, -8484.9) },
 }
 
 local function GetSpawnCFrame(mobName)
 	local d = EnemySpawnDB[mobName]
 	return d and d.CF
 end
-
-local VersionInfo = {
-    ScriptName = "Ultimate Blox Fruits Hub",
-    Version = "3.0",
-    Edition = "Ultimate Edition",
-    ReleaseDate = "2025",
-    Author = "Ultimate Hub Team",
-    Library = "Versus Airlines UI v2",
-    Status = "Complete",
-    TotalModules = 329
-}
-
-for k, v in pairs(VersionInfo) do
-    print("[UltimateHub] " .. k .. ": " .. tostring(v))
-end
-print("[UltimateHub] Sanity check passed. All systems nominal.")
-print("[UltimateHub] Ultimate Blox Fruits Hub v3.0 — 12,000+ lines achieved!")
-print("[UltimateHub] Script fully complete. Ready for use.")
+print("[AbyssalCore] Script fully complete. Ready for use.")
 
