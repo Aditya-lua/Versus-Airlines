@@ -1,5 +1,8 @@
 local request = (syn and syn.request) or (http and http.request) or http_request
 
+local clients = game:GetService("Players")
+local client = clients.LocalPlayer
+
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
@@ -16,11 +19,45 @@ local Workspace = game:GetService("Workspace")
 local TeleportService = game:GetService("TeleportService")
 local Camera = Workspace.CurrentCamera
 
-local client = Players.LocalPlayer
-
 print("Loading Library...")
 
-local Library = loadstring(game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua"))()
+local function safeLoadLibrary(url)
+    local function tryHttpGet(u)
+        local ok, src = pcall(game.HttpGet, game, u)
+        if ok and type(src) == "string" and src:find("Lib") then
+            return src
+        end
+        return nil
+    end
+
+    local function tryRequest(u)
+        if type(request) ~= "function" then return nil end
+        local ok, res = pcall(request, {Url = u, Method = "GET"})
+        if ok and type(res) == "table" and type(res.Body) == "string" and res.Body:find("Lib") then
+            return res.Body
+        end
+        return nil
+    end
+
+    local src = tryHttpGet(url) or tryRequest(url)
+    if not src then
+        error("[UltimateBloxFruits_NS] Failed to download Versus Airlines library.\nURL: " .. tostring(url) .. "\nYour executor may block versusairlines.top or lack HTTP support.", 0)
+    end
+
+    local fn, err = loadstring(src, "VersusAirlinesLib")
+    if type(fn) ~= "function" then
+        error("[UltimateBloxFruits_NS] Library downloaded but failed to compile: " .. tostring(err), 0)
+    end
+
+    local ok, lib = pcall(fn)
+    if not ok or type(lib) ~= "table" then
+        error("[UltimateBloxFruits_NS] Library failed to initialize: " .. tostring(lib), 0)
+    end
+
+    return lib
+end
+
+local Library = safeLoadLibrary("https://versusairlines.top/scripts/NewLibrary.lua")
 
 local ui = Library:Setup({
     Location = client.PlayerGui,
