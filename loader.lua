@@ -55,6 +55,7 @@ local function registerModuleFromFile(path)
 end
 
 registerModuleFromFile("src/modules/mod_autofarm.lua")
+registerModuleFromFile("src/modules/mod_bring.lua")
 
 -- 4. Mount the section tree.
 local Sections = loadFromSrc("ui.sections")

@@ -44,6 +44,7 @@ local Movement   = require(script.Parent.game.movement)
 local Quest      = require(script.Parent.game.quest)
 local Mob        = require(script.Parent.game.mob)
 local Combat     = require(script.Parent.game.combat)
+local Bring      = require(script.Parent.game.bring)
 
 local Kernel = {}
 
@@ -96,6 +97,7 @@ function Kernel.boot(Library)
     local quest    = Quest.new(data, bloxFruits)
     local mob      = Mob.new(services)
     local combat   = Combat.new(services, stealth)
+    local bring    = Bring.new(services, mob)
 
     -- 11. Publish to _G.VersusKernel.
     local graph = {
@@ -113,6 +115,7 @@ function Kernel.boot(Library)
         quest    = quest,
         mob      = mob,
         combat   = combat,
+        bring    = bring,
         _library = Library,
     }
     _G.VersusKernel = graph
