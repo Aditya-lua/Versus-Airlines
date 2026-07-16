@@ -18,7 +18,7 @@
         8. Load the data files (17 tables)
         9. Emit "started" with version
 
-    Version:  1.1-slice11
+    Version:  1.2-slice12
     License:  see docs/LICENSE (TBD)
     Entry:    <host>/loader.lua
     Internal: see docs/STYLE.md

@@ -53,10 +53,12 @@ local SeaEvent   = require(script.Parent.game.sea_event)
 local Raid       = require(script.Parent.game.raid)
 local V4Trial    = require(script.Parent.game.v4_trial)
 local Esp        = require(script.Parent.game.esp)
+local Teleport   = require(script.Parent.game.teleport)
+local Party      = require(script.Parent.game.party)
 
 local Kernel = {}
 
-local KERNEL_VERSION = "1.1-slice11"
+local KERNEL_VERSION = "1.2-slice12"
 
 function Kernel.boot(Library)
     -- 1. Connection tracker.
@@ -115,6 +117,8 @@ function Kernel.boot(Library)
     local raid     = Raid.new(services, data, stealth)
     local v4       = V4Trial.new(data)
     local esp      = Esp.new(services, compat)
+    local teleport = Teleport.new(services, movement, data)
+    local party    = Party.new(services, teleport)
 
     -- 11. Publish to _G.VersusKernel.
     local graph = {
@@ -139,6 +143,8 @@ function Kernel.boot(Library)
         raid     = raid,
         v4       = v4,
         esp      = esp,
+        teleport = teleport,
+        party    = party,
         _library = Library,
     }
     _G.VersusKernel = graph
