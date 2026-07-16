@@ -140,10 +140,20 @@ function Sections.build(_Library, _kernel)
 
     -- Farming
     toggle("Auto Stat",    Flags.AutoStat,    false)
-    dropdown("Stat Priority", StatPriorities, StatPriorities[1])
+    ui:CreateSection(SECTION_FARMING):createDropdown({
+        Name     = "Stat Priority",
+        Flag     = StatPriorities[1] or "Melee",
+        flagName = "StatPriority",
+        List     = StatPriorities,
+    })
     toggle("Auto Enhance", Flags.AutoEnhance, false)
     toggle("Auto Mastery", Flags.AutoMastery, false)
-    dropdown("Mastery Weapon",  MasteryWeapons, MasteryWeapons[1])
+    ui:CreateSection(SECTION_FARMING):createDropdown({
+        Name     = "Mastery Weapon",
+        Flag     = MasteryWeapons[1] or "Melee",
+        flagName = "MasteryWeapon",
+        List     = MasteryWeapons,
+    })
     slider("Farm Radius", 50, 500, 150, SliderFlags.FarmRadius)
 
     -- Fruits

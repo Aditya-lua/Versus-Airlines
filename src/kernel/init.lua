@@ -55,10 +55,13 @@ local V4Trial    = require(script.Parent.game.v4_trial)
 local Esp        = require(script.Parent.game.esp)
 local Teleport   = require(script.Parent.game.teleport)
 local Party      = require(script.Parent.game.party)
+local Stat       = require(script.Parent.game.stat)
+local Enhance    = require(script.Parent.game.enhance)
+local Mastery    = require(script.Parent.game.mastery)
 
 local Kernel = {}
 
-local KERNEL_VERSION = "1.2-slice12"
+local KERNEL_VERSION = "1.3-slice13"
 
 function Kernel.boot(Library)
     -- 1. Connection tracker.
@@ -119,6 +122,9 @@ function Kernel.boot(Library)
     local esp      = Esp.new(services, compat)
     local teleport = Teleport.new(services, movement, data)
     local party    = Party.new(services, teleport)
+    local stat     = Stat.new(services, data, stealth)
+    local enhance  = Enhance.new(services, data, stealth)
+    local mastery  = Mastery.new(services, data, combat)
 
     -- 11. Publish to _G.VersusKernel.
     local graph = {
@@ -145,6 +151,9 @@ function Kernel.boot(Library)
         esp      = esp,
         teleport = teleport,
         party    = party,
+        stat     = stat,
+        enhance  = enhance,
+        mastery  = mastery,
         _library = Library,
     }
     _G.VersusKernel = graph
