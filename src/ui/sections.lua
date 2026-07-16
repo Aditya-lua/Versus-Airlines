@@ -160,7 +160,12 @@ function Sections.build(_Library, _kernel)
     -- Events
     toggle("Sea Event Farm", Flags.AutoSeaEvent, false)
     toggle("Auto Raid",      Flags.AutoRaid,     false)
-    dropdown("Raid Type", Raids, Raids[1])
+    ui:CreateSection(SECTION_EVENTS):createDropdown({
+        Name     = "Raid Type",
+        Flag     = Raids[1] or "Flame",
+        flagName = "RaidType",
+        List     = Raids,
+    })
     toggle("Race V4 Trial",  Flags.AutoV4,       false)
 
     -- ESP

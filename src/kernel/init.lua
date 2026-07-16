@@ -49,10 +49,13 @@ local Combat     = require(script.Parent.game.combat)
 local Bring      = require(script.Parent.game.bring)
 local Boss       = require(script.Parent.game.boss)
 local Fruit      = require(script.Parent.game.fruit)
+local SeaEvent   = require(script.Parent.game.sea_event)
+local Raid       = require(script.Parent.game.raid)
+local V4Trial    = require(script.Parent.game.v4_trial)
 
 local Kernel = {}
 
-local KERNEL_VERSION = "0.8.0-slice8"
+local KERNEL_VERSION = "0.9.0-slice9"
 
 function Kernel.boot(Library)
     -- 1. Connection tracker.
@@ -104,6 +107,9 @@ function Kernel.boot(Library)
     local bring    = Bring.new(services, mob)
     local boss     = Boss.new(services, mob, data)
     local fruit    = Fruit.new(services, stealth, data, mob)
+    local seaEvent = SeaEvent.new(services, mob, data)
+    local raid     = Raid.new(services, data, stealth)
+    local v4       = V4Trial.new(data)
 
     -- 11. Publish to _G.VersusKernel.
     local graph = {
@@ -124,6 +130,9 @@ function Kernel.boot(Library)
         bring    = bring,
         boss     = boss,
         fruit    = fruit,
+        seaEvent = seaEvent,
+        raid     = raid,
+        v4       = v4,
         _library = Library,
     }
     _G.VersusKernel = graph

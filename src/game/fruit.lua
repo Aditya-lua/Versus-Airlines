@@ -86,13 +86,12 @@ function Fruit:listVisible()
     local ok, children = pcall(function() return ws:GetChildren() end)
     if not ok or not children then return {} end
     for _, v in ipairs(children) do
-        if v and v:IsA and v:IsA("Tool") and v.Name and v.Name:lower():find("fruit", 1, true) then
-            local p = v:IsA and v:IsA("BasePart") and v
+        if v and v.IsA and v:IsA("Tool") and v.Name and v.Name:lower():find("fruit", 1, true) then
             local pos
-            if p and p.Position then
-                pos = p.Position
+            if v:IsA("BasePart") and v.Position then
+                pos = v.Position
             else
-                local b = v:FindFirstChildWhichIsA and v:FindFirstChildWhichIsA("BasePart")
+                local b = v.FindFirstChildWhichIsA and v:FindFirstChildWhichIsA("BasePart")
                 if b and b.Position then pos = b.Position end
             end
             if pos then
