@@ -48,10 +48,11 @@ local Mob        = require(script.Parent.game.mob)
 local Combat     = require(script.Parent.game.combat)
 local Bring      = require(script.Parent.game.bring)
 local Boss       = require(script.Parent.game.boss)
+local Fruit      = require(script.Parent.game.fruit)
 
 local Kernel = {}
 
-local KERNEL_VERSION = "0.7.0-slice7"
+local KERNEL_VERSION = "0.8.0-slice8"
 
 function Kernel.boot(Library)
     -- 1. Connection tracker.
@@ -102,6 +103,7 @@ function Kernel.boot(Library)
     local combat   = Combat.new(services, stealth)
     local bring    = Bring.new(services, mob)
     local boss     = Boss.new(services, mob, data)
+    local fruit    = Fruit.new(services, stealth, data, mob)
 
     -- 11. Publish to _G.VersusKernel.
     local graph = {
@@ -121,6 +123,7 @@ function Kernel.boot(Library)
         combat   = combat,
         bring    = bring,
         boss     = boss,
+        fruit    = fruit,
         _library = Library,
     }
     _G.VersusKernel = graph

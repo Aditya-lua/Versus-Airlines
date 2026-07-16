@@ -149,7 +149,12 @@ function Sections.build(_Library, _kernel)
     -- Fruits
     toggle("Fruit Sniper",   Flags.FruitSniper,  false)
     toggle("Auto Buy Fruit", Flags.AutoBuyFruit, false)
-    dropdown("Fruit to Buy", Fruits, Fruits[1])
+    ui:CreateSection(SECTION_FRUITS):createDropdown({
+        Name     = "Fruit to Buy",
+        Flag     = Fruits[1] or "Flame",
+        flagName = "FruitToBuy",
+        List     = Fruits,
+    })
     button("Show Inventory", "Show Inventory")
 
     -- Events
