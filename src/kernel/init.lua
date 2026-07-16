@@ -56,7 +56,7 @@ local Esp        = require(script.Parent.game.esp)
 
 local Kernel = {}
 
-local KERNEL_VERSION = "1.0-slice10"
+local KERNEL_VERSION = "1.1-slice11"
 
 function Kernel.boot(Library)
     -- 1. Connection tracker.
@@ -80,6 +80,9 @@ function Kernel.boot(Library)
     stealth:setEmitter(function(name, payload)
         events:emit(name, payload)
     end)
+    -- Slice 11: per-executor profile. Compat.tier is 1 (hookfunction)
+    -- or 2 (mobile / no hook). T1 -> balanced, T2 -> safe.
+    stealth:setExecutorTier(compat.tier)
 
     -- 6. Watchdog.
     local watchdog = Watchdog.new(conn, registry, compat)

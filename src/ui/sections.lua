@@ -185,6 +185,14 @@ function Sections.build(_Library, _kernel)
     slider("Throttle (ms)", 50, 1000, 200, SliderFlags.ThrottleMs)
     toggle("Humanize",         Flags.Humanize,      true)
     toggle("Auto Reconnect",   Flags.AutoReconnect, true)
+    -- Slice 11: stealth profile picker + handshake skip.
+    ui:CreateSection(SECTION_SETTINGS):createDropdown({
+        Name     = "Stealth Profile",
+        Flag     = "balanced",
+        flagName = "StealthProfile",
+        List     = { "safe", "balanced", "permissive", "off" },
+    })
+    button("Skip AC Handshake", "Skip AC Handshake")
     button("Reconnect Now",  "Reconnect Now")
     button("Save Config",    "Save Config")
     button("Load Config",    "Load Config")
