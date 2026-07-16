@@ -41,25 +41,40 @@ local Library = Window.create()
 local Kernel = loadFromSrc("kernel.init")
 local kernel = Kernel.boot(Library)
 
--- 3. Mount the section tree.
+-- 3. Register all game modules. Each module file in src/modules/
+-- returns a { name, start, stop, health } table; the registry
+-- accepts it. Toggles in the section tree call registry:start /
+-- registry:stop by flag name.
+local function registerModuleFromFile(path)
+    local chunk, err = loadfile(path)
+    if not chunk then return end
+    local mod = chunk()
+    if type(mod) == "table" and type(mod.name) == "string" and type(mod.start) == "function" then
+        kernel.registry:register(mod)
+    end
+end
+
+registerModuleFromFile("src/modules/mod_autofarm.lua")
+
+-- 4. Mount the section tree.
 local Sections = loadFromSrc("ui.sections")
 Sections.build(Library, kernel)
 
--- 4. Start the live status label.
+-- 5. Start the live status label.
 local Status = loadFromSrc("ui.status")
 local _statusHandle = Status.start(kernel)
 
--- 5. Start the watchdog.
+-- 6. Start the watchdog.
 if kernel.watchdog and kernel.watchdog.start then
     kernel.watchdog:start()
 end
 
--- 6. Eager-warm the services cache.
+-- 7. Eager-warm the services cache.
 if kernel.services and kernel.services.init then
     kernel.services:init()
 end
 
--- 7. Probe the current game.
+-- 8. Probe the current game.
 if kernel.game and kernel.game.detectSea then
     local sea = kernel.game:detectSea()
     if sea == 0 then
@@ -67,10 +82,10 @@ if kernel.game and kernel.game.detectSea then
     end
 end
 
--- 8. Load the data files.
+-- 9. Load the data files.
 if kernel.data and kernel.data.loadAll then
     kernel.data:loadAll()
 end
 
--- 9. Boot complete.
+-- 10. Boot complete.
 return kernel

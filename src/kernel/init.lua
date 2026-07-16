@@ -5,12 +5,11 @@
     Stealth + Watchdog + Services + BloxFruits + Data + Events into a
     single graph and publishes it to _G.VersusKernel (D16).
 
-    The events system (D30) replaces the old logger. Modules call
-    kernel.events:emit("name", payload) — no info/warn/error surface,
-    no log spam, no display messages on every emit.
-
-    The Watchdog is NOT started by Kernel.boot — the caller (loader.lua)
-    calls kernel.watchdog:start() after the rest of the boot.
+    In addition, the kernel *loads and instantiates* the game-side
+    modules (movement, quest, mob, combat) and exposes them as
+    kernel.movement / kernel.quest / kernel.mob / kernel.combat.
+    Modules like the autofarm access these directly without doing
+    their own file I/O.
 
     Public API:
         Kernel.boot(Library) -> {
@@ -22,6 +21,10 @@
             services = <Services>,
             game     = <BloxFruits>,
             data     = <Data>,
+            movement = <Movement>,
+            quest    = <Quest>,
+            mob      = <Mob>,
+            combat   = <Combat>,
             version  = "<semver>",
         }
     -- Plus, after watchdog:start():
@@ -37,40 +40,39 @@ local Services   = require(script.Parent.game.services)
 local BloxFruits = require(script.Parent.game.blox_fruits)
 local Data       = require(script.Parent.data)
 local Events     = require(script.Parent.events)
+local Movement   = require(script.Parent.game.movement)
+local Quest      = require(script.Parent.game.quest)
+local Mob        = require(script.Parent.game.mob)
+local Combat     = require(script.Parent.game.combat)
 
 local Kernel = {}
 
 local KERNEL_VERSION = "0.5.0-slice5"
 
 function Kernel.boot(Library)
-    -- 1. Connection tracker. Built first because the events system
-    --    needs it for any future timed events.
+    -- 1. Connection tracker.
     local conn = Connection.new(Library)
 
-    -- 2. Events system. Built before everything else so every other
-    --    module can hold a reference to it from construction. The
-    --    Versus library is passed in for the in-window display
-    --    subscriber; the Flags table is read on every emit so the
-    --    webhook URL can be set without re-initialising.
+    -- 2. Events system.
     local flags = (Library and Library.Flags) or {}
     local events = Events.new(conn, Library, flags)
 
     -- 3. Compat detection.
     local compat = Compat.detect()
 
-    -- 4. Module registry. Wires to the events system.
+    -- 4. Module registry.
     local registry = Registry.new(conn)
     registry:setEmitter(function(name, payload)
         events:emit(name, payload)
     end)
 
-    -- 5. Stealth layer (D17: balanced profile default).
+    -- 5. Stealth layer.
     local stealth = Stealth.new()
     stealth:setEmitter(function(name, payload)
         events:emit(name, payload)
     end)
 
-    -- 6. Watchdog. Constructed, NOT started.
+    -- 6. Watchdog.
     local watchdog = Watchdog.new(conn, registry, compat)
     watchdog:setEmitter(function(name, payload)
         events:emit(name, payload)
@@ -88,7 +90,14 @@ function Kernel.boot(Library)
         events:emit(name, payload)
     end)
 
-    -- 10. Publish to _G.VersusKernel.
+    -- 10. Game modules. Pre-built so the autofarm and any other
+    --     module can use them via kernel.movement / kernel.quest / etc.
+    local movement = Movement.new(services, stealth, conn)
+    local quest    = Quest.new(data, bloxFruits)
+    local mob      = Mob.new(services)
+    local combat   = Combat.new(services, stealth)
+
+    -- 11. Publish to _G.VersusKernel.
     local graph = {
         version  = KERNEL_VERSION,
         compat   = compat,
@@ -100,15 +109,19 @@ function Kernel.boot(Library)
         services = services,
         game     = bloxFruits,
         data     = data,
+        movement = movement,
+        quest    = quest,
+        mob      = mob,
+        combat   = combat,
+        _library = Library,
     }
     _G.VersusKernel = graph
 
-    -- 11. Boot complete. Emit "started" so the events system is
-    --     visibly alive and the user's webhook (if configured) gets
-    --     a single "the script is up" ping per session.
+    -- 12. Boot complete.
     events:emit("started", { version = KERNEL_VERSION })
 
     return graph
 end
 
 return Kernel
+
