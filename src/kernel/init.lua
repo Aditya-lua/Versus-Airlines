@@ -25,6 +25,8 @@
             quest    = <Quest>,
             mob      = <Mob>,
             combat   = <Combat>,
+            bring    = <Bring>,
+            boss     = <Boss>,
             version  = "<semver>",
         }
     -- Plus, after watchdog:start():
@@ -45,10 +47,11 @@ local Quest      = require(script.Parent.game.quest)
 local Mob        = require(script.Parent.game.mob)
 local Combat     = require(script.Parent.game.combat)
 local Bring      = require(script.Parent.game.bring)
+local Boss       = require(script.Parent.game.boss)
 
 local Kernel = {}
 
-local KERNEL_VERSION = "0.5.0-slice5"
+local KERNEL_VERSION = "0.7.0-slice7"
 
 function Kernel.boot(Library)
     -- 1. Connection tracker.
@@ -98,6 +101,7 @@ function Kernel.boot(Library)
     local mob      = Mob.new(services)
     local combat   = Combat.new(services, stealth)
     local bring    = Bring.new(services, mob)
+    local boss     = Boss.new(services, mob, data)
 
     -- 11. Publish to _G.VersusKernel.
     local graph = {
@@ -116,6 +120,7 @@ function Kernel.boot(Library)
         mob      = mob,
         combat   = combat,
         bring    = bring,
+        boss     = boss,
         _library = Library,
     }
     _G.VersusKernel = graph

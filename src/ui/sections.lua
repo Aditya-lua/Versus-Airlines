@@ -124,6 +124,18 @@ function Sections.build(_Library, _kernel)
     toggle("Auto Farm Level", Flags.AutoFarm, false)
     toggle("Auto Farm Bring", Flags.BringMob, false)
     toggle("Boss Farm",       Flags.AutoBoss, false)
+    -- Boss target dropdown. Populated from kernel.boss:list() in a
+    -- follow-up; for now default to Saber Expert (the first entry
+    -- in the bosses data table).
+    ui:CreateSection("Main"):createDropdown({
+        Name     = "Select Boss",
+        Flag     = "Saber Expert",
+        flagName = "SelectBoss",
+        List     = { "Saber Expert", "The Saw", "Greybeard", "Diamond", "Jerome",
+                     "Fajita", "Captain Elephant", "Order", "Don Swan", "Dragon",
+                     "Rip Indra", "Longma", "Hydra", "Admiral", "Soul Reaper",
+                     "Ghost", "Coconut", "Cake Queen", "Dough King", "Beautiful Pirate" },
+    })
     dropdown("Teleport To", Islands, Islands[1])
 
     -- Farming

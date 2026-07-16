@@ -18,7 +18,7 @@
         8. Load the data files (17 tables)
         9. Emit "started" with version
 
-    Version:  0.5.0-slice5
+    Version:  0.7.0-slice7
     License:  see docs/LICENSE (TBD)
     Entry:    <host>/loader.lua
     Internal: see docs/STYLE.md
@@ -56,6 +56,7 @@ end
 
 registerModuleFromFile("src/modules/mod_autofarm.lua")
 registerModuleFromFile("src/modules/mod_bring.lua")
+registerModuleFromFile("src/modules/mod_boss.lua")
 
 -- 4. Mount the section tree.
 local Sections = loadFromSrc("ui.sections")
