@@ -473,9 +473,6 @@ end
 local function interval(tag, flag, delayTime, callback)
     Library:CleanupConnectionsByTag(tag)
     delayTime = math.max(tonumber(delayTime) or 0.1, 0.05)
-    if not Library.Flags[flag] then
-        return
-    end
     local last = 0
     local running = false
     local slowWarnAt = 0
@@ -522,9 +519,7 @@ local function createIntervalToggle(section, cfg)
             if not enabled then
                 return
             end
-            task.defer(function()
-                interval(tag, cfg.flagName, cfg.delay or 1, cfg.Step)
-            end)
+            interval(tag, cfg.flagName, cfg.delay or 1, cfg.Step)
         end,
     })
 end
