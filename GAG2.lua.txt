@@ -1930,15 +1930,6 @@ local function doHarvest(forceAll)
     end
 
     if #targets > 0 then
-        local plot = myPlot()
-        local ref = plot and plot:FindFirstChild("PlotSizeReference")
-        local rootPart = getHRP()
-        if not Library.Flags["collectNoTp"] and ref and rootPart then
-            if (Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z) - Vector3.new(ref.Position.X, 0, ref.Position.Z)).Magnitude > 16 then
-                teleport(ref.Position)
-                task.wait(0.12)
-            end
-        end
         for _, entry in ipairs(targets) do
             local skip = false
             if mode == "Filtered" then
@@ -3562,9 +3553,9 @@ Main:createLabel({ Name = "Automation Collection", Special = true })
 
 Main:createToggle({
     Name = "Disable Teleport (Collect)",
-    Flag = false,
+    Flag = true,
     flagName = "collectNoTp",
-    Description = "Walk instead of teleporting to crops.",
+    Description = "Don't teleport to garden while collecting. Keeps you where you are.",
 })
 Main:createToggle({
     Name = "Stop Collect If Backpack Is Full",
@@ -3629,12 +3620,30 @@ Main:createToggle({
     Flag = false,
     flagName = "autoCollect",
     Description = "Run the harvest loop every 0.6s using the selected filter mode.",
+    Callback = function(enabled)
+        Library:CleanupConnectionsByTag("autoCollect")
+        if not enabled then
+            return
+        end
+        interval("autoCollect", "autoCollect", 0.6, function()
+            doHarvest()
+        end)
+    end,
 })
 Main:createToggle({
     Name = "Auto Collect All Fruit",
     Flag = false,
     flagName = "autoCollectAll",
     Description = "Collect all fruit regardless of filters.",
+    Callback = function(enabled)
+        Library:CleanupConnectionsByTag("autoCollectAll")
+        if not enabled then
+            return
+        end
+        interval("autoCollectAll", "autoCollectAll", 0.6, function()
+            doHarvest()
+        end)
+    end,
 })
 Main:createToggle({
     Name = "Enable Filters",
@@ -3647,6 +3656,15 @@ Main:createToggle({
     Flag = false,
     flagName = "autoCollectBest",
     Description = "Only collect the highest-value fruit.",
+    Callback = function(enabled)
+        Library:CleanupConnectionsByTag("autoCollectBest")
+        if not enabled then
+            return
+        end
+        interval("autoCollectBest", "autoCollectBest", 0.6, function()
+            doHarvest()
+        end)
+    end,
 })
 Main:createLabel({ Name = "Collect Gold / Rainbow", Special = true })
 Main:createToggle({
@@ -5695,9 +5713,6 @@ task.spawn(function()
             break
         end
         pcall(function()
-            if Library.Flags["autoCollect"] or Library.Flags["autoCollectAll"] or Library.Flags["autoCollectBest"] then
-                doHarvest()
-            end
             if Library.Flags["collectGold"] or Library.Flags["collectRainbow"] then
                 doPackGrab()
             end
