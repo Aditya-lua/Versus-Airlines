@@ -412,8 +412,14 @@ track(client.Idled:Connect(function()
     end)
 end))
 
--- helpers
+-- notify: tries game's native Notify remote first, falls back to UI
 local function notify(title, desc, style)
+    pcall(function()
+        local n = ReplicatedStorage:FindFirstChild("Notify")
+        if n then
+            n:Fire("[GAG2] " .. title)
+        end
+    end)
     pcall(function()
         Library:createDisplayMessage(title, desc, { { text = "OK" } }, style or "info")
     end)
@@ -821,6 +827,13 @@ local function myPlot()
     local g = Workspace:FindFirstChild("Gardens")
     if not g then
         return nil
+    end
+    local plotId = client:GetAttribute("PlotId")
+    if plotId then
+        local named = g:FindFirstChild(string.format("Plot%i", plotId))
+        if named then
+            return named
+        end
     end
     for _, plot in ipairs(g:GetChildren()) do
         if plot:GetAttribute("OwnerUserId") == client.UserId then
@@ -3127,14 +3140,9 @@ local sellBaseline = nil
 
 -- ================================================================
 local function nearPlot()
-    local plot = myPlot()
-    if not plot then
-        return
-    end
-    local sp = plot:FindFirstChild("SpawnPoint")
-    if sp then
-        teleport(sp.Position)
-    end
+    pcall(function()
+        Network.TeleportButton.Request:Fire("Garden")
+    end)
 end
 function gardenNearPlayer()
     local gardensFolder = Workspace:FindFirstChild("Gardens")
@@ -3441,14 +3449,10 @@ Home:createButton({
     Name = "Teleport to Garden",
     Description = "Return to your own plot.",
     Callback = function()
-        local plot = myPlot()
-        local sp = plot and plot:FindFirstChild("SpawnPoint")
-        if sp then
-            teleport(sp.Position)
-            notify("Home", "Went to your garden")
-        else
-            notify("Home", "Garden not found", "warning")
-        end
+        pcall(function()
+            Network.TeleportButton.Request:Fire("Garden")
+        end)
+        notify("Home", "Requested garden teleport")
     end,
 })
 
@@ -5285,14 +5289,10 @@ local function tpBtn(label, pad)
         Name = label,
         Description = "Travel to the " .. label .. ".",
         Callback = function()
-            local t = Workspace:FindFirstChild("Teleports")
-            local d = t and t:FindFirstChild(pad)
-            if d and d:IsA("BasePart") then
-                teleport(d.Position)
-                notify("Teleport", "Went to " .. label)
-            else
-                notify("Teleport", label .. " not found", "warning")
-            end
+            pcall(function()
+                Network.TeleportButton.Request:Fire(pad)
+            end)
+            notify("Teleport", "Went to " .. label)
         end,
     })
 end
@@ -5304,14 +5304,10 @@ Misc:createButton({
     Name = "My Garden",
     Description = "Return to your own plot.",
     Callback = function()
-        local plot = myPlot()
-        local sp = plot and plot:FindFirstChild("SpawnPoint")
-        if sp then
-            teleport(sp.Position)
-            notify("Teleport", "Went to your garden")
-        else
-            notify("Teleport", "Garden not found", "warning")
-        end
+        pcall(function()
+            Network.TeleportButton.Request:Fire("Garden")
+        end)
+        notify("Teleport", "Went to your garden")
     end,
 })
 
