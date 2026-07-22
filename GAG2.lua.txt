@@ -522,7 +522,9 @@ local function createIntervalToggle(section, cfg)
             if not enabled then
                 return
             end
-            interval(tag, cfg.flagName, cfg.delay or 1, cfg.Step)
+            task.defer(function()
+                interval(tag, cfg.flagName, cfg.delay or 1, cfg.Step)
+            end)
         end,
     })
 end
@@ -1955,6 +1957,7 @@ end
 local function doPlant()
     local plot = myPlot()
     if not plot then
+        warn("[GAG2] doPlant: no garden plot found")
         return
     end
     if not Library.Flags["plantNoTp"] then
@@ -1963,6 +1966,7 @@ local function doPlant()
     local playerData = getData()
     local seeds = playerData and playerData.Inventory and playerData.Inventory.Seeds
     if not seeds then
+        warn("[GAG2] doPlant: no seeds in inventory")
         return
     end
     -- resolve which seeds to plant
@@ -2011,9 +2015,9 @@ local function doPlant()
         end
     end
     if #toPlant == 0 then
+        warn("[GAG2] doPlant: no seeds matched filter or smartReplant found nothing")
         return
     end
-    -- seed reserve: filter out seed types below the keep-n threshold
     if Library.Flags["seedReserve"] then
         local keep = math.max(0, tonumber(Library.Flags["reserveCount"]) or 0)
         if keep > 0 then
@@ -2028,6 +2032,7 @@ local function doPlant()
         end
     end
     if #toPlant == 0 then
+        warn("[GAG2] doPlant: seed reserve removed all seeds")
         return
     end
     -- resolve plant position via mode dropdown (Random/Saved/Player/Near Fruit/Sprinkler Radius)
@@ -2056,6 +2061,7 @@ local function doPlant()
     -- find open soil slots
     local free = getOpenSlots(plot, firstValue(Library.Flags["plantPattern"]) or "Fill", sortPosition)
     if #free == 0 then
+        warn("[GAG2] doPlant: no open soil slots found")
         return
     end
     local cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 40)
@@ -2262,10 +2268,12 @@ end
 local function doSprinkler()
     local playerData = getData()
     if not (playerData and playerData.Inventory and playerData.Inventory.Sprinklers) then
+        warn("[GAG2] doSprinkler: no sprinklers in inventory")
         return
     end
     local plot = myPlot()
     if not plot then
+        warn("[GAG2] doSprinkler: no garden plot found")
         return
     end
     if not Library.Flags["sprinklerNoTp"] then
@@ -2286,6 +2294,7 @@ local function doSprinkler()
         end
     end
     if not name then
+        warn("[GAG2] doSprinkler: no sprinkler name resolved")
         return
     end
     local pos = resolveModePosition(firstValue(Library.Flags["sprinklerPos"] or {}), "savedSprinklerPos", plot)
@@ -2296,6 +2305,7 @@ local function doSprinkler()
         end
     end
     if not pos then
+        warn("[GAG2] doSprinkler: no valid position found")
         return
     end
     -- verified: Place.PlaceSprinkler(pos, name, plot, rotation)
@@ -4183,7 +4193,7 @@ Main:createInputBox({
     Description = "Delay in seconds between sprinkler placements.",
 })
 createIntervalToggle(
-    Auto,
+    Main,
     { Name = "Auto Place Sprinkler", flagName = "autoSprinkler", tag = "autoSprinkler", delay = 20, Step = doSprinkler }
 )
 Main:createToggle({
