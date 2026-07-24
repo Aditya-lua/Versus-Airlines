@@ -1391,16 +1391,32 @@ function handleRoomTreatment()
 				if not equipped then
 					local targetCure = allowedCures[1]
 					if buyTool(targetCure) then
-						task.wait(0.3)
-						equipTool(targetCure)
+						task.wait(0.4)
+						equipped = equipTool(targetCure)
+					end
+				end
+
+				-- CRITICAL SAFETY CHECK: Only apply treatment if the correct cure is physically equipped!
+				if equipped then
+					if fireModelPrompt(c.Model, c.Text) then
+						State.SessionHealed = State.SessionHealed + 1
+						return true
 					end
 				end
 			else
-				equipMedicine()
+				local fallbackTool = equipMedicine()
+				if fallbackTool then
+					if fireModelPrompt(c.Model, c.Text) then
+						return true
+					end
+				end
 			end
-		end
-		if fireModelPrompt(c.Model, c.Text) then
-			return true
+			return true -- Block further lower-priority actions on this tick while treating
+		else
+			-- For non-medication prompts, trigger immediately
+			if fireModelPrompt(c.Model, c.Text) then
+				return true
+			end
 		end
 	end
 	return false
@@ -1580,10 +1596,13 @@ function handleTakeDNA()
 	if not Library or not Library.Flags or not Library.Flags["TakeDNA"] then
 		return
 	end
-	for pp, model in pairs(PromptCache._prompts) do
-		if pp.Enabled and (model.Name:lower():find("dna") or model.Name:lower():find("sample")) then
-			fireModelPrompt(model)
-			return
+	for pp in pairs(PromptCache._prompts) do
+		if pp.Enabled then
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model and (model.Name:lower():find("dna") or model.Name:lower():find("sample")) then
+				fireModelPrompt(model)
+				return
+			end
 		end
 	end
 end
@@ -1680,8 +1699,9 @@ function infiniteTaseAll()
 		return
 	end
 
-	for _, m in pairs(PromptCache._prompts) do
-		if m:GetAttribute("IsPatient") or m.Name:lower():find("patient") or m.Name:lower():find("visitor") then
+	for pp in pairs(PromptCache._prompts) do
+		local m = pp:FindFirstAncestorWhichIsA("Model")
+		if m and (m:GetAttribute("IsPatient") or m.Name:lower():find("patient") or m.Name:lower():find("visitor")) then
 			local p = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso")
 			if p and distanceTo(p.Position) < 50 then
 				local hum = m:FindFirstChildOfClass("Humanoid")
@@ -1698,12 +1718,15 @@ function coinFarm()
 	if not Library or not Library.Flags or not Library.Flags["CoinFarm"] then
 		return
 	end
-	for pp, model in pairs(PromptCache._prompts) do
+	for pp in pairs(PromptCache._prompts) do
 		if pp.Enabled then
-			local name = model.Name:lower()
-			if name:find("coin") or name:find("cash") or name:find("shutter") then
-				fireModelPrompt(model)
-				return
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model then
+				local name = model.Name:lower()
+				if name:find("coin") or name:find("cash") or name:find("shutter") then
+					fireModelPrompt(model)
+					return
+				end
 			end
 		end
 	end
