@@ -1102,7 +1102,7 @@ function handleFainted()
                     root.CFrame = p.CFrame + Vector3.new(0, 5, 0)
                     task.wait(0.2)
                     local hum = getHumanoid()
-                    if hum then pcall(function() hum:MoveTo(root.Position + Vector3.new(40, 0, 0)) end)
+                    if hum then pcall(function() hum:MoveTo(root.Position + Vector3.new(40, 0, 0)) end) end
                     return
                 end
             end
