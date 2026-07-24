@@ -385,7 +385,7 @@ function isSkinwalker(npc)
 end
 
 function checkAndRejectSkinwalker()
-    if not Library.Flags["AutoRejectSkinwalkers"] then return false end
+    if not Library or not Library.Flags or not Library.Flags["AutoRejectSkinwalkers"] then return false end
     
     local scanList = PromptCache:GetPromptsByActionText("Scan Identity")
     for pp in pairs(scanList) do
@@ -1012,8 +1012,68 @@ function handleVisitorFlow()
     end
 end
 
+local KNOWN_CURES = {
+    ["IV Drops"] = true, ["Eye Drops"] = true, ["Medicine"] = true, ["Herbs"] = true,
+    ["Antibiotics"] = true, ["Bandages"] = true, ["Ointment"] = true, ["Scissors"] = true,
+    ["Scalpel"] = true, ["Medkit"] = true, ["Thermo"] = true, ["Transplant"] = true,
+    ["Organ"] = true, ["Maple Syrup"] = true, ["Cough Syrup"] = true, ["Coffee"] = true,
+}
+
+local function getIllnessData(illnessName)
+    if not illnessName then return nil end
+    local ok, module = pcall(function()
+        return ReplicatedStorage:FindFirstChild("Data", true):FindFirstChild("IllnessesAndCures")
+    end)
+    if not ok or not module then return nil end
+    local ok2, data = pcall(require, module)
+    if not ok2 or not data then return nil end
+    
+    if data.GetIllness then
+        local ok3, res = pcall(data.GetIllness, illnessName)
+        if ok3 then return res end
+    end
+    for k, v in pairs(data) do
+        if tostring(k):lower():find(illnessName:lower()) then
+            return v
+        end
+    end
+    return nil
+end
+
+local function getCureForIllness(illnessName)
+    local data = getIllnessData(illnessName)
+    if data then
+        if type(data) == "table" and data.Cure then
+            return tostring(data.Cure)
+        elseif type(data) == "string" then
+            return data
+        end
+    end
+    return nil
+end
+
+local function getCuresForIllnessString(illnessString)
+    if not illnessString or illnessString == "" then return {} end
+    
+    local allowedCures = {}
+    for part in string.gmatch(illnessString, "[^,;]+") do
+        local clean = string.gsub(part, "^%s*(.-)%s*$", "%1") -- trim
+        if clean ~= "" then
+            if KNOWN_CURES[clean] then
+                table.insert(allowedCures, clean)
+            else
+                local cure = getCureForIllness(clean)
+                if cure then
+                    table.insert(allowedCures, cure)
+                end
+            end
+        end
+    end
+    return allowedCures
+end
+
 function handleRoomTreatment()
-    if not Library.Flags["RoomTreatment"] then return end
+    if not Library or not Library.Flags or not Library.Flags["RoomTreatment"] then return end
     
     local treatmentATs = {
         "Prepare Patient", "Analyze Sample", "Process Results", "Apply Treatment",
@@ -1040,13 +1100,24 @@ function handleRoomTreatment()
     local c = candidates[1]
     if c then
         if c.Text == "Apply Treatment" then
-            -- TV and Monitor screen illness detection (Generic Rooms 1 to 8 support!)
             local room = c.Model:FindFirstAncestorWhichIsA("Model")
-            local illness = getTreatmentOrIllness(room)
+            local rawString = getTreatmentOrIllness(room)
+            local allowedCures = getCuresForIllnessString(rawString)
             
-            if illness then
-                local cure = getCureForIllness(illness)
-                if cure then equipTool(cure) end
+            if #allowedCures > 0 then
+                local equipped = nil
+                for _, cure in ipairs(allowedCures) do
+                    equipped = equipTool(cure)
+                    if equipped then break end
+                end
+                
+                if not equipped then
+                    local targetCure = allowedCures[1]
+                    if buyTool(targetCure) then
+                        task.wait(0.3)
+                        equipTool(targetCure)
+                    end
+                end
             else
                 equipMedicine()
             end
