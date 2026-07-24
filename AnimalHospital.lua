@@ -2483,6 +2483,12 @@ end)
 
 interval("movement", "WalkSpeed", 0.1, applyMovement)
 interval("esp", "ESPEnabled", 1.8, updateESP)
+interval("camera", "CameraMode", 0.5, function()
+	if Library and Library.Flags then
+		local mode = Library.Flags["CameraMode"]
+		setCameraMode(mode)
+	end
+end)
 
 local charConn = client.CharacterAdded:Connect(function()
 	task.wait(0.6)
