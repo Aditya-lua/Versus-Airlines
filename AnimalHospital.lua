@@ -25,6 +25,7 @@ local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 
+local Library
 local client = Players.LocalPlayer
 local camera = Workspace.CurrentCamera
 
@@ -460,14 +461,13 @@ end
 -----------------------------------------------------------------
 print("Loading Versus Library...")
 
-local Library
-local loadOk, loadErr = pcall(function()
-    Library = loadstring(game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua"))()
-end)
-if not loadOk or not Library then
-    warn("[Versus] Failed to load library:", loadErr)
-    return
-end
+    local loadOk, loadErr = pcall(function()
+        Library = loadstring(game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua"))()
+    end)
+    if not loadOk or not Library then
+        warn("[Versus] Failed to load library:", loadErr)
+        return
+    end
 
 local ui = Library:Setup({
     Location = CoreGui,
