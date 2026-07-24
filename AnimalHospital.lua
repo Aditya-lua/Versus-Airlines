@@ -660,7 +660,7 @@ function safeMoveToModel(model, callback)
 	end
 
 	local pivot = model:GetPivot()
-	local targetPos = (pivot * CFrame.new(0, 0, 3.2)).Position
+	local targetPos = pivot.Position + Vector3.new(0, 5.5, 0)
 	local dist = (root.Position - targetPos).Magnitude
 
 	if dist < 4 then
@@ -1375,12 +1375,15 @@ function handleEmergency()
 		return
 	end
 
-	for pp, model in pairs(PromptCache._prompts) do
-		if pp.Enabled and not isPatientOwned(model) then
-			local name = model.Name
-			if name:find("Ambulance") or name:find("Critical") or name:find("Emergency") then
-				fireModelPrompt(model)
-				return
+	for pp in pairs(PromptCache._prompts) do
+		if pp.Enabled then
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model and not isPatientOwned(model) then
+				local name = model.Name
+				if name:find("Ambulance") or name:find("Critical") or name:find("Emergency") then
+					fireModelPrompt(model)
+					return
+				end
 			end
 		end
 	end
@@ -1400,12 +1403,15 @@ function startShift()
 		end
 	end
 
-	for pp, model in pairs(PromptCache._prompts) do
+	for pp in pairs(PromptCache._prompts) do
 		if pp.Enabled then
-			local name = model.Name
-			if name:find("StartShift") or name:find("ShiftButton") or name:find("Computer") then
-				fireModelPrompt(model)
-				return
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model then
+				local name = model.Name
+				if name:find("StartShift") or name:find("ShiftButton") or name:find("Computer") then
+					fireModelPrompt(model)
+					return
+				end
 			end
 		end
 	end
@@ -1466,19 +1472,22 @@ function handleEyeMass()
 		return
 	end
 
-	for pp, model in pairs(PromptCache._prompts) do
+	for pp in pairs(PromptCache._prompts) do
 		if pp.Enabled then
-			local name = model.Name:lower()
-			if name:find("eyemass") or name:find("eye mass") then
-				local pivot = model:GetPivot()
-				local dist = (root.Position - pivot.Position).Magnitude
-				if dist < 40 then
-					equipTool("Eye Drops")
-					if dist > 10 then
-						safeMoveToModel(model)
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model then
+				local name = model.Name:lower()
+				if name:find("eyemass") or name:find("eye mass") then
+					local pivot = model:GetPivot()
+					local dist = (root.Position - pivot.Position).Magnitude
+					if dist < 40 then
+						equipTool("Eye Drops")
+						if dist > 10 then
+							safeMoveToModel(model)
+						end
+						fireModelPrompt(model, "Apply Treatment")
+						return
 					end
-					fireModelPrompt(model, "Apply Treatment")
-					return
 				end
 			end
 		end
@@ -1517,11 +1526,14 @@ function handleFixCams()
 	if not Library.Flags["FixCams"] then
 		return
 	end
-	for pp, model in pairs(PromptCache._prompts) do
-		if pp.Enabled and model.Name:lower():find("camera") then
-			fireModelPrompt(model)
-			task.wait(2)
-			return
+	for pp in pairs(PromptCache._prompts) do
+		if pp.Enabled then
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model and model.Name:lower():find("camera") then
+				fireModelPrompt(model)
+				task.wait(2)
+				return
+			end
 		end
 	end
 end
