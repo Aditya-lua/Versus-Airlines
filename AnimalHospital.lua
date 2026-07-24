@@ -190,7 +190,7 @@ local GlobalJanitor = Janitor.new()
 -----------------------------------------------------------------
 -- STATE
 -----------------------------------------------------------------
-State = {
+local State = {
 	Running = false,
 	CurrentObjective = nil,
 	CurrentTarget = nil,
@@ -581,7 +581,7 @@ function interval(tag, flag, delayTime, callback)
 	local last = 0
 	local running = false
 	local conn = RunService.Heartbeat:Connect(function()
-		if not Library.Flags or not Library.Flags[flag] then
+		if not Library or not Library.Flags or not Library.Flags[flag] then
 			return
 		end
 		local now = tick()
@@ -672,7 +672,7 @@ function safeMoveToModel(model, callback)
 
 	clearActiveTweens()
 
-	if Library.Flags["MovementMode"] == "Tween" then
+	if Library and Library.Flags and Library.Flags["MovementMode"] == "Tween" then
 		local speed = Library.Flags["TweenSpeed"] or 65
 		local duration = dist / speed
 		local twInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
@@ -787,7 +787,7 @@ function setupSanityHook()
 		originalPlayerLostSanity = Lib.PlayerLostSanity
 		Lib.PlayerLostSanity = function(amount, reason, suppressRemote)
 			-- Mode 1: Silent Hook
-			if Library.Flags["SanityMode"] == "Silent Local Hook" then
+			if Library and Library.Flags and Library.Flags["SanityMode"] == "Silent Local Hook" then
 				pcall(function()
 					client:SetAttribute("Sanity", 100)
 				end)
@@ -803,7 +803,7 @@ end
 
 -- Mode 2: Server-side NaN Exploit
 function triggerServerNaNFreeze()
-	if Library.Flags["SanityMode"] == "Server NaN Exploit" then
+	if Library and Library.Flags and Library.Flags["SanityMode"] == "Server NaN Exploit" then
 		pcall(function()
 			local args = { math.huge / math.huge, "Job Stress", true }
 			fireRemote("RE/PlayerLostSanity", unpack(args))
@@ -819,7 +819,7 @@ local function setupJumpscareBypass()
 	if ok and Net then
 		local originalConnect = Net.Connect
 		Net.Connect = function(self, name, callback)
-			if Library.Flags["AntiJumpscare"] then
+			if Library and Library.Flags and Library.Flags["AntiJumpscare"] then
 				if name:lower():find("jumpscare") or name:lower():find("cutscene") then
 					print("[Anti-Jumpscare] Intercepted network connection to:", name)
 					return { Disconnect = function() end }
@@ -834,7 +834,7 @@ end
 -- COMBAT SUITE EXPLOITS (Direct Range Cleaning & Attacks)
 -----------------------------------------------------------------
 function cleanAllSlime()
-	if not Library.Flags["AutoCleanSlime"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoCleanSlime"] then
 		return
 	end
 	for _, grime in ipairs(CollectionService:GetTagged("Grime")) do
@@ -843,7 +843,7 @@ function cleanAllSlime()
 end
 
 function extinguishAllFires()
-	if not Library.Flags["AutoExtinguishFires"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoExtinguishFires"] then
 		return
 	end
 	for _, part in ipairs(CollectionService:GetTagged("OnFire")) do
@@ -861,7 +861,7 @@ function extinguishAllFires()
 end
 
 function autoFightAnomaliesAndGhosts()
-	if not Library.Flags["AutoFightAnomalies"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoFightAnomalies"] then
 		return
 	end
 	for _, m in ipairs(MonsterCache:GetMonsters()) do
@@ -874,7 +874,7 @@ function autoFightAnomaliesAndGhosts()
 end
 
 function zombieAura()
-	if not Library.Flags["ZombieAura"] then
+	if not Library or not Library.Flags or not Library.Flags["ZombieAura"] then
 		return
 	end
 	local char = getChar()
@@ -1009,7 +1009,7 @@ function equipTool(toolName)
 end
 
 function buyTool(toolName)
-	local model, pp = PromptCache:GetNearestPrompt(toolName)
+	local model = PromptCache:GetNearestPrompt(toolName)
 	if model then
 		fireModelPrompt(model)
 		return true
@@ -1044,7 +1044,7 @@ function equipMedicine()
 end
 
 function isPatientOwned(model)
-	if not Library.Flags["MultiFarm"] then
+	if not Library or not Library.Flags or not Library.Flags["MultiFarm"] then
 		return false
 	end
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -1102,7 +1102,7 @@ function hookServerEvents()
 	end)
 
 	connectRemote("StartHeartbeatMinigame", function(id)
-		if Library.Flags["AutoHeartbeat"] then
+		if Library and Library.Flags and Library.Flags["AutoHeartbeat"] then
 			task.wait(0.25)
 			fireRemote("RE/HeartbeatMinigameComplete", id, true)
 		end
@@ -1119,7 +1119,13 @@ function hookServerEvents()
 		State.CheckedInPatients = 0
 		State.ShiftCount = State.ShiftCount + 1
 		local maxShifts = Library.Flags["ReplayShifts"] or 1
-		if Library.Flags["AutoReplay"] and State.ShiftCount < maxShifts and (tick() - State.LastReplayVote) > 10 then
+		if
+			Library
+			and Library.Flags
+			and Library.Flags["AutoReplay"]
+			and State.ShiftCount < maxShifts
+			and (tick() - State.LastReplayVote) > 10
+		then
 			State.LastReplayVote = tick()
 			task.wait(2)
 			fireRemote("RE/PlayAgainVote")
@@ -1162,7 +1168,7 @@ function followObjective()
 
 	if expected then
 		for _, at in ipairs(expected) do
-			local model, pp = PromptCache:GetNearestPrompt(at)
+			local model = PromptCache:GetNearestPrompt(at)
 			if model and not isPatientOwned(model) then
 				return fireModelPrompt(model, at)
 			end
@@ -1184,7 +1190,7 @@ function scanIdentity()
 		return true
 	end
 
-	local model, pp = PromptCache:GetNearestPrompt("Scan Identity")
+	local model = PromptCache:GetNearestPrompt("Scan Identity")
 	if model then
 		if fireModelPrompt(model, "Scan Identity") then
 			State.CheckedInPatients = State.CheckedInPatients + 1
@@ -1216,7 +1222,7 @@ function handleVisitorFlow()
 		"Finish the check-in",
 	}
 	for _, at in ipairs(order) do
-		local model, pp = PromptCache:GetNearestPrompt(at)
+		local model = PromptCache:GetNearestPrompt(at)
 		if model then
 			if fireModelPrompt(model, at) then
 				return true
@@ -1422,7 +1428,7 @@ function handleEmergency()
 end
 
 function startShift()
-	if not Library.Flags["AutoShift"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoShift"] then
 		return
 	end
 
@@ -1450,7 +1456,7 @@ function startShift()
 end
 
 function handleFainted()
-	if not Library.Flags["CarryFainted"] then
+	if not Library or not Library.Flags or not Library.Flags["CarryFainted"] then
 		return
 	end
 	local root = getRoot()
@@ -1481,14 +1487,14 @@ function handleFainted()
 end
 
 function handlePeopleOnFire()
-	if not Library.Flags["PutOutFire"] then
+	if not Library or not Library.Flags or not Library.Flags["PutOutFire"] then
 		return
 	end
-	if Library.Flags["FireStrat"] and Library.Flags["AutoShift"] then
+	if Library and Library.Flags and Library.Flags["FireStrat"] and Library.Flags["AutoShift"] then
 		return
 	end
 
-	local fireModel, firePrompt = PromptCache:GetNearestPrompt("Put out")
+	local fireModel = PromptCache:GetNearestPrompt("Put out")
 	if fireModel then
 		fireModelPrompt(fireModel, "Put out")
 		return
@@ -1496,7 +1502,7 @@ function handlePeopleOnFire()
 end
 
 function handleEyeMass()
-	if not Library.Flags["AvoidEyeMass"] then
+	if not Library or not Library.Flags or not Library.Flags["AvoidEyeMass"] then
 		return
 	end
 	local root = getRoot()
@@ -1527,7 +1533,7 @@ function handleEyeMass()
 end
 
 function fleeMonsters()
-	if not Library.Flags["AvoidMonsters"] then
+	if not Library or not Library.Flags or not Library.Flags["AvoidMonsters"] then
 		return
 	end
 	local root = getRoot()
@@ -1555,7 +1561,7 @@ function fleeMonsters()
 end
 
 function handleFixCams()
-	if not Library.Flags["FixCams"] then
+	if not Library or not Library.Flags or not Library.Flags["FixCams"] then
 		return
 	end
 	for pp in pairs(PromptCache._prompts) do
@@ -1571,7 +1577,7 @@ function handleFixCams()
 end
 
 function handleTakeDNA()
-	if not Library.Flags["TakeDNA"] then
+	if not Library or not Library.Flags or not Library.Flags["TakeDNA"] then
 		return
 	end
 	for pp, model in pairs(PromptCache._prompts) do
@@ -1583,16 +1589,16 @@ function handleTakeDNA()
 end
 
 function helpLiz()
-	if not Library.Flags["HelpLiz"] then
+	if not Library or not Library.Flags or not Library.Flags["HelpLiz"] then
 		return
 	end
-	local lizModel, lizPrompt = PromptCache:GetNearestPrompt("Help Liz")
+	local lizModel = PromptCache:GetNearestPrompt("Help Liz")
 	if lizModel then
 		fireModelPrompt(lizModel, "Help Liz")
 		return
 	end
 
-	local giftModel, giftPrompt = PromptCache:GetNearestPrompt("Accept Gift")
+	local giftModel = PromptCache:GetNearestPrompt("Accept Gift")
 	if giftModel then
 		fireModelPrompt(giftModel, "Accept Gift")
 		return
@@ -1600,7 +1606,7 @@ function helpLiz()
 end
 
 function stalkerHandler()
-	if not Library.Flags["StalkerHandler"] then
+	if not Library or not Library.Flags or not Library.Flags["StalkerHandler"] then
 		return
 	end
 	for _, m in ipairs(MonsterCache:GetMonsters()) do
@@ -1615,7 +1621,7 @@ function stalkerHandler()
 end
 
 function autoBuyItems()
-	if not Library.Flags["AutoBuyItems"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoBuyItems"] then
 		return
 	end
 	local item = Library.Flags["AutoBuyItemName"]
@@ -1627,14 +1633,14 @@ function autoBuyItems()
 		trashItems()
 		task.wait(0.5)
 	end
-	local model, pp = PromptCache:GetNearestPrompt(item)
+	local model = PromptCache:GetNearestPrompt(item)
 	if model then
 		fireModelPrompt(model)
 	end
 end
 
 function handleInventory()
-	if not Library.Flags["AutoTrash"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoTrash"] then
 		return
 	end
 	if getToolCount() >= 3 then
@@ -1643,7 +1649,7 @@ function handleInventory()
 end
 
 function autoTaseCritical()
-	if not Library.Flags["AutoTaseCritical"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoTaseCritical"] then
 		return
 	end
 	local mode = Library.Flags["TaseCriticalRoom"] or "All"
@@ -1666,7 +1672,7 @@ function autoTaseCritical()
 end
 
 function infiniteTaseAll()
-	if not Library.Flags["InfiniteTaseAll"] then
+	if not Library or not Library.Flags or not Library.Flags["InfiniteTaseAll"] then
 		return
 	end
 	local taser = equipTool("Taser") or equipTool("X-Taser")
@@ -1674,7 +1680,7 @@ function infiniteTaseAll()
 		return
 	end
 
-	for pp, m in pairs(PromptCache._prompts) do
+	for _, m in pairs(PromptCache._prompts) do
 		if m:GetAttribute("IsPatient") or m.Name:lower():find("patient") or m.Name:lower():find("visitor") then
 			local p = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso")
 			if p and distanceTo(p.Position) < 50 then
@@ -1689,7 +1695,7 @@ function infiniteTaseAll()
 end
 
 function coinFarm()
-	if not Library.Flags["CoinFarm"] then
+	if not Library or not Library.Flags or not Library.Flags["CoinFarm"] then
 		return
 	end
 	for pp, model in pairs(PromptCache._prompts) do
@@ -1704,7 +1710,7 @@ function coinFarm()
 end
 
 function infiniteLives()
-	if not Library.Flags["InfiniteLives"] then
+	if not Library or not Library.Flags or not Library.Flags["InfiniteLives"] then
 		return
 	end
 	local hum = getHumanoid()
@@ -1714,7 +1720,7 @@ function infiniteLives()
 end
 
 function autoRevive()
-	if not Library.Flags["AutoRevive"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoRevive"] then
 		return
 	end
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -1729,7 +1735,7 @@ function autoRevive()
 end
 
 function instantPP()
-	if not Library.Flags["InstantPP"] then
+	if not Library or not Library.Flags or not Library.Flags["InstantPP"] then
 		return
 	end
 	for pp in pairs(PromptCache._prompts) do
@@ -1743,20 +1749,20 @@ end
 -- EMERGENCY UTILITIES (Candles, Safes, etc.)
 -----------------------------------------------------------------
 function autoBlowCandles()
-	if not Library.Flags["AutoBlowCandles"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoBlowCandles"] then
 		return
 	end
-	local m, pp = PromptCache:GetNearestPrompt("Blow out")
+	local m = PromptCache:GetNearestPrompt("Blow out")
 	if m then
 		fireModelPrompt(m, "Blow out")
 	end
 end
 
 function autoOpenSafes()
-	if not Library.Flags["AutoOpenSafes"] then
+	if not Library or not Library.Flags or not Library.Flags["AutoOpenSafes"] then
 		return
 	end
-	local m, pp = PromptCache:GetNearestPrompt("Open")
+	local m = PromptCache:GetNearestPrompt("Open")
 	if m and m.Name:lower():find("safe") then
 		fireModelPrompt(m, "Open")
 	end
@@ -1808,7 +1814,7 @@ function toggleFly(enabled)
 			flyConn:Disconnect()
 		end
 		flyConn = RunService.RenderStepped:Connect(function()
-			if not Library.Flags["Fly"] then
+			if not Library or not Library.Flags or not Library.Flags["Fly"] then
 				toggleFly(false)
 				return
 			end
@@ -1866,7 +1872,7 @@ function toggleNoclip(enabled)
 		return
 	end
 	ncConn = RunService.Stepped:Connect(function()
-		if not Library.Flags["Noclip"] then
+		if not Library or not Library.Flags or not Library.Flags["Noclip"] then
 			if ncConn then
 				ncConn:Disconnect()
 				ncConn = nil
@@ -1885,7 +1891,7 @@ function toggleNoclip(enabled)
 end
 
 local infiniteJumpConn = UserInputService.JumpRequest:Connect(function()
-	if Library.Flags["InfiniteJump"] then
+	if Library and Library.Flags and Library.Flags["InfiniteJump"] then
 		local hum = getHumanoid()
 		if hum then
 			hum:ChangeState(Enum.HumanoidStateType.Jumping)
@@ -1947,13 +1953,13 @@ function createEsp(target, color, text)
 end
 
 function updateESP()
-	if not Library.Flags["ESPEnabled"] then
+	if not Library or not Library.Flags or not Library.Flags["ESPEnabled"] then
 		clearESP()
 		return
 	end
 	clearESP()
 
-	if Library.Flags["ESPPlayers"] then
+	if Library and Library.Flags and Library.Flags["ESPPlayers"] then
 		for _, plr in ipairs(Players:GetPlayers()) do
 			if plr ~= client and plr.Character then
 				createEsp(plr.Character, Color3.fromRGB(0, 170, 255), plr.Name)
@@ -1961,7 +1967,7 @@ function updateESP()
 		end
 	end
 
-	if Library.Flags["ESPPatients"] then
+	if Library and Library.Flags and Library.Flags["ESPPatients"] then
 		local npcs = Workspace:FindFirstChild("NPCs")
 		if npcs then
 			for _, m in ipairs(npcs:GetChildren()) do
@@ -1972,7 +1978,7 @@ function updateESP()
 		end
 	end
 
-	if Library.Flags["ESPMonsters"] then
+	if Library and Library.Flags and Library.Flags["ESPMonsters"] then
 		for _, m in ipairs(MonsterCache:GetMonsters()) do
 			local name = m.Name:lower()
 			if name:find("monster") or name:find("shadow") or name:find("tallmonster") then
@@ -1981,7 +1987,7 @@ function updateESP()
 		end
 	end
 
-	if Library.Flags["ESPAnomalies"] then
+	if Library and Library.Flags and Library.Flags["ESPAnomalies"] then
 		for _, m in ipairs(MonsterCache:GetMonsters()) do
 			local name = m.Name:lower()
 			if name:find("anomaly") or name:find("eyemass") or name:find("stalker") or isSkinwalker(m) then
@@ -2490,10 +2496,10 @@ interval("autofarm", "AutoFarm", 0.75, function()
 
 	-- 3. New Patient Check-In & Registration (Priority 2)
 	if Library and Library.Flags then
-		if Library.Flags["AutoCheckIn"] and scanIdentity() then
+		if Library and Library.Flags and Library.Flags["AutoCheckIn"] and scanIdentity() then
 			return
 		end
-		if Library.Flags["VisitorFlow"] and handleVisitorFlow() then
+		if Library and Library.Flags and Library.Flags["VisitorFlow"] and handleVisitorFlow() then
 			return
 		end
 	end
@@ -2549,10 +2555,10 @@ end)
 
 local charConn = client.CharacterAdded:Connect(function()
 	task.wait(0.6)
-	if Library.Flags["Fly"] then
+	if Library and Library.Flags and Library.Flags["Fly"] then
 		toggleFly(true)
 	end
-	if Library.Flags["Noclip"] then
+	if Library and Library.Flags and Library.Flags["Noclip"] then
 		toggleNoclip(true)
 	end
 end)
