@@ -1172,33 +1172,35 @@ function followObjective()
 end
 
 function scanIdentity()
-	if not Library.Flags["AutoCheckIn"] then
-		return
+	if not Library or not Library.Flags or not Library.Flags["AutoCheckIn"] then
+		return false
 	end
 	if State.CheckedInPatients >= State.MaxCheckIns then
-		return
+		return false
 	end
 
 	-- Safety skinwalker intercept before checking in
 	if checkAndRejectSkinwalker() then
-		return
+		return true
 	end
 
 	local model, pp = PromptCache:GetNearestPrompt("Scan Identity")
 	if model then
 		if fireModelPrompt(model, "Scan Identity") then
 			State.CheckedInPatients = State.CheckedInPatients + 1
+			return true
 		end
 	end
+	return false
 end
 
 function handleVisitorFlow()
-	if not Library.Flags["VisitorFlow"] then
-		return
+	if not Library or not Library.Flags or not Library.Flags["VisitorFlow"] then
+		return false
 	end
 	local obj = State.CurrentObjective
 	if obj and (obj:lower():find("follow") or obj:lower():find("wait")) then
-		return
+		return false
 	end
 
 	local order = {
@@ -1216,11 +1218,28 @@ function handleVisitorFlow()
 	for _, at in ipairs(order) do
 		local model, pp = PromptCache:GetNearestPrompt(at)
 		if model then
-			fireModelPrompt(model, at)
-			return
+			if fireModelPrompt(model, at) then
+				return true
+			end
 		end
 	end
+	return false
 end
+
+local SYNONYMS = {
+	["head_ache"] = "Head Ache",
+	["headache"] = "Head Ache",
+	["head ache"] = "Head Ache",
+	["stomachache"] = "Stomach Ache",
+	["stomach_ache"] = "Stomach Ache",
+	["stomach ache"] = "Stomach Ache",
+	["dry_eyes"] = "Dried Eyes",
+	["dry eyes"] = "Dried Eyes",
+	["dried eyes"] = "Dried Eyes",
+	["low_sugar"] = "Low Sugar",
+	["low sugar"] = "Low Sugar",
+	["canadian"] = "Canadian",
+}
 
 local KNOWN_CURES = {
 	["IV Drops"] = true,
@@ -1245,6 +1264,11 @@ local function getIllnessData(illnessName)
 	if not illnessName then
 		return nil
 	end
+
+	-- Clean and normalize name
+	local cleanName = string.lower(illnessName):gsub("^%s*(.-)%s*$", "%1")
+	local normalized = SYNONYMS[cleanName] or illnessName
+
 	local ok, module = pcall(function()
 		return ReplicatedStorage:FindFirstChild("Data", true):FindFirstChild("IllnessesAndCures")
 	end)
@@ -1257,13 +1281,16 @@ local function getIllnessData(illnessName)
 	end
 
 	if data.GetIllness then
-		local ok3, res = pcall(data.GetIllness, illnessName)
+		local ok3, res = pcall(data.GetIllness, normalized)
 		if ok3 then
 			return res
 		end
 	end
+
+	-- Fuzzy matching
 	for k, v in pairs(data) do
-		if tostring(k):lower():find(illnessName:lower()) then
+		local keyLower = tostring(k):lower()
+		if keyLower:find(normalized:lower(), 1, true) or normalized:lower():find(keyLower, 1, true) then
 			return v
 		end
 	end
@@ -1306,7 +1333,7 @@ end
 
 function handleRoomTreatment()
 	if not Library or not Library.Flags or not Library.Flags["RoomTreatment"] then
-		return
+		return false
 	end
 
 	local treatmentATs = {
@@ -1366,13 +1393,16 @@ function handleRoomTreatment()
 				equipMedicine()
 			end
 		end
-		fireModelPrompt(c.Model, c.Text)
+		if fireModelPrompt(c.Model, c.Text) then
+			return true
+		end
 	end
+	return false
 end
 
 function handleEmergency()
-	if not Library.Flags["EmergencyRooms"] then
-		return
+	if not Library or not Library.Flags or not Library.Flags["EmergencyRooms"] then
+		return false
 	end
 
 	for pp in pairs(PromptCache._prompts) do
@@ -1381,12 +1411,14 @@ function handleEmergency()
 			if model and not isPatientOwned(model) then
 				local name = model.Name
 				if name:find("Ambulance") or name:find("Critical") or name:find("Emergency") then
-					fireModelPrompt(model)
-					return
+					if fireModelPrompt(model) then
+						return true
+					end
 				end
 			end
 		end
 	end
+	return false
 end
 
 function startShift()
@@ -2447,22 +2479,47 @@ end)
 
 -- Main high-performance in-game loop
 interval("autofarm", "AutoFarm", 0.75, function()
+	-- 1. Critical Safety & Environmental Hazards (Always active)
+	fleeMonsters()
+	stalkerHandler()
+
+	-- 2. Follow Core Game Directive (Priority 1)
 	if followObjective() then
 		return
 	end
-	scanIdentity()
-	handleVisitorFlow()
-	handleRoomTreatment()
-	handleEmergency()
+
+	-- 3. New Patient Check-In & Registration (Priority 2)
+	if Library and Library.Flags then
+		if Library.Flags["AutoCheckIn"] and scanIdentity() then
+			return
+		end
+		if Library.Flags["VisitorFlow"] and handleVisitorFlow() then
+			return
+		end
+	end
+
+	-- 4. Admitted Patient Treatment (Priority 3)
+	if Library and Library.Flags and Library.Flags["RoomTreatment"] then
+		if handleRoomTreatment() then
+			return
+		end
+	end
+
+	-- 5. Emergency & Ambulance Rooms (Priority 4)
+	if Library and Library.Flags and Library.Flags["EmergencyRooms"] then
+		if handleEmergency() then
+			return
+		end
+	end
+
+	-- 6. General QoL Subsystems & Exploits (Priority 5)
 	startShift()
 	handleFainted()
 	handlePeopleOnFire()
 	handleEyeMass()
-	fleeMonsters()
 	handleFixCams()
 	handleTakeDNA()
 	helpLiz()
-	stalkerHandler()
 	autoBuyItems()
 	handleInventory()
 	autoTaseCritical()
