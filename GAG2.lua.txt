@@ -16,6 +16,7 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local TeleportService = game:GetService("TeleportService")
+local TweenService = game:GetService("TweenService")
 
 local client = Players.LocalPlayer
 
@@ -824,12 +825,25 @@ local function setCollide(on)
         end
     end
 end
-local function teleport(pos)
+local function teleport(pos, instant)
     local rootPart = getHRP()
     if not (rootPart and pos) then
         return
     end
     local target = pos + Vector3.new(0, 3, 0)
+
+    -- optional tween mode (Speed Hub style smooth movement; evasion passes instant=true)
+    if Library.Flags["tpTween"] and not instant then
+        local dist = (target - rootPart.Position).Magnitude
+        local speed = math.max(10, tonumber(Library.Flags["tpTweenSpeed"]) or 60)
+        local dur = math.clamp(dist / speed, 0.1, 2.5)
+        pcall(function()
+            local tween = TweenService:Create(rootPart, TweenInfo.new(dur, Enum.EasingStyle.Linear), { CFrame = CFrame.new(target) })
+            tween:Play()
+            tween.Completed:Wait()
+        end)
+        return
+    end
 
     local restore = not Library.Flags["noClip"]
     if restore then
@@ -1106,6 +1120,42 @@ local function getPetList()
     table.sort(list)
     return list
 end
+-- all species in the game (PetData catalog), sorted alphabetically
+local function getAllPetSpecies()
+    local seen, list = {}, {}
+    for key, val in pairs(PetCache or {}) do
+        if type(key) == "string" and type(val) == "table" and not seen[key] then
+            seen[key] = true
+            list[#list + 1] = key
+        end
+    end
+    table.sort(list)
+    return list
+end
+
+-- normalize names for matching: lowercase, strip spaces/punctuation
+-- so "Golden Dragonfly" == "GoldenDragonfly" (game mixes DisplayName vs internal keys)
+local function normName(name)
+    return tostring(name or ""):lower():gsub("[%s%p]+", "")
+end
+
+-- rarity lookup per species from PetData (normalized-key map rebuilt lazily)
+local _petRarityCache = nil
+local function getSpeciesRarity(species)
+    if not _petRarityCache then
+        _petRarityCache = {}
+        for key, val in pairs(PetCache or {}) do
+            if type(val) == "table" and type(val.Rarity) == "string" then
+                _petRarityCache[normName(key)] = val.Rarity
+                if type(val.DisplayName) == "string" then
+                    _petRarityCache[normName(val.DisplayName)] = val.Rarity
+                end
+            end
+        end
+    end
+    return _petRarityCache[normName(species)]
+end
+
 local function getWildList()
     local list = {}
     for k, v in pairs(PetCache or {}) do
@@ -2113,6 +2163,9 @@ local function doPlant()
     elseif type(seedFilter) == "string" and seedFilter ~= "" then
         hasFilter = true
     end
+    if Library.Flags["autoPlantAll"] then
+        hasFilter = false -- Auto Plant All ignores the seed dropdown entirely
+    end
     local toPlant = {}
     if Library.Flags["smartReplant"] then
         local bestSeedName, bestSeedValue = getBestSeed()
@@ -2297,7 +2350,7 @@ local function doSteal()
                                 local phrp = pl.Character:FindFirstChild("HumanoidRootPart")
                                 local myhrp = getHRP()
                                 if phrp and myhrp and (phrp.Position - myhrp.Position).Magnitude < 18 then
-                                    teleport(myhrp.Position + Vector3.new(0, 35, 0))
+                                    teleport(myhrp.Position + Vector3.new(0, 35, 0), true)
                                     break
                                 end
                             end
@@ -2749,6 +2802,9 @@ local function doMailboxSend()
 end
 
 local function doMailboxClaim()
+    -- new game packet: one-call claim-all (2026-07-28 update); per-id loop below is the cleanup
+    netFire("Mailbox.ClaimAll")
+    task.wait(1)
     local list = netCall("Mailbox.List")
     if not (type(list) == "table") then
         return
@@ -3211,12 +3267,26 @@ local function doAutoBuyPet()
         return
     end
     local bought = 0
+    local wantSpecies = firstValue(Library.Flags["buyPet"] or {})
+    local wantRarity = firstValue(Library.Flags["buyPetRarity"] or {})
+    local wantRarityIdx = (wantRarity and wantRarity ~= "Any") and (RARITY_ORDER[wantRarity] or 0) or 0
     for _, pet in ipairs(spawns:GetChildren()) do
         local part = pet:IsA("BasePart") and pet or pet:FindFirstChildWhichIsA("BasePart", true)
         if part then
+            local species = part:GetAttribute("PetName") or part.Parent and part.Parent:GetAttribute("PetName")
             local price = part:GetAttribute("Price")
             local owner = part:GetAttribute("OwnerUserId")
-            if type(price) == "number" and price > 0 and price <= maxPrice and price <= balance then
+            local pass = true
+            if wantSpecies and species and normName(species) ~= normName(wantSpecies) then
+                pass = false
+            end
+            if pass and wantRarityIdx > 0 and species then
+                local rarity = getSpeciesRarity(species)
+                if rarity and (RARITY_ORDER[rarity] or 0) < wantRarityIdx then
+                    pass = false
+                end
+            end
+            if pass and type(price) == "number" and price > 0 and price <= maxPrice and price <= balance then
                 if not owner or owner == 0 then
                     netFire("Pets.WildPetTame", pet)
                     balance = balance - price
@@ -3568,6 +3638,8 @@ local PERSISTENT_FLAGS = {
     "autoBuyPetSlot",
     "autoHopPet",
     "hopPetSpecies",
+    "tpTween",
+    "tpTweenSpeed",
     "autoSave",
 }
 local function saveSettings()
@@ -3656,14 +3728,14 @@ Home:createButton({
         upd(Main, "stealFruit", getCropList())
         upd(Main, "sellFruit", getCropList())
         upd(Main, "sellPet", getPetList())
-        upd(Main, "buyPet", getPetList())
+        upd(Main, "buyPet", getAllPetSpecies())
         upd(Main, "tameAnimals", getWildList())
         upd(Main, "equipList", getPetList())
         upd(Shop, "buySeed", getSeedList())
         upd(Shop, "buyGear", getGearList())
         upd(Shop, "buyCrate", getCrateList())
         upd(Misc, "espFruit", getCropList())
-        upd(Misc, "espPet", getPetList())
+        upd(Misc, "espPet", getAllPetSpecies())
         notify("Lists", "All dropdowns refreshed")
     end,
 })
@@ -3730,12 +3802,10 @@ createIntervalToggle(
     Main,
     { Name = "Auto Plant Seed", flagName = "autoPlant", tag = "autoPlant", delay = 1.2, Step = doPlant }
 )
-Main:createToggle({
-    Name = "Auto Plant All Seeds",
-    Flag = false,
-    flagName = "autoPlantAll",
-    Description = "Plant all seed types without filter.",
-})
+createIntervalToggle(
+    Main,
+    { Name = "Auto Plant All Seeds", flagName = "autoPlantAll", tag = "autoPlantAll", delay = 1.2, Step = doPlant }
+)
 Main:createToggle({
     Name = "Smart Replant",
     Flag = false,
@@ -4103,7 +4173,7 @@ Auto:createLabel({ Name = "Buy Pets", Special = true })
 Auto:createDropdown({
     Name = "Select Pet to Buy",
     flagName = "buyPet",
-    List = getPetList(),
+    List = getAllPetSpecies(),
     Description = "Which pet type to auto-purchase.",
 })
 Auto:createDropdown({
@@ -4285,7 +4355,7 @@ Auto:createButton({
         end
         upd("tameAnimals", getWildList())
         upd("equipList", getPetList())
-        upd("buyPet", getPetList())
+        upd("buyPet", getAllPetSpecies())
         upd("sellPet", getPetList())
     end,
 })
@@ -4326,6 +4396,19 @@ local GOOD_PETS = {
     ["Red Giant Ant"] = true,
     Snail = true,
 }
+-- extend with every Legendary+ species from live PetData (self-heals on game updates)
+for _gpKey, _gpVal in pairs(PetCache or {}) do
+    if type(_gpVal) == "table"
+        and (_gpVal.Rarity == "Legendary" or _gpVal.Rarity == "Mythic" or _gpVal.Rarity == "Super" or _gpVal.Rarity == "Divine")
+    then
+        if type(_gpKey) == "string" then
+            GOOD_PETS[_gpKey] = true
+        end
+        if type(_gpVal.DisplayName) == "string" then
+            GOOD_PETS[_gpVal.DisplayName] = true
+        end
+    end
+end
 createIntervalToggle(Main, {
     Name = "Full Auto Mode",
     flagName = "autoProgress",
@@ -5276,7 +5359,7 @@ Misc:createLabel({ Name = "ESP Spawned Pets", Special = true })
 Misc:createDropdown({
     Name = "Select Pets",
     flagName = "espPet",
-    List = getPetList(),
+    List = getAllPetSpecies(),
     Description = "Which spawned pet type to ESP.",
 })
 Misc:createDropdown({
@@ -5328,7 +5411,7 @@ Misc:createButton({
             end
         end
         upd("espFruit", getCropList())
-        upd("espPet", getPetList())
+        upd("espPet", getAllPetSpecies())
         notify("ESP", "Lists refreshed")
     end,
 })
@@ -5439,6 +5522,20 @@ Misc:createSlider({
 })
 
 Misc:createLabel({ Name = "Teleport", Special = true })
+Misc:createToggle({
+    Name = "Tween Teleport",
+    Flag = false,
+    flagName = "tpTween",
+    Description = "Smooth tween movement instead of instant hops (looks more natural).",
+})
+Misc:createSlider({
+    Name = "Tween Speed",
+    flagName = "tpTweenSpeed",
+    value = 60,
+    minValue = 20,
+    maxValue = 200,
+    Description = "Studs per second when Tween Teleport is enabled.",
+})
 local function tpBtn(label, pad)
     Misc:createButton({
         Name = label,
