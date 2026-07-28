@@ -792,6 +792,14 @@ local function myPlot()
     if not g then
         return nil
     end
+    -- fast path: game stamps PlotId on the local player (kaitun scripts use this)
+    local pid = client:GetAttribute("PlotId")
+    if pid then
+        local fast = g:FindFirstChild("Plot" .. tostring(pid))
+        if fast then
+            return fast
+        end
+    end
     for _, plot in ipairs(g:GetChildren()) do
         if plot:GetAttribute("OwnerUserId") == client.UserId then
             return plot
@@ -2024,6 +2032,22 @@ local function doHarvest(forceAll)
         targets = { targets[1] }
     end
 
+    -- build a fruitId -> HarvestPrompt index so we can trigger the game's own prompt
+    -- (MaxActivationDistance=math.huge = distance-free; the game's handler validates + fires)
+    local promptIndex = {}
+    for _, prompt in ipairs(CollectionService:GetTagged("HarvestPrompt")) do
+        if prompt:IsA("ProximityPrompt") then
+            local cur = prompt.Parent
+            while cur do
+                if cur:IsA("Model") and cur:GetAttribute("FruitId") then
+                    promptIndex[tostring(cur:GetAttribute("FruitId"))] = prompt
+                    break
+                end
+                cur = cur.Parent
+            end
+        end
+    end
+
     if #targets > 0 then
         local plot = myPlot()
         local ref = plot and plot:FindFirstChild("PlotSizeReference")
@@ -2048,6 +2072,17 @@ local function doHarvest(forceAll)
                 break
             end
             if not skip then
+                local hp = entry.fruitId and promptIndex[tostring(entry.fruitId)]
+                if hp and hp.Enabled then
+                    pcall(function()
+                        local oldDist = hp.MaxActivationDistance
+                        hp.MaxActivationDistance = math.huge
+                        hp:InputHoldBegin()
+                        task.wait(math.max(tonumber(hp.HoldDuration) or 0, 0.05) + 0.03)
+                        hp:InputHoldEnd()
+                        hp.MaxActivationDistance = oldDist
+                    end)
+                end
                 netFire("Garden.CollectFruit", entry.plantId, entry.fruitId)
                 collected = collected + 1
                 task.wait(jitter(tonumber(Library.Flags["collectDelay"]) or 0.05, 0.02))
@@ -2658,6 +2693,8 @@ local function doMailboxSend()
     if not userId then
         return
     end
+    -- game client format (StarterPlayerScripts): { Category, ItemKey, Count } entries,
+    -- SendBatch:Fire(userId, entries, note) -> (success:boolean, message:string)
     local items = {}
     -- seeds: respect sendSeed dropdown and sendSeedAmount
     if Library.Flags["autoSendSeed"] and playerData.Inventory and playerData.Inventory.Seeds then
@@ -2670,25 +2707,44 @@ local function doMailboxSend()
                     amt = math.min(count, math.max(0, tonumber(amountStr) or 0))
                 end
                 if amt > 0 then
-                    items[#items + 1] = { Type = "Seed", Name = name, Count = amt }
+                    items[#items + 1] = { Category = "Seeds", ItemKey = name, Count = amt }
                 end
             end
         end
     end
-    -- pets: respect sendPet dropdown
+    -- pets: respect sendPet dropdown (equipped pets cannot be mailed - unequip first)
     if Library.Flags["autoSendPet"] and playerData.Inventory and playerData.Inventory.Pets then
+        local equipped = netCall("Pets.GetEquippedPets")
+        if type(equipped) == "table" then
+            for _, pet in pairs(equipped) do
+                if type(pet) == "table" and pet.Id then
+                    netFire("Pets.RequestUnequip", tostring(pet.Id))
+                    task.wait(0.25)
+                end
+            end
+        end
         local target = firstValue(Library.Flags["sendPet"] or {})
         for uid, info in pairs(playerData.Inventory.Pets) do
             if type(info) == "table" then
                 local nm = info.PetType or info.Name
                 if not target or (nm and nm:lower() == target:lower()) then
-                    items[#items + 1] = { Type = "Pet", UID = uid }
+                    items[#items + 1] = { Category = "Pets", ItemKey = uid, Count = 1 }
                 end
             end
         end
     end
-    if #items > 0 then
-        netFire("Mailbox.SendBatch", userId, items, note)
+    -- send in chunks of 20 (matches game client pacing), check the response
+    for i = 1, #items, 20 do
+        local chunk = {}
+        for j = i, math.min(i + 19, #items) do
+            chunk[#chunk + 1] = items[j]
+        end
+        local res = netCall("Mailbox.SendBatch", userId, chunk, note)
+        if type(res) == "table" and res[1] == false then
+            notify("Mail", "Send failed: " .. tostring(res[2] or "unknown"), "warn")
+            return
+        end
+        task.wait(1)
     end
 end
 
@@ -3509,6 +3565,9 @@ local PERSISTENT_FLAGS = {
     "autoEquip",
     "equipList",
     "tameAnimals",
+    "autoBuyPetSlot",
+    "autoHopPet",
+    "hopPetSpecies",
     "autoSave",
 }
 local function saveSettings()
@@ -4118,6 +4177,71 @@ Auto:createDropdown({
     List = getWildList(),
     multi = true,
     Description = "Which wild pets to tame. Leave empty for any.",
+})
+
+createIntervalToggle(Auto, {
+    Name = "Auto Buy Pet Slot",
+    flagName = "autoBuyPetSlot",
+    tag = "autoBuyPetSlot",
+    delay = 30,
+    Step = function()
+        -- server gates on cost; fires Pets.RequestPurchasePetSlot()
+        netFire("Pets.RequestPurchasePetSlot")
+    end,
+})
+
+local _lastHopPetFound = nil
+createIntervalToggle(Auto, {
+    Name = "Server Hop To Wild Pet",
+    flagName = "autoHopPet",
+    tag = "autoHopPet",
+    delay = 8,
+    Step = function()
+        -- hop low-pop servers until the chosen wild pet spawns here (certz pet-hopper technique)
+        local wilds = Workspace:FindFirstChild("Map")
+        wilds = wilds and wilds:FindFirstChild("WildPetRef")
+        local foundSpecies = nil
+        if wilds then
+            local anySel = type(Library.Flags["hopPetSpecies"]) == "table" and #Library.Flags["hopPetSpecies"] > 0
+            for _, pet in ipairs(wilds:GetChildren()) do
+                local species = pet:GetAttribute("PetName") or pet:GetAttribute("Type")
+                if species then
+                    if not anySel then
+                        foundSpecies = species
+                        break
+                    end
+                    for _, f in ipairs(Library.Flags["hopPetSpecies"]) do
+                        if species:lower() == f:lower() then
+                            foundSpecies = species
+                            break
+                        end
+                    end
+                    if foundSpecies then
+                        break
+                    end
+                end
+            end
+        end
+        if foundSpecies then
+            if _lastHopPetFound ~= foundSpecies then
+                _lastHopPetFound = foundSpecies
+                notify("Pet Finder", "Wild pet on this server: " .. tostring(foundSpecies), "info")
+                if Library.Flags["whPetPurchase"] then
+                    sendWebhook("Wild Pet Found", tostring(foundSpecies) .. " is on this server!", 5763719)
+                end
+            end
+        else
+            _lastHopPetFound = nil
+            serverHop(true)
+        end
+    end,
+})
+Auto:createDropdown({
+    Name = "Hop Pet Species",
+    flagName = "hopPetSpecies",
+    List = getWildList(),
+    multi = true,
+    Description = "Which wild pets to look for while hopping. Leave empty for any wild pet.",
 })
 createIntervalToggle(Auto, {
     Name = "Auto Equip Best Pets",
