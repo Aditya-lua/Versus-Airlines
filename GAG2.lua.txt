@@ -1,9 +1,3 @@
--- ===============================================================
--- GAG2 - Grow a Garden 2 | Versus Airlines Hub
--- 9-tab layout with verified remotes, shop prediction overlay, live tracking
---   Weather Alerts & Timers - Pet Purchase Protection - Full Auto Mode
--- ===============================================================
-
 -- services
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
@@ -793,7 +787,7 @@ local function myPlot()
     if not g then
         return nil
     end
-    -- fast path: game stamps PlotId on the local player (kaitun scripts use this)
+    -- fast path: game stamps PlotId on the local player
     local pid = client:GetAttribute("PlotId")
     if pid then
         local fast = g:FindFirstChild("Plot" .. tostring(pid))
@@ -832,7 +826,7 @@ local function teleport(pos, instant)
     end
     local target = pos + Vector3.new(0, 3, 0)
 
-    -- optional tween mode (Speed Hub style smooth movement; evasion passes instant=true)
+    -- optional tween mode (smooth movement; evasion passes instant=true)
     if Library.Flags["tpTween"] and not instant then
         local dist = (target - rootPart.Position).Magnitude
         local speed = math.max(10, tonumber(Library.Flags["tpTweenSpeed"]) or 60)
@@ -4267,7 +4261,7 @@ createIntervalToggle(Auto, {
     tag = "autoHopPet",
     delay = 8,
     Step = function()
-        -- hop low-pop servers until the chosen wild pet spawns here (certz pet-hopper technique)
+        -- hop low-pop servers until the chosen wild pet spawns here
         local wilds = Workspace:FindFirstChild("Map")
         wilds = wilds and wilds:FindFirstChild("WildPetRef")
         local foundSpecies = nil
