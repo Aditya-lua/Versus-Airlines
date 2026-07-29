@@ -121,111 +121,6 @@ local StabilityEngine = {
     end,
 }
 
--- Gag2.gg Live API & Predictions Engine
-local Gag2API = {
-    Predictions = { seed = {}, gear = {}, crate = {} },
-    Stock = { seed = {}, gear = {}, crate = {} },
-    Weather = { current = nil, upcomingMoons = {} },
-    SellMultipliers = {},
-    LastFetch = 0,
-    FetchInterval = 3,
-
-    _decodeResponse = function(self, text)
-        if not text or text == "" then
-            return nil
-        end
-        if text:sub(1, 2) == "ey" then
-            local ok, dec = pcall(function()
-                return HttpService:JSONDecode(HttpService:Base64Decode(text))
-            end)
-            if ok and dec then
-                return dec
-            end
-        end
-        local ok2, dec2 = pcall(function()
-            return HttpService:JSONDecode(text)
-        end)
-        return ok2 and dec2 or nil
-    end,
-
-    FetchLive = function(self)
-        local now = os.clock()
-        if now - self.LastFetch < self.FetchInterval then
-            return
-        end
-        self.LastFetch = now
-
-        task.spawn(function()
-            if not Platform.Request then
-                return
-            end
-            local ok1, resp1 =
-                pcall(Platform.Request, { Url = "https://api.gag2.gg/api/live/predictions/items", Method = "GET" })
-            if ok1 and resp1 and resp1.Body then
-                local data = self:_decodeResponse(resp1.Body)
-                if data and data.items then
-                    self.Predictions = data.items
-                end
-            end
-            local ok2, resp2 = pcall(Platform.Request, { Url = "https://api.gag2.gg/api/live/weather", Method = "GET" })
-            if ok2 and resp2 and resp2.Body then
-                local data = self:_decodeResponse(resp2.Body)
-                if data and data.weather then
-                    self.Weather = data.weather
-                end
-            end
-            local ok3, resp3 = pcall(Platform.Request, { Url = "https://api.gag2.gg/api/live/stock", Method = "GET" })
-            if ok3 and resp3 and resp3.Body then
-                local data = self:_decodeResponse(resp3.Body)
-                if data and data.stock then
-                    for _, catEntry in ipairs(data.stock) do
-                        if catEntry.category and self.Stock[catEntry.category] then
-                            self.Stock[catEntry.category] = catEntry
-                        end
-                    end
-                end
-            end
-            local ok4, resp4 = pcall(Platform.Request, { Url = "https://api.gag2.gg/api/live/sell", Method = "GET" })
-            if ok4 and resp4 and resp4.Body then
-                local data = self:_decodeResponse(resp4.Body)
-                if data and data.sell and data.sell.entries then
-                    self.SellMultipliers = data.sell.entries
-                end
-            end
-        end)
-    end,
-
-    GetPredictedRestockText = function(self, categoryName)
-        local cat = categoryName:lower():gsub("shop", "")
-        local items = self.Predictions[cat]
-        if not items or #items == 0 then
-            local liveStock = self.Stock[cat]
-            if liveStock and liveStock.nextRestockAt then
-                return "Restocking around " .. tostring(liveStock.nextRestockAt):sub(12, 19) .. " UTC"
-            end
-            return "No live prediction (Local backup active)"
-        end
-        local bestNext = math.huge
-        local summary = {}
-        for _, item in ipairs(items) do
-            if item.nextBoundary and item.nextBoundary < bestNext then
-                bestNext = item.nextBoundary
-            end
-            if item.upcoming and item.upcoming[1] then
-                table.insert(summary, (item.name or item.key) .. " (x" .. tostring(item.upcoming[1].qty or "?") .. ")")
-            end
-        end
-        if #summary == 0 then
-            return "In stock / No immediate restock"
-        end
-        local timeRemaining = math.max(0, bestNext - os.time())
-        local timeStr = timeRemaining > 0
-                and (math.floor(timeRemaining / 60) .. "m " .. (timeRemaining % 60) .. "s")
-            or "Now"
-        return "In " .. timeStr .. ": " .. table.concat(summary, ", ")
-    end,
-}
-
 -- load library
 print("Loading Library...")
 local Library
@@ -601,8 +496,120 @@ if FruitValueCalc and SeedData then
     end
 end
 
-local MUT_BONUS = 2.35
-local SIZE_EXP = 2.65
+-- exact game value engine (cloned from the game's own FruitValueCalc module code)
+local ValueDB = {
+    sellFallback = {
+        Carrot = 5, Strawberry = 3, Tomato = 9, Blueberry = 5, Apple = 12, Bamboo = 800,
+        Cactus = 40, Pineapple = 30, ["Green Bean"] = 10, Banana = 35, Grape = 45,
+        Mushroom = 13000, ["Rocket Pop"] = 22500, Coconut = 60, Mango = 90,
+        ["Dragon Fruit"] = 150, Acorn = 200, Cherry = 350, ["Fire Fern"] = 900,
+        Sunflower = 1750, ["Venus Fly Trap"] = 3000, Pomegranate = 900,
+        ["Poison Apple"] = 900, ["Moon Bloom"] = 8500, ["Sun Bloom"] = 9000,
+        ["Dragon's Breath"] = 3400, ["Hypno Bloom"] = 9500, ["Poison Ivy"] = 1700,
+        ["Glow Mushroom"] = 700, ["Ghost Pepper"] = 2500, ["Horned Melon"] = 200,
+        Corn = 34, ["Baby Cactus"] = 70, Tulip = 60, ["Venom Spitter"] = 3800,
+        ["Briar Rose"] = 6500, ["Eclipse Bloom"] = 12000, ["Star Fruit"] = 6000,
+    },
+    mutPrice = {
+        Gold = 10, Rainbow = 30, Electric = 25, Frozen = 14, Bloodlit = 60, Chained = 8,
+        Starstruck = 50, Aurora = 1.5, Ignited = 60, Glow = 100, Eclipsed = 80,
+        Solarflare = 5, Pizza = 5,
+    },
+    sizeExpOverrides = { Mushroom = 1.9, Bamboo = 1.75 },
+    sellLive = nil,
+    mutLive = nil,
+    baseWeight = {},
+    singleHarvest = {},
+}
+mod = tryRequire(function()
+    local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+    return require(sm:FindFirstChild("SellValueData") or sm:WaitForChild("SellValueData", 5))
+end)
+if type(mod) == "table" then
+    ValueDB.sellLive = mod
+end
+mod = tryRequire(function()
+    local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+    return require(sm:FindFirstChild("MutationData") or sm:WaitForChild("MutationData", 5))
+end)
+if type(mod) == "table" and type(mod.ReturnPriceMultiplier) == "function" then
+    ValueDB.mutLive = mod
+end
+do
+    local pgm = ReplicatedStorage:FindFirstChild("PlantGenerationModules")
+    local fruitsFolder = pgm and pgm:FindFirstChild("Fruits")
+    for _, seedEntry in ipairs(SeedData or {}) do
+        if type(seedEntry) == "table" and seedEntry.SeedName then
+            ValueDB.singleHarvest[seedEntry.SeedName] = seedEntry.IsSingleHarvest == true
+            if fruitsFolder then
+                local fmod = fruitsFolder:FindFirstChild(seedEntry.SeedName)
+                local reqd = fmod and tryRequire(function()
+                    return require(fmod)
+                end)
+                local gd = type(reqd) == "table" and reqd.GrowData
+                ValueDB.baseWeight[seedEntry.SeedName] = (gd and tonumber(gd.BaseWeight)) or 1
+            else
+                ValueDB.baseWeight[seedEntry.SeedName] = 1
+            end
+        end
+    end
+end
+local ValueEngine = {}
+-- exact clone of the game's FruitValueCalc(seedName, weightKg, mutationName, player, freshness)
+function ValueEngine.compute(crop, weight, mutationName, baseOnly)
+    if not crop or crop == "" then
+        return 0
+    end
+    weight = tonumber(weight) or 1
+    if weight <= 0 then
+        weight = 1
+    end
+    if type(mutationName) ~= "string" or mutationName == "" then
+        mutationName = nil
+    end
+    if FruitValueCalc then
+        local okv, vv = pcall(FruitValueCalc, crop, weight, baseOnly and nil or mutationName, client, nil)
+        if okv and type(vv) == "number" and vv >= 0 then
+            return vv
+        end
+    end
+    local base = ValueDB.sellLive and tonumber(ValueDB.sellLive[crop]) or nil
+    if not base or base <= 0 then
+        base = ValueDB.sellFallback[crop] or (SeedBaseValue and SeedBaseValue[crop]) or 0
+    end
+    if base <= 0 then
+        return 0
+    end
+    local sizeExp = ValueDB.sizeExpOverrides[crop] or 2.65
+    local sizeMult
+    if weight > 5 then
+        -- diminishing returns: knee at 5kg, tail exponent min(1.5, sizeExp)
+        sizeMult = (5 ^ sizeExp) * ((weight / 5) ^ math.min(1.5, sizeExp))
+    else
+        sizeMult = weight ^ sizeExp
+    end
+    local mutMult = 1
+    if mutationName and not baseOnly then
+        if ValueDB.mutLive then
+            local okm, mm = pcall(ValueDB.mutLive.ReturnPriceMultiplier, mutationName)
+            mutMult = (okm and tonumber(mm)) or 0
+        end
+        if mutMult <= 1 then
+            mutMult = ValueDB.mutPrice[mutationName] or 1
+        end
+        if ValueDB.singleHarvest[crop] and mutMult > 1 then
+            mutMult = 1 + (mutMult - 1) * 0.15
+        end
+    end
+    return math.floor(base * sizeMult * mutMult)
+end
+-- display weight (kg) of a plant/fruit model: BaseWeight * SizeMulti
+function ValueEngine.weightOf(model)
+    local crop = model:GetAttribute("SeedName") or model:GetAttribute("CorePartName")
+    local sizeMult = tonumber(model:GetAttribute("SizeMulti") or model:GetAttribute("SizeMultiplier")) or 1
+    local bw = (crop and ValueDB.baseWeight[crop]) or 1
+    return bw * sizeMult, crop
+end
 local HOP = 70
 local RARITY_ORDER = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Legendary = 5, Mythic = 6, Super = 7, Divine = 8 }
 local RARITY_LIST = { "Any", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Super", "Divine" }
@@ -675,60 +682,6 @@ do
     task.defer(connectGD)
 end
 
--- weather event hooks (live alerts when weather changes)
-local weatherAlerts =
-    { rain = false, night = false, bloodmoon = false, blizzard = false, lightning = false, rainbow = false }
-do
-    local _weatherConns = {}
-    local function hookWeather(remote, label, flag)
-        if not (Network and Network.WeatherEffects and Network.WeatherEffects[remote]) then
-            return
-        end
-        local ok, conn = pcall(function()
-            return Network.WeatherEffects[remote]:Connect(function()
-                if flag == "isNight" then
-                    local n = ReplicatedStorage:FindFirstChild("Night")
-                    if Library.Flags["weatherAlerts"] then
-                        notify(
-                            "Weather",
-                            n and n.Value == true and "Night started  Stealing enabled" or "Night ended",
-                            "warning"
-                        )
-                    end
-                elseif Library.Flags["weatherAlerts"] then
-                    notify("Weather", label, "info")
-                end
-                -- dispatch webhook if enabled
-                if Library.Flags["whWeather"] then
-                    sendWebhook("Weather Alert", label, (remote:find("Start") and 5763719 or 5324800))
-                end
-            end)
-        end)
-        if ok and conn then
-            table.insert(_weatherConns, conn)
-            track(conn)
-        end
-    end
-    local function connectWeather()
-        if not (Network and Network.WeatherEffects) then
-            return
-        end
-        hookWeather("RainStart", "Rain started - growth boost")
-        hookWeather("RainEnd", "Rain ended")
-        hookWeather("NightStart", "Night started", "isNight")
-        hookWeather("NightEnd", "Night ended", "isNight")
-        hookWeather("BloodmoonStart", "Bloodmoon started - mutations active!")
-        hookWeather("BloodmoonEnd", "Bloodmoon ended")
-        hookWeather("BlizzardStart", "Blizzard started - growth slowed")
-        hookWeather("BlizzardEnd", "Blizzard ended")
-        hookWeather("LightningStart", "Lightning started")
-        hookWeather("LightningEnd", "Lightning ended")
-        hookWeather("RainbowStart", "Rainbow started - rare spawns!")
-        hookWeather("RainbowEnd", "Rainbow ended")
-    end
-    task.defer(connectWeather)
-end
-
 -- netFire helper (walks Network by dotted path, spawn-safe for yields)
 local function netFire(path, ...)
     if not Network then
@@ -761,10 +714,6 @@ end
 
 
 -- core data helpers
-local function sizeMul(size)
-    size = tonumber(size) or 1
-    return size ^ SIZE_EXP
-end
 local function getReplica()
     if not PlayerState then
         return nil
@@ -1278,7 +1227,7 @@ local function getRipeCrops()
                                 crop = cropName,
                                 weight = wt,
                                 rarity = m:GetAttribute("Rarity") or plant:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
-                                value = (SeedBaseValue[cropName] or 0) * sizeMul(wt) * (mut and MUT_BONUS or 1),
+                                value = ValueEngine.compute(cropName, (ValueDB.baseWeight[cropName] or 1) * wt, mut),
                             }
                     end
                 end
@@ -1297,7 +1246,7 @@ local function getRipeCrops()
                     crop = cropName,
                     weight = wt,
                     rarity = plant:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
-                    value = (SeedBaseValue[cropName] or 0) * sizeMul(wt) * (mut and MUT_BONUS or 1),
+                    value = ValueEngine.compute(cropName, (ValueDB.baseWeight[cropName] or 1) * wt, mut),
                 }
             end
         end
@@ -1324,9 +1273,11 @@ local function getStealTargets()
                     mutation = m:GetAttribute("Mutation"),
                     weight = tonumber(m:GetAttribute("SizeMulti")) or 1,
                     rarity = m:GetAttribute("Rarity"),
-                    value = (SeedBaseValue[cropName] or 0)
-                        * sizeMul(m:GetAttribute("SizeMulti") or 1)
-                        * (m:GetAttribute("Mutation") and MUT_BONUS or 1),
+                    value = ValueEngine.compute(
+                        cropName,
+                        (ValueDB.baseWeight[cropName] or 1) * (tonumber(m:GetAttribute("SizeMulti")) or 1),
+                        m:GetAttribute("Mutation")
+                    ),
                 }
             end
         end
@@ -1646,6 +1597,76 @@ local function sendWebhook(title, desc, color, fields)
                 username = Library.Flags["whName"] or "GAG2 Bot",
             }),
         })
+    end)
+end
+
+-- weather event watcher (attribute-driven: WeatherValues attrs + predictor transitions)
+local WeatherWatch = {
+    events = {},
+    night = false,
+    weather = nil,
+    eventList = { "Rain", "Lightning", "Rainbow", "Snowfall", "Starfall", "Aurora", "Sunburst", "Eclipse" },
+}
+WeatherWatch.alert = function(label, style)
+    if Library.Flags["weatherAlerts"] then
+        notify("Weather", label, style or "info")
+    end
+    if Library.Flags["whWeather"] then
+        sendWebhook("Weather Alert", label, style == "warning" and 5763719 or 5324800)
+    end
+end
+do
+    -- prefer the game's live WeatherData list (self-heals if events are renamed/added)
+    local wd = tryRequire(function()
+        local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+        return require(sm:FindFirstChild("WeatherData") or sm:WaitForChild("WeatherData", 5))
+    end)
+    if type(wd) == "table" and type(wd.Data) == "table" then
+        local live = {}
+        for _, evEntry in ipairs(wd.Data) do
+            if type(evEntry) == "table" and type(evEntry.Name) == "string" then
+                live[#live + 1] = evEntry.Name
+            end
+        end
+        if #live > 0 then
+            WeatherWatch.eventList = live
+        end
+    end
+end
+do
+    task.defer(function()
+        local wv = ReplicatedStorage:FindFirstChild("WeatherValues") or ReplicatedStorage:WaitForChild("WeatherValues", 30)
+        if not wv then
+            return
+        end
+        for _, evName in ipairs(WeatherWatch.eventList) do
+            WeatherWatch.events[evName] = wv:GetAttribute(evName .. "_Playing") == true
+            pcall(function()
+                track(wv:GetAttributeChangedSignal(evName .. "_Playing"):Connect(function()
+                    local now = wv:GetAttribute(evName .. "_Playing") == true
+                    if now ~= WeatherWatch.events[evName] then
+                        WeatherWatch.events[evName] = now
+                        WeatherWatch.alert(
+                            evName .. (now and " started" or " ended"),
+                            now and "warning" or "info"
+                        )
+                    end
+                end))
+            end)
+        end
+        local nightObj = ReplicatedStorage:FindFirstChild("Night")
+        if nightObj then
+            WeatherWatch.night = nightObj.Value == true
+            pcall(function()
+                track(nightObj.Changed:Connect(function()
+                    local now = nightObj.Value == true
+                    if now ~= WeatherWatch.night then
+                        WeatherWatch.night = now
+                        WeatherWatch.alert(now and "Night started - stealing enabled" or "Night ended", "warning")
+                    end
+                end))
+            end)
+        end
     end)
 end
 
@@ -1989,21 +2010,6 @@ local function injectShopPredictions(shopName)
                             card:SetAttribute("VAPredInjected", true)
                             local countdown = nextRestock and fmtCountdown(nextRestock) or "?"
                             local qty = getPredictedQty(name)
-                            local cat = shopName:lower():gsub("shop", "")
-                            local apiItems = Gag2API.Predictions[cat]
-                            if apiItems then
-                                for _, aItem in ipairs(apiItems) do
-                                    if (aItem.name and aItem.name:lower() == name:lower()) or (aItem.key and aItem.key:lower() == name:lower()) then
-                                        if aItem.upcoming and aItem.upcoming[1] and aItem.upcoming[1].qty then
-                                            qty = aItem.upcoming[1].qty
-                                        end
-                                        if aItem.nextBoundary and aItem.nextBoundary > os.time() then
-                                            countdown = fmtCountdown(aItem.nextBoundary)
-                                        end
-                                        break
-                                    end
-                                end
-                            end
                             local txt = "Restocks in " .. countdown
                             if qty then
                                 txt = txt .. " (" .. qty .. "x)"
@@ -2022,9 +2028,6 @@ end
 
 -- scan all three shops
 injectAllShopPredictions = function()
-    pcall(function()
-        Gag2API:FetchLive()
-    end)
     if not Library.Flags["shopPredictOverlay"] then
         return
     end
@@ -2033,6 +2036,624 @@ injectAllShopPredictions = function()
     end
 end
 end -- scoped: shop-prediction helpers
+
+-- ================================================================
+-- LOCAL WEATHER PREDICTOR (deterministic Day/Sunset/Night cycle from the
+-- game's own TimeCycleData - no external API, same math as the game client)
+-- ================================================================
+local WeatherPredictor, WeatherHUD, ValueESP = {}, {}, {}
+do
+    local FALLBACK_PHASES = {
+        {
+            Name = "Day",
+            Lasts = 450,
+            Order = 1,
+            Weathers = { Day = { Chance = 100, Image = "rbxassetid://100486757307207" } },
+        },
+        {
+            Name = "Sunset",
+            Lasts = 30,
+            Order = 2,
+            Weathers = { Sunset = { Chance = 100, Image = "rbxassetid://86217612022586" } },
+        },
+        {
+            Name = "Night",
+            Lasts = 120,
+            Order = 3,
+            Weathers = {
+                Moon = { Chance = 79, Image = "rbxassetid://91446334780160" },
+                Bloodmoon = { Chance = 2, Image = "rbxassetid://140465339393451" },
+                Goldmoon = { Chance = 13, Image = "rbxassetid://84902063004871" },
+                ["Rainbow Moon"] = { Chance = 6, Image = "rbxassetid://93602895495056" },
+                ["Mega Moon"] = { Chance = 2, Image = "rbxassetid://107925838920918" },
+            },
+        },
+    }
+    local phases = FALLBACK_PHASES
+    local cycleLen = 600
+    local moonGating = tryRequire(function()
+        local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+        return require(sm:FindFirstChild("MoonGating") or sm:WaitForChild("MoonGating", 5))
+    end)
+    local tcd = tryRequire(function()
+        local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+        return require(sm:FindFirstChild("TimeCycleData") or sm:WaitForChild("TimeCycleData", 5))
+    end)
+    if type(tcd) == "table" and type(tcd.Data) == "table" then
+        local built = {}
+        for pname, pdata in pairs(tcd.Data) do
+            built[#built + 1] = {
+                Name = pname,
+                Lasts = tonumber(pdata.Lasts) or 60,
+                Order = tonumber(pdata.StartOrder) or 99,
+                Weathers = pdata.Weathers,
+            }
+        end
+        if #built > 0 then
+            table.sort(built, function(a, b)
+                return a.Order < b.Order
+            end)
+            phases = built
+        end
+    end
+    local total = 0
+    for _, p in ipairs(phases) do
+        total = total + p.Lasts
+    end
+    if total > 0 then
+        cycleLen = total
+    end
+    WeatherPredictor.Phases = phases
+    WeatherPredictor.Total = cycleLen
+    local function isSpawnable(wname)
+        if type(moonGating) == "table" and type(moonGating.IsNaturallySpawnable) == "function" then
+            local ok, res = pcall(moonGating.IsNaturallySpawnable, wname)
+            if ok then
+                return res == true
+            end
+        end
+        return true
+    end
+    -- mirrors the game client's pickWeather exactly: same table instance means
+    -- identical pairs() iteration order, identical Random seed => identical pick
+    local function pickWeather(phase, seed)
+        local sum = 0
+        for wname, w in pairs(phase.Weathers or {}) do
+            if not w.AdminOnly and isSpawnable(wname) then
+                sum = sum + (tonumber(w.Chance) or 0)
+            end
+        end
+        if sum <= 0 then
+            for wname in pairs(phase.Weathers or {}) do
+                return wname
+            end
+            return phase.Name
+        end
+        local roll = Random.new(seed):NextNumber() * sum
+        local acc = 0
+        for wname, w in pairs(phase.Weathers or {}) do
+            if not w.AdminOnly and isSpawnable(wname) then
+                acc = acc + (tonumber(w.Chance) or 0)
+                if roll <= acc then
+                    return wname
+                end
+            end
+        end
+        for wname in pairs(phase.Weathers or {}) do
+            return wname
+        end
+    end
+    WeatherPredictor.pick = pickWeather
+    -- state for absolute time t: cycleIndex, phaseEntry, phaseIndex, phaseStart, phaseEnd, predictedWeather
+    WeatherPredictor.atTime = function(t)
+        local cycleIdx = math.floor(t / cycleLen)
+        local cycleStart = cycleIdx * cycleLen
+        local elapsed = t - cycleStart
+        local acc = 0
+        for idx, p in ipairs(phases) do
+            acc = acc + p.Lasts
+            if elapsed < acc then
+                local pStart = cycleStart + (acc - p.Lasts)
+                local pEnd = cycleStart + acc
+                return cycleIdx, p, idx, pStart, pEnd, pickWeather(p, cycleIdx * 1000 + idx)
+            end
+        end
+        local lastIdx = #phases
+        local pEnd = cycleStart + acc
+        return cycleIdx, phases[lastIdx], lastIdx, pEnd - phases[lastIdx].Lasts, pEnd, pickWeather(
+            phases[lastIdx],
+            cycleIdx * 1000 + lastIdx
+        )
+    end
+    -- live current state (workspace attrs win when the server overrides)
+    WeatherPredictor.current = function()
+        local now = os.time()
+        local cycleIdx, phase, idx, pStart, pEnd, predicted = WeatherPredictor.atTime(now)
+        local weather = predicted
+        local aw = Workspace:GetAttribute("ActiveWeather")
+        if type(aw) == "string" and phase.Weathers and phase.Weathers[aw] then
+            weather = aw
+        end
+        local ap = Workspace:GetAttribute("ActivePhase")
+        return {
+            time = now,
+            phase = (type(ap) == "string" and ap) or phase.Name,
+            weather = weather,
+            predicted = predicted,
+            endsAt = pEnd,
+            cycleIndex = cycleIdx,
+        }
+    end
+    -- first upcoming occurrence per weather of multi-weather phases (moons)
+    WeatherPredictor.nextMoons = function(horizonCycles)
+        local found = {}
+        local now = os.time()
+        local c0, _, p0 = WeatherPredictor.atTime(now)
+        local cIdx, pIdx = c0, p0
+        local steps = 0
+        local maxSteps = (horizonCycles or 48) * #phases
+        while steps <= maxSteps do
+            if steps > 0 then
+                pIdx = pIdx + 1
+                if pIdx > #phases then
+                    pIdx = 1
+                    cIdx = cIdx + 1
+                end
+            end
+            local p = phases[pIdx]
+            local wcount = 0
+            for _ in pairs(p.Weathers or {}) do
+                wcount = wcount + 1
+            end
+            if wcount > 1 then
+                local startT = cIdx * cycleLen
+                for i2 = 1, pIdx - 1 do
+                    startT = startT + phases[i2].Lasts
+                end
+                local wname = pickWeather(p, cIdx * 1000 + pIdx)
+                if startT + p.Lasts >= now and not found[wname] then
+                    found[wname] = math.max(startT, now)
+                end
+            end
+            steps = steps + 1
+        end
+        return found
+    end
+end -- scoped: weather predictor core
+
+-- ================================================================
+-- WEATHER HUD (embedded in-game overlay: current weather + next moons + event
+-- timers; draggable, lives beside the game's own UI like other overlays)
+-- ================================================================
+do
+    local MOON_ORDER = { "Goldmoon", "Bloodmoon", "Rainbow Moon", "Mega Moon" }
+    local MOON_IMG = {
+        Goldmoon = "rbxassetid://84902063004871",
+        Bloodmoon = "rbxassetid://140465339393451",
+        ["Rainbow Moon"] = "rbxassetid://93602895495056",
+        ["Mega Moon"] = "rbxassetid://107925838920918",
+    }
+    local PHASE_IMG = {
+        Day = "rbxassetid://100486757307207",
+        Sunset = "rbxassetid://86217612022586",
+        Moon = "rbxassetid://91446334780160",
+        Night = "rbxassetid://91446334780160",
+    }
+    local wgui, mainFrame = nil, nil
+    local cards = {}
+    local function fmtLeft(secs)
+        secs = math.max(0, math.floor(tonumber(secs) or 0))
+        local h = math.floor(secs / 3600)
+        local m = math.floor((secs % 3600) / 60)
+        local s = secs % 60
+        if h > 0 then
+            return string.format("%dh %02dm", h, m)
+        end
+        if m > 0 then
+            return string.format("%dm %02ds", m, s)
+        end
+        return string.format("%ds", s)
+    end
+    WeatherPredictor.fmtRel = fmtLeft
+    local function newCard(key, title, img, order)
+        local f = Instance.new("Frame")
+        f.Name = key
+        f.Size = UDim2.fromOffset(88, 84)
+        f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+        f.BackgroundTransparency = 0.22
+        f.BorderSizePixel = 0
+        f.LayoutOrder = order or 0
+        local cr = Instance.new("UICorner")
+        cr.CornerRadius = UDim.new(0, 8)
+        cr.Parent = f
+        local st = Instance.new("UIStroke")
+        st.Color = Color3.fromRGB(60, 60, 72)
+        st.Thickness = 1
+        st.Transparency = 0.4
+        st.Parent = f
+        local im = Instance.new("ImageLabel")
+        im.BackgroundTransparency = 1
+        im.Size = UDim2.fromOffset(30, 30)
+        im.Position = UDim2.new(0.5, -15, 0, 6)
+        im.Image = img or ""
+        im.ScaleType = Enum.ScaleType.Fit
+        im.Parent = f
+        local nm = Instance.new("TextLabel")
+        nm.BackgroundTransparency = 1
+        nm.Size = UDim2.new(1, -6, 0, 15)
+        nm.Position = UDim2.new(0, 3, 0, 38)
+        nm.Font = Enum.Font.GothamBold
+        nm.TextSize = 10
+        nm.TextColor3 = Color3.fromRGB(235, 235, 242)
+        nm.Text = title
+        nm.TextTruncate = Enum.TextTruncate.AtEnd
+        nm.Parent = f
+        local tm = Instance.new("TextLabel")
+        tm.BackgroundTransparency = 1
+        tm.Size = UDim2.new(1, -6, 0, 18)
+        tm.Position = UDim2.new(0, 3, 0, 54)
+        tm.Font = Enum.Font.GothamBold
+        tm.TextSize = 12
+        tm.TextColor3 = Color3.fromRGB(125, 225, 150)
+        tm.Text = ""
+        tm.Parent = f
+        f.Parent = mainFrame
+        return { frame = f, time = tm, title = nm, icon = im }
+    end
+    local function ensureGui()
+        if wgui and wgui.Parent then
+            return true
+        end
+        local ok = pcall(function()
+            local host = (gethui and gethui()) or CoreGui
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "GAG2WeatherHUD"
+            sg.ResetOnSpawn = false
+            sg.IgnoreGuiInset = true
+            sg.DisplayOrder = 60
+            mainFrame = Instance.new("Frame")
+            mainFrame.Name = "Main"
+            mainFrame.AnchorPoint = Vector2.new(1, 1)
+            mainFrame.Position = UDim2.new(1, -10, 1, -160)
+            mainFrame.BackgroundTransparency = 1
+            mainFrame.AutomaticSize = Enum.AutomaticSize.XY
+            mainFrame.Parent = sg
+            local lay = Instance.new("UIListLayout")
+            lay.FillDirection = Enum.FillDirection.Horizontal
+            lay.Padding = UDim.new(0, 6)
+            lay.SortOrder = Enum.SortOrder.LayoutOrder
+            lay.VerticalAlignment = Enum.VerticalAlignment.Bottom
+            lay.Parent = mainFrame
+            -- drag support (touch + mouse): drag any card to move the whole strip
+            local dragging, dragInput, dragStart, startPos
+            local function onInputBegan(input)
+                if
+                    input.UserInputType == Enum.UserInputType.MouseButton1
+                    or input.UserInputType == Enum.UserInputType.Touch
+                then
+                    dragging = true
+                    dragStart = input.Position
+                    startPos = mainFrame.Position
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then
+                            dragging = false
+                        end
+                    end)
+                end
+            end
+            mainFrame.InputBegan:Connect(onInputBegan)
+            track(UserInputService.InputChanged:Connect(function(input)
+                if
+                    dragging
+                    and (
+                        input.UserInputType == Enum.UserInputType.MouseMovement
+                        or input.UserInputType == Enum.UserInputType.Touch
+                    )
+                then
+                    dragInput = input
+                end
+            end))
+            track(UserInputService.InputEnded:Connect(function(input)
+                if input == dragInput then
+                    dragInput = nil
+                    dragging = false
+                end
+            end))
+            track(RunService.RenderStepped:Connect(function()
+                if dragging and dragInput and dragStart and startPos then
+                    local delta = dragInput.Position - dragStart
+                    mainFrame.Position = UDim2.new(
+                        startPos.X.Scale,
+                        startPos.X.Offset + delta.X,
+                        startPos.Y.Scale,
+                        startPos.Y.Offset + delta.Y
+                    )
+                end
+            end))
+            sg.Parent = host
+            wgui = sg
+        end)
+        return ok and wgui ~= nil
+    end
+    WeatherHUD.update = function()
+        if not Library.Flags["weatherHUD"] then
+            if wgui then
+                wgui.Enabled = false
+            end
+            return
+        end
+        if not ensureGui() then
+            return
+        end
+        wgui.Enabled = true
+        local cur = WeatherPredictor.current()
+        local c = cards.current
+        if not c then
+            c = newCard("current", "Now", nil, 0)
+            cards.current = c
+        end
+        c.title.Text = tostring(cur.weather)
+        c.icon.Image = MOON_IMG[cur.weather] or PHASE_IMG[cur.weather] or PHASE_IMG[cur.phase] or ""
+        c.time.Text = fmtLeft((cur.endsAt or cur.time) - cur.time) .. " left"
+        local moons = WeatherPredictor.nextMoons(48)
+        for i, mname in ipairs(MOON_ORDER) do
+            local c2 = cards[mname]
+            if not c2 then
+                c2 = newCard(mname, mname == "Goldmoon" and "Gold Moon" or mname, MOON_IMG[mname], i)
+                cards[mname] = c2
+            end
+            local t = moons[mname]
+            local remaining = t and (t - cur.time) or nil
+            c2.time.Text = (remaining and remaining <= 1) and "LIVE" or (remaining and fmtLeft(remaining) or "--")
+            c2.time.TextColor3 = (remaining and remaining <= 1) and Color3.fromRGB(255, 210, 90)
+                or Color3.fromRGB(125, 225, 150)
+        end
+        -- active event weather card (Rain / Lightning / etc with end countdown)
+        local wv = ReplicatedStorage:FindFirstChild("WeatherValues")
+        for _, ev in ipairs(WeatherWatch.eventList) do
+            local key = "ev_" .. ev
+            local playing = wv and wv:GetAttribute(ev .. "_Playing") == true
+            local endT = wv and tonumber(wv:GetAttribute(ev .. "_EndTime")) or 0
+            local c3 = cards[key]
+            if playing then
+                if not c3 then
+                    c3 = newCard(key, ev, nil, 20)
+                    cards[key] = c3
+                end
+                c3.frame.Visible = true
+                c3.time.Text = endT > cur.time and (fmtLeft(endT - cur.time) .. " left") or "active"
+            elseif c3 then
+                c3.frame.Visible = false
+            end
+        end
+    end
+    WeatherHUD.destroy = function()
+        pcall(function()
+            if wgui then
+                wgui:Destroy()
+            end
+        end)
+        wgui, mainFrame = nil, nil
+        cards = {}
+    end
+end -- scoped: weather HUD
+
+-- ================================================================
+-- VALUE ESP (world-space price tags using the exact sell value engine)
+-- ================================================================
+do
+    local _vPool = {}
+    local _vTotal = nil
+    local _vTotalLabel = nil
+    local _vSubLabel = nil
+    local function clearValuePool()
+        for model, entry in pairs(_vPool) do
+            pcall(function()
+                entry.bb:Destroy()
+            end)
+        end
+        _vPool = {}
+    end
+    local function anchorPart(model)
+        if model:IsA("BasePart") then
+            return model
+        end
+        return model:FindFirstChildWhichIsA("BasePart", true)
+    end
+    local function newTag(part)
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "GAG2ValueESP"
+        bb.Adornee = part
+        bb.AlwaysOnTop = true
+        bb.Size = UDim2.fromOffset(160, 42)
+        bb.StudsOffsetWorldSpace = Vector3.new(0, 2.6, 0)
+        bb.MaxDistance = 180
+        local val = Instance.new("TextLabel")
+        val.BackgroundTransparency = 1
+        val.Size = UDim2.new(1, 0, 0.55, 0)
+        val.Font = Enum.Font.GothamBold
+        val.TextSize = 15
+        val.TextColor3 = Color3.fromRGB(120, 235, 130)
+        val.Text = ""
+        local stk = Instance.new("UIStroke")
+        stk.Thickness = 1.5
+        stk.Color = Color3.fromRGB(0, 0, 0)
+        stk.Parent = val
+        val.Parent = bb
+        local sub = Instance.new("TextLabel")
+        sub.BackgroundTransparency = 1
+        sub.Size = UDim2.new(1, 0, 0.45, 0)
+        sub.Position = UDim2.new(0, 0, 0.55, 0)
+        sub.Font = Enum.Font.Gotham
+        sub.TextSize = 11
+        sub.TextColor3 = Color3.fromRGB(235, 235, 235)
+        sub.Text = ""
+        local stk2 = Instance.new("UIStroke")
+        stk2.Thickness = 1.2
+        stk2.Color = Color3.fromRGB(0, 0, 0)
+        stk2.Parent = sub
+        sub.Parent = bb
+        bb.Parent = CoreGui
+        return { bb = bb, val = val, sub = sub, lastVal = "", lastSub = "" }
+    end
+    local function ensureTotalPanel()
+        if _vTotal and _vTotal.Parent then
+            return true
+        end
+        local ok = pcall(function()
+            local host = (gethui and gethui()) or CoreGui
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "GAG2ValueHUD"
+            sg.ResetOnSpawn = false
+            sg.IgnoreGuiInset = true
+            sg.DisplayOrder = 59
+            local f = Instance.new("Frame")
+            f.Name = "Main"
+            f.AnchorPoint = Vector2.new(0, 1)
+            f.Position = UDim2.new(0, 12, 1, -160)
+            f.Size = UDim2.fromOffset(190, 56)
+            f.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+            f.BackgroundTransparency = 0.22
+            f.BorderSizePixel = 0
+            f.Parent = sg
+            local cr = Instance.new("UICorner")
+            cr.CornerRadius = UDim.new(0, 8)
+            cr.Parent = f
+            local st = Instance.new("UIStroke")
+            st.Color = Color3.fromRGB(60, 60, 72)
+            st.Thickness = 1
+            st.Transparency = 0.4
+            st.Parent = f
+            local t1 = Instance.new("TextLabel")
+            t1.BackgroundTransparency = 1
+            t1.Size = UDim2.new(1, -12, 0, 24)
+            t1.Position = UDim2.new(0, 6, 0, 6)
+            t1.Font = Enum.Font.GothamBold
+            t1.TextSize = 15
+            t1.TextColor3 = Color3.fromRGB(120, 235, 130)
+            t1.TextXAlignment = Enum.TextXAlignment.Left
+            t1.Text = "Garden Value: -"
+            t1.Parent = f
+            local t2 = Instance.new("TextLabel")
+            t2.BackgroundTransparency = 1
+            t2.Size = UDim2.new(1, -12, 0, 16)
+            t2.Position = UDim2.new(0, 6, 0, 30)
+            t2.Font = Enum.Font.Gotham
+            t2.TextSize = 11
+            t2.TextColor3 = Color3.fromRGB(200, 200, 205)
+            t2.TextXAlignment = Enum.TextXAlignment.Left
+            t2.Text = "exact sell math"
+            t2.Parent = f
+            sg.Parent = host
+            _vTotal, _vTotalLabel, _vSubLabel = sg, t1, t2
+        end)
+        return ok and _vTotal ~= nil
+    end
+    ValueESP.update = function()
+        local onTags = Library.Flags["espFruitValue"] == true
+        local onTotal = Library.Flags["espTotalValue"] == true
+        if not onTags and not onTotal then
+            if next(_vPool) then
+                clearValuePool()
+            end
+            if _vTotal then
+                _vTotal.Enabled = false
+            end
+            return
+        end
+        local baseOnly = Library.Flags["espBaseValueOnly"] == true
+        local garden = myPlot()
+        local seen = {}
+        local total, count = 0, 0
+        local function tagModel(model)
+            if seen[model] then
+                return
+            end
+            seen[model] = true
+            local w, crop = ValueEngine.weightOf(model)
+            if not crop or crop == "" then
+                return
+            end
+            local mut = model:GetAttribute("Mutation")
+            local v = ValueEngine.compute(crop, w, mut, baseOnly)
+            if v <= 0 then
+                return
+            end
+            total = total + v
+            count = count + 1
+            if not onTags then
+                return
+            end
+            local part = anchorPart(model)
+            if not part then
+                return
+            end
+            local valText = fmtCash(v)
+                .. ((type(mut) == "string" and mut ~= "" and not baseOnly) and (" [" .. mut .. "]") or "")
+            local subText = tostring(crop) .. "  "
+                .. (baseOnly and "base" or string.format("%.2fkg", w))
+            local entry = _vPool[model]
+            if not entry then
+                entry = newTag(part)
+                _vPool[model] = entry
+            end
+            if entry.lastVal ~= valText then
+                entry.val.Text = valText
+                entry.lastVal = valText
+                entry.val.TextColor3 = (type(mut) == "string" and mut ~= "" and not baseOnly)
+                        and Color3.fromRGB(255, 215, 100)
+                    or Color3.fromRGB(120, 235, 130)
+            end
+            if entry.lastSub ~= subText then
+                entry.sub.Text = subText
+                entry.lastSub = subText
+            end
+        end
+        local plants = garden and garden:FindFirstChild("Plants")
+        if plants then
+            for _, plantModel in ipairs(plants:GetChildren()) do
+                if plantModel:GetAttribute("PlantId") then
+                    tagModel(plantModel)
+                end
+                local fruitsFolder = plantModel:FindFirstChild("Fruits")
+                if fruitsFolder then
+                    for _, fruitModel in ipairs(fruitsFolder:GetChildren()) do
+                        if fruitModel:GetAttribute("FruitId") then
+                            tagModel(fruitModel)
+                        end
+                    end
+                end
+            end
+        end
+        -- cleanup: dead models or entries not seen this cycle
+        for model, entry in pairs(_vPool) do
+            if (not model.Parent) or (onTags and not seen[model]) or not onTags then
+                pcall(function()
+                    entry.bb:Destroy()
+                end)
+                _vPool[model] = nil
+            end
+        end
+        if onTotal then
+            if ensureTotalPanel() then
+                _vTotal.Enabled = true
+                _vTotalLabel.Text = "Garden Value: " .. fmtCash(total)
+                _vSubLabel.Text = tostring(count) .. " plants & fruits" .. (baseOnly and " (base)" or "")
+            end
+        elseif _vTotal then
+            _vTotal.Enabled = false
+        end
+    end
+    ValueESP.destroy = function()
+        clearValuePool()
+        pcall(function()
+            if _vTotal then
+                _vTotal:Destroy()
+            end
+        end)
+        _vTotal, _vTotalLabel, _vSubLabel = nil, nil, nil
+    end
+end -- scoped: value ESP
 
 -- ================================================================
 -- FEATURE FUNCTIONS
@@ -2061,7 +2682,7 @@ local function doHarvest(forceAll)
                     fruitId = fruitId,
                     crop = cropName,
                     mutation = isMutated,
-                    value = (SeedBaseValue[cropName] or 0) * (isMutated and MUT_BONUS or 1),
+                    value = ValueEngine.compute(cropName, 1, nil) * (isMutated and 2 or 1),
                     weight = 1,
                     rarity = "Common",
                 }
@@ -3634,6 +4255,10 @@ local PERSISTENT_FLAGS = {
     "hopPetSpecies",
     "tpTween",
     "tpTweenSpeed",
+    "weatherHUD",
+    "espFruitValue",
+    "espTotalValue",
+    "espBaseValueOnly",
     "autoSave",
 }
 local function saveSettings()
@@ -3685,15 +4310,15 @@ local profitWindow = {}
 -- SECTIONS (9 tabs)
 -- ================================================================
 
-local Home = Setup:CreateSection("[Dashboard]")
-local Main = Setup:CreateSection("[Farming]")
-local Shop = Setup:CreateSection("[Seed & Gears]")
-local Auto = Setup:CreateSection("[Pets]")
-local Inv = Setup:CreateSection("[Protection & Stealing]")
-local Hook = Setup:CreateSection("[Storage & Mail]")
-local Weather = Setup:CreateSection("[Weather & ESP]")
+local Home = Setup:CreateSection("Home")
+local Main = Setup:CreateSection("Main")
+local Shop = Setup:CreateSection("Shop")
+local Auto = Setup:CreateSection("Pets")
+local Inv = Setup:CreateSection("Steal")
+local Hook = Setup:CreateSection("Inventory")
+local Weather = Setup:CreateSection("Weather")
 local Misc = Setup:CreateSection("[Misc]")
-local Settings = Setup:CreateSection("[Settings & AFK]")
+local Settings = Setup:CreateSection("Settings")
 
 -- ================================================================
 -- HOME TAB (Dashboard)
@@ -3752,6 +4377,22 @@ Home:createButton({
 -- ================================================================
 -- MAIN TAB
 -- ================================================================
+
+Main:createLabel({ Name = "Teleport Manager", Special = true })
+Main:createToggle({
+    Name = "Tween Teleport",
+    Flag = false,
+    flagName = "tpTween",
+    Description = "Smooth tween movement instead of instant hops (looks more natural).",
+})
+Main:createSlider({
+    Name = "Base Tween Speed",
+    flagName = "tpTweenSpeed",
+    value = 60,
+    minValue = 20,
+    maxValue = 200,
+    Description = "Studs per second when Tween Teleport is enabled.",
+})
 
 Main:createLabel({ Name = "Automation Plants", Special = true })
 
@@ -5243,6 +5884,15 @@ Weather:createToggle({
     Description = "Send Discord webhook on every weather event change.",
 })
 
+Weather:createLabel({ Name = "Weather Predictor", Special = true })
+Weather:createToggle({
+    Name = "Weather & Moon HUD",
+    Flag = true,
+    flagName = "weatherHUD",
+    Description = "Embedded in-game overlay: current weather, next moons and live event timers (draggable).",
+})
+Weather:createLabel({ Name = "Next Moons: ---", flagName = "weatherNextMoons", Special = true })
+
 Weather:createLabel({ Name = "Timers", Special = true })
 Weather:createLabel({ Name = "Phase: unknown", flagName = "weatherPhase", Special = true })
 Weather:createLabel({ Name = "Seed Restock: ---", flagName = "weatherSeedRestock", Special = true })
@@ -5258,30 +5908,25 @@ Weather:createButton({
                 lb:updateText(text)
             end
         end
-        -- phase
-        local w = workspace:GetAttribute("ActiveWeather")
-        local s = workspace:GetAttribute("ActivePhase")
-        local d = tonumber(workspace:GetAttribute("PhaseDuration"))
-        if w then
-            ul(
-                "weatherPhase",
-                "Phase: "
-                    .. tostring(w)
-                    .. " ("
-                    .. tostring(s and s > 0 and os.date("!%X", s) or "?")
-                    .. " / "
-                    .. (d and d .. "s" or "?")
-            )
-        end
-        -- restock timers
-        local function rs(shop, tag, label)
-            local nx = nextRestock(shop)
-            ul(tag, label .. (nx and os.date("!%X", os.time() + nx) or "in stock"))
-        end
-        ul("weatherSeedRestock", "Seeds: " .. Gag2API:GetPredictedRestockText("seed"))
-        ul("weatherGearRestock", "Gears: " .. Gag2API:GetPredictedRestockText("gear"))
-        ul("weatherCrateRestock", "Crates: " .. Gag2API:GetPredictedRestockText("crate"))
-        notify("Timers", "Live Gag2 predictions & timers refreshed")
+        -- everything below is 100% local (game-stamped data + deterministic predictor)
+        local cur = WeatherPredictor.current()
+        ul(
+            "weatherPhase",
+            "Now: "
+                .. tostring(cur.weather)
+                .. " ("
+                .. tostring(cur.phase)
+                .. ", "
+                .. WeatherPredictor.fmtRel(math.max(0, (cur.endsAt or cur.time) - cur.time))
+                .. " left)"
+        )
+        local nxS = nextRestock("SeedShop")
+        local nxG = nextRestock("GearShop")
+        local nxC = nextRestock("CrateShop")
+        ul("weatherSeedRestock", "Seeds: " .. (nxS and ("restock in " .. WeatherPredictor.fmtRel(nxS)) or "waiting for shop"))
+        ul("weatherGearRestock", "Gears: " .. (nxG and ("restock in " .. WeatherPredictor.fmtRel(nxG)) or "waiting for shop"))
+        ul("weatherCrateRestock", "Crates: " .. (nxC and ("restock in " .. WeatherPredictor.fmtRel(nxC)) or "waiting for shop"))
+        notify("Timers", "Local predictor & timers refreshed")
     end,
 })
 
@@ -5387,6 +6032,26 @@ Misc:createToggle({
     Flag = false,
     flagName = "highlightRare",
     Description = "Highlight rare seed packs and items.",
+})
+
+Misc:createLabel({ Name = "ESP Inventory", Special = true })
+Misc:createToggle({
+    Name = "ESP Fruit Value",
+    Flag = false,
+    flagName = "espFruitValue",
+    Description = "World-space price tags above your crops and fruits (exact game sell math).",
+})
+Misc:createToggle({
+    Name = "ESP Total Value",
+    Flag = false,
+    flagName = "espTotalValue",
+    Description = "Small in-game panel with your garden's total sell value.",
+})
+Misc:createToggle({
+    Name = "Only Use Base Value For ESP Fruit",
+    Flag = false,
+    flagName = "espBaseValueOnly",
+    Description = "Value ESP shows base price only (ignores weight and mutations).",
 })
 Misc:createToggle({
     Name = "Rare Seed Restock Alert",
@@ -5515,21 +6180,6 @@ Misc:createSlider({
     Description = "How fast flight mode moves.",
 })
 
-Misc:createLabel({ Name = "Teleport", Special = true })
-Misc:createToggle({
-    Name = "Tween Teleport",
-    Flag = false,
-    flagName = "tpTween",
-    Description = "Smooth tween movement instead of instant hops (looks more natural).",
-})
-Misc:createSlider({
-    Name = "Tween Speed",
-    flagName = "tpTweenSpeed",
-    value = 60,
-    minValue = 20,
-    maxValue = 200,
-    Description = "Studs per second when Tween Teleport is enabled.",
-})
 local function tpBtn(label, pad)
     Misc:createButton({
         Name = label,
@@ -5937,7 +6587,7 @@ task.spawn(function()
             if Library.Flags["autoBid"] then
                 doBidCheck()
             end
-            -- weather timers refresh moved to dedicated 3-second live API sync loop below
+            -- weather labels, predictor, HUD and value ESP refresh run in the local 1s predictor loop
             -- ESP
             if Library.Flags["espFruitEnabled"] or Library.Flags["espPetEnabled"] then
                 espTimer = espTimer + 1
@@ -5997,8 +6647,8 @@ task.spawn(function()
                     if type(finfo) == "table" then
                         local fname = finfo.Name or finfo.SeedName or finfo.CorePartName or ""
                         local weight = tonumber(finfo.SizeMulti or finfo.Weight or 1) or 1
-                        local mut = finfo.Mutation and MUT_BONUS or 1
-                        invVal = invVal + (SeedBaseValue[fname] or 0) * sizeMul(weight) * mut
+                        local mname = type(finfo.Mutation) == "string" and finfo.Mutation or nil
+                        invVal = invVal + ValueEngine.compute(fname, weight, mname)
                     elseif type(finfo) == "number" then
                         invVal = invVal + finfo
                     end
@@ -6027,46 +6677,84 @@ task.spawn(function()
     end
 end)
 
--- Dedicated 3-Second Live API & Predictions Sync Loop (www.gag2.gg)
+-- Local predictor / HUD / value ESP sync loop (1s; zero external network calls)
 task.spawn(function()
-    while task.wait(3) do
+    while task.wait(1) do
         if not Hub.running then
             break
         end
         pcall(function()
-            Gag2API:FetchLive()
-        end)
-        if Library.Flags["weatherAlerts"] or Library.Flags["shopPredictOverlay"] then
-            pcall(function()
-                local function ul(tag, text)
-                    local lb = Weather:FindFirstChild(tag)
-                    if lb and lb.updateText then
-                        lb:updateText(text)
+            local cur = WeatherPredictor.current()
+            -- moon/phase transition alerts (revived: the old WeatherEffects packet hooks died in the game update)
+            if WeatherWatch.weather ~= nil and cur.weather ~= WeatherWatch.weather then
+                WeatherWatch.alert(
+                    tostring(cur.weather)
+                        .. " started (about "
+                        .. tostring(math.max(0, (cur.endsAt or cur.time) - cur.time))
+                        .. "s)",
+                    "warning"
+                )
+            end
+            WeatherWatch.weather = cur.weather
+            local function ul(tag, text)
+                local lb = Weather:FindFirstChild(tag)
+                if lb and lb.updateText then
+                    lb:updateText(text)
+                end
+            end
+            local remain = math.max(0, (cur.endsAt or cur.time) - cur.time)
+            local activeEvents = ""
+            local wv = ReplicatedStorage:FindFirstChild("WeatherValues")
+            if wv then
+                for _, ev in ipairs(WeatherWatch.eventList) do
+                    if wv:GetAttribute(ev .. "_Playing") == true then
+                        local endT = tonumber(wv:GetAttribute(ev .. "_EndTime")) or 0
+                        activeEvents = activeEvents
+                            .. " | "
+                            .. ev
+                            .. (endT > cur.time and (" " .. WeatherPredictor.fmtRel(endT - cur.time)) or "")
                     end
                 end
-                local w = workspace:GetAttribute("ActiveWeather")
-                local ph = workspace:GetAttribute("ActivePhase")
-                local d = tonumber(workspace:GetAttribute("PhaseDuration"))
-                if Gag2API.Weather and Gag2API.Weather.current then
-                    local cw = Gag2API.Weather.current
-                    local timeStr = cw.endsAt and ("Ends around " .. tostring(cw.endsAt):sub(12, 19) .. " UTC") or ""
-                    ul("weatherPhase", "Live Phase: " .. (cw.name or cw.type) .. " (" .. timeStr .. ") - " .. (cw.blurb or ""))
-                elseif w then
-                    ul(
-                        "weatherPhase",
-                        "Phase: "
-                            .. tostring(w)
-                            .. " ("
-                            .. (ph and ph > 0 and os.date("!%X", ph) or "?")
-                            .. " / "
-                            .. (d and d .. "s" or "?")
-                    )
+            end
+            ul(
+                "weatherPhase",
+                "Now: "
+                    .. tostring(cur.weather)
+                    .. " ("
+                    .. tostring(cur.phase)
+                    .. ", "
+                    .. WeatherPredictor.fmtRel(remain)
+                    .. " left)"
+                    .. activeEvents
+            )
+            local moonParts = {}
+            local moons = WeatherPredictor.nextMoons(48)
+            for _, mname in ipairs({ "Goldmoon", "Bloodmoon", "Rainbow Moon", "Mega Moon" }) do
+                local t = moons[mname]
+                if t then
+                    local nm = (mname == "Goldmoon") and "Gold Moon" or mname
+                    moonParts[#moonParts + 1] = nm .. " " .. WeatherPredictor.fmtRel(t - cur.time)
                 end
-                ul("weatherSeedRestock", "Seeds: " .. Gag2API:GetPredictedRestockText("seed"))
-                ul("weatherGearRestock", "Gears: " .. Gag2API:GetPredictedRestockText("gear"))
-                ul("weatherCrateRestock", "Crates: " .. Gag2API:GetPredictedRestockText("crate"))
-            end)
-        end
+            end
+            ul("weatherNextMoons", "Next up: " .. (#moonParts > 0 and table.concat(moonParts, " | ") or "--"))
+            local nxSeed = nextRestock("SeedShop")
+            local nxGear = nextRestock("GearShop")
+            local nxCrate = nextRestock("CrateShop")
+            ul(
+                "weatherSeedRestock",
+                "Seeds: " .. (nxSeed and ("restock in " .. WeatherPredictor.fmtRel(nxSeed)) or "waiting for shop")
+            )
+            ul(
+                "weatherGearRestock",
+                "Gears: " .. (nxGear and ("restock in " .. WeatherPredictor.fmtRel(nxGear)) or "waiting for shop")
+            )
+            ul(
+                "weatherCrateRestock",
+                "Crates: " .. (nxCrate and ("restock in " .. WeatherPredictor.fmtRel(nxCrate)) or "waiting for shop")
+            )
+            WeatherHUD.update()
+            ValueESP.update()
+        end)
     end
 end)
 
@@ -6204,6 +6892,12 @@ function Hub.unload()
         end)
     end
     Hub.conns = {}
+    pcall(function()
+        WeatherHUD.destroy()
+    end)
+    pcall(function()
+        ValueESP.destroy()
+    end)
     if optConns then
         for _, c in ipairs(optConns) do
             pcall(function()
@@ -6286,5 +6980,10 @@ print(
         .. tostring(SeedData ~= nil)
         .. " | PetCache: "
         .. tostring(PetCache ~= nil)
+        .. " | FruitCalc: "
+        .. tostring(FruitValueCalc ~= nil)
+        .. " | Predictor: "
+        .. tostring(WeatherPredictor.Total or 0)
+        .. "s cycle"
 )
-notify("GAG2", "9 tabs loaded - Weather - Bids - Protection - Reserve", "info")
+notify("GAG2", "9 tabs loaded - Weather HUD - Value ESP - Local Predictor", "info")
