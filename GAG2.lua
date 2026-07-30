@@ -2325,6 +2325,7 @@ do
         end
         return invVal, count
     end
+    ValueESP = {}
     ValueESP.update = function()
         local onTags = Library.Flags["espFruitValue"] == true
         local onTotal = Library.Flags["espTotalValue"] == true
