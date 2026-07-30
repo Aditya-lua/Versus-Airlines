@@ -520,7 +520,7 @@ local ValueDB = {
     },
     mutPrice = {
         Gold = 10, Rainbow = 30, Electric = 25, Frozen = 14, Bloodlit = 60, Chained = 8,
-        Starstruck = 50, Aurora = 1.5, Ignited = 60, Glow = 100, Eclipsed = 80,
+        Starstruck = 50, Aurora = 1.5, Ignited = 60, Glow = 100, Eclipsed = 80, Veil = 50,
         Solarflare = 5, Pizza = 5,
     },
     sizeExpOverrides = { Mushroom = 1.9, Bamboo = 1.75 },
@@ -686,8 +686,13 @@ do
         end))
         tc(safeConnect(g.FruitMutationUpdated, function(gardenId, plantId, fruitId, mutations)
             if fruitData[fruitId] then
-                fruitData[fruitId].mutated = (type(mutations) == "table" and next(mutations) ~= nil)
-                fruitData[fruitId].mutations = mutations
+                if type(mutations) == "string" then
+                    fruitData[fruitId].mutated = mutations ~= ""
+                    fruitData[fruitId].mutations = mutations ~= "" and mutations or nil
+                elseif type(mutations) == "table" then
+                    fruitData[fruitId].mutated = next(mutations) ~= nil
+                    fruitData[fruitId].mutations = mutations
+                end
             end
         end))
     end
@@ -1979,7 +1984,7 @@ WeatherPredictor.nextMoons = function(horizonCycles)
     local cIdx, pIdx = c0, p0
     local steps = 0
     local maxSteps = (horizonCycles or 48) * #phases
-    while steps <= maxSteps do
+    while steps < maxSteps do
         if steps > 0 then
             pIdx = pIdx + 1
             if pIdx > #phases then
@@ -2027,6 +2032,7 @@ local GAME_WEATHER_ICONS = {
     Rain = "Rain", Lightning = "Lightning", Bloodmoon = "Bloodmoon",
     Snowfall = "Snowfall", Night = "Night", Starfall = "Starfall",
     Rainbow = "Rainbow", Goldmoon = "Goldmoon",
+    Aurora = "Aurora", Sunburst = "Sunburst", Eclipse = "Eclipse",
 }
 local UPCOMING_MOONS = { "Goldmoon", "Bloodmoon", "Rainbow Moon", "Mega Moon" }
 local MOON_ICON_NAMES = {
@@ -2040,13 +2046,20 @@ local function findWeatherUI()
     local pg = CoreGui
     for _, sg in ipairs(pg:GetChildren()) do
         if sg:IsA("ScreenGui") and sg.Name == "WeatherUI" then
+            local frame = sg:FindFirstChild("Frame")
+            if frame then return frame end
             return sg
         end
     end
     if client then
-        for _, sg in ipairs(client:FindFirstChildOfClass("PlayerGui"):GetChildren()) do
-            if sg:IsA("ScreenGui") and sg.Name == "WeatherUI" then
-                return sg
+        local pg2 = client:FindFirstChildOfClass("PlayerGui")
+        if pg2 then
+            for _, sg in ipairs(pg2:GetChildren()) do
+                if sg:IsA("ScreenGui") and sg.Name == "WeatherUI" then
+                    local frame = sg:FindFirstChild("Frame")
+                    if frame then return frame end
+                    return sg
+                end
             end
         end
     end
@@ -2063,7 +2076,7 @@ local function ensureMoonIcon(ui, iconName, weatherName)
     icon.BackgroundTransparency = 1
     icon.BorderSizePixel = 0
     icon.Size = UDim2.new(0, 34, 0, 34)
-    icon.Position = UDim2.new(0.5, -17, 0.5, -17)
+    icon.LayoutOrder = 2
     icon.Visible = false
     local timeLabel = Instance.new("TextLabel")
     timeLabel.Name = "Time"
@@ -2559,8 +2572,9 @@ local function doHarvest(forceAll)
                         hp:InputHoldEnd()
                         hp.MaxActivationDistance = oldDist
                     end)
+                else
+                    netFire("Garden.CollectFruit", entry.plantId, entry.fruitId)
                 end
-                netFire("Garden.CollectFruit", entry.plantId, entry.fruitId)
                 collected = collected + 1
                 task.wait(jitter(tonumber(Library.Flags["collectDelay"]) or 0.05, 0.02))
             end
@@ -2655,7 +2669,7 @@ local function doPlant()
         sortPosition = getHRP() and getHRP().Position
     elseif plantMode == "Near Fruit" then
         local ripe = getRipeCrops()
-        if #ripe > 0 then
+        if #ripe > 0 and ripe[1].model then
             sortPosition = ripe[1].model:GetPivot().Position
         end
     elseif plantMode == "Sprinkler Radius" then
@@ -2709,24 +2723,26 @@ local function isOwnerHome(userId)
     if not userId then
         return false
     end
-    -- use the game's own lock indicator: each plot has a BillboardGui with
-    -- PlayerFrame.Unlocked ImageLabel. Visible=false → owner home (locked).
     local gardens = Workspace:FindFirstChild("Gardens")
     if not gardens then
         return false
     end
     for _, plot in ipairs(gardens:GetChildren()) do
         if plot:GetAttribute("OwnerUserId") == userId then
-            for _, bg in ipairs(plot:GetChildren()) do
-                if bg:IsA("BillboardGui") then
-                    local pf = bg:FindFirstChild("PlayerFrame")
-                    local unlocked = pf and pf:FindFirstChild("Unlocked")
-                    if unlocked and unlocked:IsA("ImageLabel") then
-                        return not unlocked.Visible
+            local pg = client and client:FindFirstChildOfClass("PlayerGui")
+            if pg then
+                for _, bg in ipairs(pg:GetChildren()) do
+                    if bg:IsA("BillboardGui") and bg.Adornee and bg.Adornee:IsDescendantOf(plot) then
+                        local pf = bg:FindFirstChild("PlayerFrame")
+                        local unlocked = pf and pf:FindFirstChild("Unlocked")
+                        if unlocked and unlocked:IsA("ImageButton") then
+                            return not unlocked.Visible
+                        end
+                        return false
                     end
                 end
             end
-            return true
+            return false
         end
     end
     return false
@@ -2978,7 +2994,8 @@ local function doSprinkler()
         cand = soilPositionAt(plot, cand.X, cand.Z) or cand
         local tooClose = false
         for _, spos in ipairs(existingPts) do
-            if (Vector2.new(spos.X - cand.X, spos.Z - cand.Z)).Magnitude < 8 then
+            local minSpacing = tonumber(Library.Flags["sprinklerSpacing"]) or 8
+            if (Vector2.new(spos.X - cand.X, spos.Z - cand.Z)).Magnitude < minSpacing then
                 tooClose = true
                 break
             end
@@ -3000,9 +3017,6 @@ local function doSprinkler()
     if tool then
         -- authoritative: Fire(position, sprinklerName-from-tool-attr, equippedTool, plotId)
         netFire("Place.PlaceSprinkler", pos, toolName or name, tool, plotId)
-    else
-        -- fallback if the sprinkler tool is missing
-        netFire("Place.PlaceSprinkler", pos, name, plot, plotId)
     end
 end
 
@@ -3603,8 +3617,8 @@ local function removeAllBuildings()
         if folder then
             for _, child in ipairs(folder:GetChildren()) do
                 pcall(function()
-                    netFire("Prop.PickupProp", child)
-                    netFire("PotPlacement.PickUpPottedPlant", child)
+                    netFire("Prop.PickupProp", child.Name)
+                    netFire("PotPlacement.PickUpPottedPlant", child.Name)
                     if folderName == "Gnomes" then
                         netFire("Place.RemoveGnome", child)
                     end
@@ -3672,8 +3686,9 @@ local function doAutoBuyPet()
                     pass = false
                 end
             end
+            local state = part:GetAttribute("State")
             if pass and type(price) == "number" and price > 0 and price <= maxPrice and price <= balance then
-                if not owner or owner == 0 then
+                if (not owner or owner == 0) and (not state or state == "idle") then
                     netFire("Pets.WildPetTame", pet)
                     balance = balance - price
                     bought = bought + 1
@@ -3929,7 +3944,6 @@ local PERSISTENT_FLAGS = {
     "shovelThreshMode",
     "shovelThreshold",
     "shovelFruitDelay",
-    "autoWaterDecaying",
     "autoWaterAll",
     "waterPlants",
     "wateringCan",
@@ -4606,19 +4620,6 @@ Main:createSlider({
     Description = "Maximum price to spend on a single pet.",
 })
 
-Main:createLabel({ Name = "- [ Tame / Equip ] -", Special = true })
-Main:createToggle({
-    Name = "Auto Tame Wild Pet",
-    Flag = false,
-    flagName = "autoTame",
-    Description = "Automatically tame wild pets on your plot.",
-})
-Main:createToggle({
-    Name = "Auto Equip Best Pet",
-    Flag = false,
-    flagName = "autoEquip",
-    Description = "Equip the best owned pet automatically.",
-})
 Main:createDropdown({
     Name = "Equip List",
     flagName = "equipList",
@@ -5644,7 +5645,6 @@ task.spawn(function()
             end
             -- auto buy all (with dedup: only buy each item once per restock)
             local function clearPurchaseTracking(stockParent, shopKey)
-                local now = os.time()
                 local lastRestock = _purchaseCycleRestocks[shopKey]
                 local curRestock = stockParent and stockParent:FindFirstChild("UnixNextRestock")
                 local curRestockVal = curRestock and curRestock.Value
@@ -5709,10 +5709,6 @@ task.spawn(function()
                         end
                     end
                 end
-            end
-            -- auto sprinkler all
-            if Library.Flags["autoSprinklerAll"] then
-                doSprinkler()
             end
             -- auto water all
             if Library.Flags["autoWaterAll"] then
