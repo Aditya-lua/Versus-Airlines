@@ -2153,10 +2153,18 @@ do
     -- update the game's own WeatherUI (bottom-right icons) with predicted timers
     -- the game creates icons named after weather events (Rain, Lightning, Bloodmoon, etc.)
     -- each has a child TextLabel named "Time" for the countdown
+    -- we also inject upcoming moon predictions (Goldmoon, Rainbow Moon, Mega Moon, Bloodmoon)
     local GAME_WEATHER_ICONS = {
         Rain = "Rain", Lightning = "Lightning", Bloodmoon = "Bloodmoon",
         Snowfall = "Snowfall", Night = "Night", Starfall = "Starfall",
         Rainbow = "Rainbow", Goldmoon = "Goldmoon",
+    }
+    local UPCOMING_MOONS = { "Goldmoon", "Bloodmoon", "Rainbow Moon", "Mega Moon" }
+    local MOON_ICON_NAMES = {
+        ["Goldmoon"] = "Goldmoon",
+        ["Bloodmoon"] = "Bloodmoon",
+        ["Rainbow Moon"] = "Rainbow",
+        ["Mega Moon"] = "MegaMoon",
     }
     local function findWeatherUI()
         local pg = game:GetService("CoreGui")
@@ -2175,11 +2183,47 @@ do
         end
         return nil
     end
-    local function updateGameWeatherUI(cur, wv)
+    local function ensureMoonIcon(ui, iconName, weatherName)
+        local icon = ui:FindFirstChild(iconName)
+        if icon then
+            return icon
+        end
+        -- create a minimal icon matching the game's structure
+        icon = Instance.new("ImageLabel")
+        icon.Name = iconName
+        icon.BackgroundTransparency = 1
+        icon.BorderSizePixel = 0
+        icon.Size = UDim2.new(0, 34, 0, 34)
+        icon.Position = UDim2.new(0.5, -17, 0.5, -17)
+        icon.Visible = false
+        local timeLabel = Instance.new("TextLabel")
+        timeLabel.Name = "Time"
+        timeLabel.BackgroundTransparency = 1
+        timeLabel.Size = UDim2.new(1, 0, 1, 0)
+        timeLabel.Font = Enum.Font.GothamBold
+        timeLabel.TextSize = 12
+        timeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        timeLabel.Text = ""
+        timeLabel.Parent = icon
+        local weatherLabel = Instance.new("TextLabel")
+        weatherLabel.Name = "Weather"
+        weatherLabel.BackgroundTransparency = 1
+        weatherLabel.Size = UDim2.new(1, 0, 0, 14)
+        weatherLabel.Position = UDim2.new(0, 0, 0, 0)
+        weatherLabel.Font = Enum.Font.GothamBold
+        weatherLabel.TextSize = 10
+        weatherLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        weatherLabel.Text = weatherName
+        weatherLabel.Parent = icon
+        icon.Parent = ui
+        return icon
+    end
+    local function updateGameWeatherUI(cur, wv, moons)
         local ui = findWeatherUI()
         if not ui then
             return
         end
+        -- update active weather icons (Rain, Lightning, etc.)
         for iconName, weatherName in pairs(GAME_WEATHER_ICONS) do
             local icon = ui:FindFirstChild(iconName)
             if icon then
@@ -2190,6 +2234,31 @@ do
                     icon.Visible = true
                     if timeLabel then
                         timeLabel.Text = endT > cur.time and WeatherPredictor.fmtRel(endT - cur.time) or "active"
+                    end
+                else
+                    icon.Visible = false
+                end
+            end
+        end
+        -- update upcoming moon predictions (Goldmoon, Rainbow Moon, Mega Moon, Bloodmoon)
+        if moons then
+            for _, moonName in ipairs(UPCOMING_MOONS) do
+                local iconName = MOON_ICON_NAMES[moonName] or moonName
+                local t = moons[moonName]
+                local icon = ui:FindFirstChild(iconName) or ensureMoonIcon(ui, iconName, moonName)
+                local timeLabel = icon:FindFirstChild("Time")
+                if t then
+                    local remaining = t - cur.time
+                    if remaining <= 1 then
+                        icon.Visible = true
+                        if timeLabel then
+                            timeLabel.Text = "LIVE"
+                        end
+                    else
+                        icon.Visible = true
+                        if timeLabel then
+                            timeLabel.Text = "in " .. WeatherPredictor.fmtRel(remaining)
+                        end
                     end
                 else
                     icon.Visible = false
@@ -2249,7 +2318,7 @@ do
             end
         end
         -- update the game's own WeatherUI (bottom-right icons) with predicted timers
-        local gameWeatherUI = updateGameWeatherUI(cur, wv)
+        local gameWeatherUI = updateGameWeatherUI(cur, wv, moons)
     end
     WeatherHUD.destroy = function()
         pcall(function()
