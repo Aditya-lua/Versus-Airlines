@@ -2700,25 +2700,24 @@ local function isOwnerHome(userId)
     if not userId then
         return false
     end
-    local p = Players:GetPlayerByUserId(userId)
-    if not p or not p.Character then
-        return false
-    end
-    local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then
-        return false
-    end
+    -- use the game's own lock indicator: each plot has a BillboardGui with
+    -- PlayerFrame.Unlocked ImageLabel. Visible=false → owner home (locked).
     local gardens = Workspace:FindFirstChild("Gardens")
     if not gardens then
         return false
     end
     for _, plot in ipairs(gardens:GetChildren()) do
         if plot:GetAttribute("OwnerUserId") == userId then
-            local sizeRef = plot:FindFirstChild("PlotSizeReference")
-            local center = sizeRef and sizeRef.Position or plot:GetPivot().Position
-            if (hrp.Position - center).Magnitude < 60 then
-                return true
+            for _, bg in ipairs(plot:GetChildren()) do
+                if bg:IsA("BillboardGui") then
+                    local pf = bg:FindFirstChild("PlayerFrame")
+                    local unlocked = pf and pf:FindFirstChild("Unlocked")
+                    if unlocked and unlocked:IsA("ImageLabel") then
+                        return not unlocked.Visible
+                    end
+                end
             end
+            return true
         end
     end
     return false
