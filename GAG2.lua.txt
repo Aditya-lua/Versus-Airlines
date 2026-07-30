@@ -1417,33 +1417,40 @@ local function getPlantSlots(plot, pattern)
     return list
 end
 
+local _slotCache = { plot = nil, pattern = nil, time = 0, grid = {} }
 local function getOpenSlots(plot, pattern, sortPos)
-    local grid = getPlantSlots(plot, pattern)
+    local now = os.time()
     local plants = plot:FindFirstChild("Plants")
-    local occupiedPositions = {}
-    if plants then
-        for _, pl in ipairs(plants:GetChildren()) do
-            local ok, pv = pcall(function()
-                return pl:GetPivot().Position
-            end)
-            if ok then
-                occupiedPositions[#occupiedPositions + 1] = pv
+    local plantCount = plants and #plants:GetChildren() or 0
+    if _slotCache.plot ~= plot or _slotCache.pattern ~= pattern or _slotCache.time < now - 10 or _slotCache.plantCount ~= plantCount then
+        local grid = getPlantSlots(plot, pattern)
+        local occupiedPositions = {}
+        if plants then
+            for _, pl in ipairs(plants:GetChildren()) do
+                local ok, pv = pcall(function()
+                    return pl:GetPivot().Position
+                end)
+                if ok then
+                    occupiedPositions[#occupiedPositions + 1] = pv
+                end
             end
         end
-    end
-    local free = {}
-    for _, pos in ipairs(grid) do
-        local clear = true
-        for _, occ in ipairs(occupiedPositions) do
-            if (Vector3.new(occ.X, 0, occ.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude < 6 then
-                clear = false
-                break
+        local free = {}
+        for _, pos in ipairs(grid) do
+            local clear = true
+            for _, occ in ipairs(occupiedPositions) do
+                if (Vector3.new(occ.X, 0, occ.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude < 6 then
+                    clear = false
+                    break
+                end
+            end
+            if clear then
+                free[#free + 1] = pos
             end
         end
-        if clear then
-            free[#free + 1] = pos
-        end
+        _slotCache = { plot = plot, pattern = pattern, time = now, plantCount = plantCount, grid = free }
     end
+    local free = _slotCache.grid
     if sortPos and #free > 0 then
         table.sort(free, function(a, b)
             return (Vector3.new(a.X, 0, a.Z) - Vector3.new(sortPos.X, 0, sortPos.Z)).Magnitude
@@ -1993,17 +2000,12 @@ WeatherPredictor.nextMoons = function(horizonCycles)
             end
         end
         local p = phases[pIdx]
-        local wcount = 0
-        for _ in pairs(p.Weathers or {}) do
-            wcount = wcount + 1
+        local startT = cIdx * cycleLen
+        for i2 = 1, pIdx - 1 do
+            startT = startT + phases[i2].Lasts
         end
-        if wcount > 1 then
-            local startT = cIdx * cycleLen
-            for i2 = 1, pIdx - 1 do
-                startT = startT + phases[i2].Lasts
-            end
-            local wname = pickWeather(p, cIdx * 1000 + pIdx)
-            if startT + p.Lasts >= now and not found[wname] then
+        for wname, w in pairs(p.Weathers or {}) do
+            if not w.AdminOnly and startT + p.Lasts >= now and not found[wname] then
                 found[wname] = math.max(startT, now)
             end
         end
@@ -2066,6 +2068,12 @@ local function findWeatherUI()
     return nil
 end
 
+local MOON_IMAGES = {
+    Goldmoon = "rbxassetid://84902063004871",
+    Bloodmoon = "rbxassetid://140465339393451",
+    Rainbow = "rbxassetid://93602895495056",
+    MegaMoon = "rbxassetid://107925838920918",
+}
 local function ensureMoonIcon(ui, iconName, weatherName)
     local icon = ui:FindFirstChild(iconName)
     if icon then
@@ -2077,6 +2085,7 @@ local function ensureMoonIcon(ui, iconName, weatherName)
     icon.BorderSizePixel = 0
     icon.Size = UDim2.new(0, 34, 0, 34)
     icon.LayoutOrder = 2
+    icon.Image = MOON_IMAGES[iconName] or ""
     icon.Visible = false
     local timeLabel = Instance.new("TextLabel")
     timeLabel.Name = "Time"
@@ -2322,11 +2331,11 @@ do
         local d = getData()
         local invVal = 0
         local count = 0
-        if d and d.Inventory and d.Inventory.Fruits then
-            for _, finfo in pairs(d.Inventory.Fruits) do
+        if d and d.Inventory and d.Inventory.HarvestedFruits then
+            for _, finfo in pairs(d.Inventory.HarvestedFruits) do
                 if type(finfo) == "table" then
-                    local fname = finfo.Name or finfo.SeedName or finfo.CorePartName or ""
-                    local weight = tonumber(finfo.SizeMulti or finfo.Weight or 1) or 1
+                    local fname = finfo.FruitName or finfo.Seed or finfo.Name or ""
+                    local weight = tonumber(finfo.SizeMultiplier or finfo.Weight or finfo.SizeMulti or 1) or 1
                     local mname = type(finfo.Mutation) == "string" and finfo.Mutation or nil
                     invVal = invVal + ValueEngine.compute(fname, weight, mname)
                     count = count + 1
@@ -2625,12 +2634,12 @@ local function doPlant()
                     end
                 end
                 if match then
-                    for _ = 1, math.min(count or 0, tonumber(Library.Flags["maxPerCycle"]) or 40) do
+                    for _ = 1, math.min(count or 0, tonumber(Library.Flags["maxPerCycle"]) or 80) do
                         toPlant[#toPlant + 1] = name
                     end
                 end
             else
-                for _ = 1, math.min(count or 0, tonumber(Library.Flags["maxPerCycle"]) or 40) do
+                for _ = 1, math.min(count or 0, tonumber(Library.Flags["maxPerCycle"]) or 80) do
                     toPlant[#toPlant + 1] = name
                 end
             end
@@ -2683,18 +2692,23 @@ local function doPlant()
     if #free == 0 then
         return
     end
-    local cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 40)
+    local cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 80)
     table.sort(toPlant, function(a, b) return a < b end)
-    local delay = tonumber(Library.Flags["plantDelay"]) or 0.1
+    local delay = math.max(0.02, tonumber(Library.Flags["plantDelay"]) or 0.05)
     local planted = 0
     local equippedSeed, equippedTool = nil, nil
     local missingWarned = false
+    local toolCache = {}
     for i = 1, cap do
         local seedName = toPlant[i]
         if equippedSeed ~= seedName then
-            local tool = findToolByAttr("SeedTool", seedName)
+            local tool = toolCache[seedName]
             if not tool then
-                tool = findToolByAttr("SeedTool", nil)
+                tool = findToolByAttr("SeedTool", seedName)
+                if not tool then
+                    tool = findToolByAttr("SeedTool", nil)
+                end
+                toolCache[seedName] = tool
             end
             equippedTool = tool and equipTool(tool) or nil
             equippedSeed = equippedTool and (equippedTool:GetAttribute("SeedTool") or seedName) or nil
@@ -4168,17 +4182,6 @@ Home:createButton({
         end
     end,
 })
-Home:createButton({
-    Name = "Test Notification",
-    Description = "Send a test notification to verify the game's native notification system works.",
-    Callback = function()
-        if NotificationController then
-            NotificationController:CreateNotification("GAG2 test notification! If you see this, native notifications are working. ✅")
-        else
-            notify("GAG2", "NotificationController not available - using library fallback", "warning")
-        end
-    end,
-})
 Home:createDropdown({
     Name = "Transport Mode",
     flagName = "tpMode",
@@ -4247,9 +4250,9 @@ Main:createInputBox({
 Main:createSlider({
     Name = "Max Per Cycle",
     flagName = "maxPerCycle",
-    value = 40,
+    value = 80,
     minValue = 1,
-    maxValue = 100,
+    maxValue = 200,
     Description = "Max seeds to plant per cycle.",
 })
 Main:createToggle({
@@ -5798,11 +5801,11 @@ task.spawn(function()
             end
             local invVal = 0
             local d = getData()
-            if d and d.Inventory and d.Inventory.Fruits then
-                for _, finfo in pairs(d.Inventory.Fruits) do
+            if d and d.Inventory and d.Inventory.HarvestedFruits then
+                for _, finfo in pairs(d.Inventory.HarvestedFruits) do
                     if type(finfo) == "table" then
-                        local fname = finfo.Name or finfo.SeedName or finfo.CorePartName or ""
-                        local weight = tonumber(finfo.SizeMulti or finfo.Weight or 1) or 1
+                        local fname = finfo.FruitName or finfo.Seed or finfo.Name or ""
+                        local weight = tonumber(finfo.SizeMultiplier or finfo.Weight or finfo.SizeMulti or 1) or 1
                         local mname = type(finfo.Mutation) == "string" and finfo.Mutation or nil
                         invVal = invVal + ValueEngine.compute(fname, weight, mname)
                     elseif type(finfo) == "number" then
