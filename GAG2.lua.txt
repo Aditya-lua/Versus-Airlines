@@ -676,6 +676,7 @@ do
         tc(safeConnect(g.FruitMutationUpdated, function(gardenId, plantId, fruitId, mutations)
             if fruitData[fruitId] then
                 fruitData[fruitId].mutated = (type(mutations) == "table" and next(mutations) ~= nil)
+                fruitData[fruitId].mutations = mutations
             end
         end))
     end
@@ -2449,16 +2450,24 @@ local function doHarvest(forceAll)
         for fruitId, fd in pairs(fruitData) do
             if fd.grown and fd.plantId then
                 local cropName = fd.name or ""
-                local isMutated = fd.mutated or false
+                local mutName = nil
+                if fd.mutated then
+                    if type(fd.mutations) == "string" then
+                        mutName = fd.mutations
+                    elseif type(fd.mutations) == "table" then
+                        mutName = next(fd.mutations)
+                    end
+                end
+                local wt = tonumber(fd.weight) or (ValueDB.baseWeight[cropName] or 1)
                 targets[#targets + 1] = {
                     model = nil,
                     plantId = fd.plantId,
                     fruitId = fruitId,
                     crop = cropName,
-                    mutation = isMutated,
-                    value = ValueEngine.compute(cropName, 1, nil) * (isMutated and 2 or 1),
-                    weight = 1,
-                    rarity = "Common",
+                    mutation = mutName,
+                    value = ValueEngine.compute(cropName, wt, mutName),
+                    weight = wt,
+                    rarity = SeedRarity[cropName] or "Common",
                 }
             end
         end
@@ -2468,7 +2477,6 @@ local function doHarvest(forceAll)
         table.sort(targets, function(a, b)
             return (a.value or 0) > (b.value or 0)
         end)
-        targets = { targets[1] }
     end
 
     -- build a fruitId -> HarvestPrompt index so we can trigger the game's own prompt
@@ -2632,6 +2640,7 @@ local function doPlant()
         return
     end
     local cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 40)
+    table.sort(toPlant, function(a, b) return a < b end)
     local delay = tonumber(Library.Flags["plantDelay"]) or 0.1
     local planted = 0
     local equippedSeed, equippedTool = nil, nil
@@ -2652,7 +2661,6 @@ local function doPlant()
             end
         end
         if equippedTool then
-            -- authoritative: Fire(position, seedName-from-tool-attr, equippedTool)
             netFire("Plant.PlantSeed", free[i], equippedTool:GetAttribute("SeedTool") or seedName, equippedTool)
             planted = planted + 1
             task.wait(jitter(delay, delay * 0.15))
@@ -2783,12 +2791,15 @@ local function doSellSelective()
     end
     for uid, info in pairs(fruits) do
         if type(info) == "table" then
+            local cropName = info.CropName or info.SeedName or info.Name or ""
+            local wt = tonumber(info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
+            local mutName = info.Mutation
             local entry = {
-                crop = info.CropName or info.SeedName or info.Name,
-                mutation = info.Mutation,
-                weight = tonumber(info.Weight or info.Size),
-                rarity = info.Rarity,
-                value = info.Value,
+                crop = cropName,
+                mutation = mutName,
+                weight = wt,
+                rarity = info.Rarity or SeedRarity[cropName] or "Common",
+                value = ValueEngine.compute(cropName, wt, mutName),
             }
             if matchesFilter(entry, "sellFruit", "sellRarity", "sellMutation", "sellThreshMode", "sellThreshold") then
                 netFire("NPCS.SellFruit", tostring(uid))
@@ -2836,17 +2847,19 @@ local function doFavorite(setFav, all)
         if type(info) == "table" then
             local match = all == true
             if not match then
+                local cropName = info.CropName or info.SeedName or info.Name or ""
+                local wt = tonumber(info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
+                local mutName = info.Mutation
                 local entry = {
-                    crop = info.CropName or info.SeedName or info.Name,
-                    mutation = info.Mutation,
-                    weight = tonumber(info.Weight or info.Size),
-                    rarity = info.Rarity,
-                    value = 0,
+                    crop = cropName,
+                    mutation = mutName,
+                    weight = wt,
+                    rarity = info.Rarity or SeedRarity[cropName] or "Common",
+                    value = ValueEngine.compute(cropName, wt, mutName),
                 }
                 match = matchesFilter(entry, "favFruit", "favRarity", "favMutation", "favThreshMode", "favThreshold")
             end
             if match then
-                -- verified: Backpack.SetFruitFavorite(uid, boolean)
                 netFire("Backpack.SetFruitFavorite", tostring(uid), setFav)
                 task.wait(0.05)
             end
@@ -2971,9 +2984,11 @@ local function doTrowel()
     for _, pl in ipairs(plants:GetChildren()) do
         local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
         if (not target) or (crop and crop:lower() == target:lower()) then
-            -- verified: Trowel.MovePlant(plantId, position, rotation)
-            netFire("Trowel.MovePlant", pl:GetAttribute("PlantId"), pos, 0)
-            task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
+            local plantId = pl:GetAttribute("PlantId") or pl:GetAttribute("Id") or pl.Name
+            if plantId then
+                netFire("Trowel.MovePlant", tostring(plantId), pos, 0)
+                task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
+            end
         end
     end
 end
