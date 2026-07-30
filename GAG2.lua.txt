@@ -4024,6 +4024,8 @@ local Inventory = Setup:CreateSection("Inventory")
 local Shop = Setup:CreateSection("Shop")
 local Webhook = Setup:CreateSection("Webhook")
 local Misc = Setup:CreateSection("Misc")
+local Settings = Setup:CreateSection("Settings")
+local Weather = Setup:CreateSection("Weather")
 
 -- ================================================================
 -- HOME TAB (Dashboard)
