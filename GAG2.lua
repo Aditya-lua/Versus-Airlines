@@ -2723,9 +2723,9 @@ local function doPlant()
         end
         if equippedTool then
             local sName = equippedTool:GetAttribute("SeedTool") or seedName
-            netFire("Plant.PlantSeed", free[i], sName, plot)
+            netFire("Plant.PlantSeed", free[i], sName, equippedTool)
         else
-            netFire("Plant.PlantSeed", free[i], seedName, plot)
+            netFire("Plant.PlantSeed", free[i], seedName)
         end
         planted = planted + 1
         task.wait(jitter(delay, delay * 0.15))
@@ -4106,7 +4106,7 @@ local sessionStartBal = getBalance()
 local profitWindow = {}
 
 -- ================================================================
--- SECTIONS (7 tabs - Speed Hub X layout)
+-- SECTIONS (7 tabs)
 -- ================================================================
 
 local Home = Setup:CreateSection("Home")
