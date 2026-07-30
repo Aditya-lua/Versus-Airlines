@@ -573,7 +573,7 @@ function ValueEngine.compute(crop, weight, mutationName, baseOnly)
             return vv
         end
     end
-    local base = ValueDB.sellLive and tonumber(ValueDB.sellLive[crop]) or nil
+    local base = type(ValueDB.sellLive) == "table" and tonumber(ValueDB.sellLive[crop]) or nil
     if not base or base <= 0 then
         base = ValueDB.sellFallback[crop] or (SeedBaseValue and SeedBaseValue[crop]) or 0
     end
@@ -623,6 +623,7 @@ end
 -- live-synced fruit/plant tracking (Network event hooks)
 local plantData = {}
 local fruitData = {}
+local _plantConns = {}
 do
     local function safeConnect(node, cb)
         if node and type(node) == "table" and type(node.Connect) == "function" then
@@ -635,7 +636,6 @@ do
         end
         return nil
     end
-    local _plantConns = {}
     -- Track plants being added/removed so harvest can use direct remotes without workspace scanning
     local function connectGD()
         if not Network then
@@ -696,7 +696,7 @@ local function netFire(path, ...)
     end
 end
 
--- netCall: invoke a RemoteFunction by dotted path
+-- netCall: invoke a RemoteFunction by dotted path (uses InvokeServer, not Fire)
 local function netCall(path, ...)
     if not Network then
         return nil
@@ -705,9 +705,14 @@ local function netCall(path, ...)
     for p in string.gmatch(path, "[^%.]+") do
         node = node and node[p]
     end
-    if type(node) == "table" and type(node.Fire) == "function" then
-        local ok, res = pcall(node.Fire, node, ...)
-        return ok and res or nil
+    if type(node) == "table" then
+        if type(node.InvokeServer) == "function" then
+            local ok, res = pcall(node.InvokeServer, node, ...)
+            return ok and res or nil
+        elseif type(node.Fire) == "function" then
+            local ok, res = pcall(node.Fire, node, ...)
+            return ok and res or nil
+        end
     end
     return nil
 end
@@ -1119,12 +1124,12 @@ local function getBestSeed()
     for name, count in pairs(seeds) do
         if (count or 0) > 0 then
             local val = SeedBaseValue[name] or 0
-            if not bestSeedValue or value > bestSeedValue then
-                best, bestV = name, v
+            if not bestSeedValue or val > bestSeedValue then
+                bestSeedName, bestSeedValue = name, val
             end
         end
     end
-    return closestPlotSeedName, bestSeedValue
+    return bestSeedName, bestSeedValue
 end
 local function getFruitCount()
     return client:GetAttribute("FruitCount") or 0
@@ -1184,6 +1189,9 @@ end
 
 local PLANT_PATTERNS = { "Fill", "Checkerboard", "Rows", "Columns", "Diagonal", "Spaced" }
 local function isRipe(m)
+    if not m then
+        return false
+    end
     local age = tonumber(m:GetAttribute("Age"))
     local mx = tonumber(m:GetAttribute("MaxAge"))
     if age and mx then
@@ -1507,7 +1515,10 @@ local function grabPackRobust(loc)
             break
         end
         local rootPart = getHRP()
-        if (not landed) or (r and (rootPart.Position - pos).Magnitude > 6) then
+        if not rootPart then
+            break
+        end
+        if (not landed) or ((rootPart.Position - pos).Magnitude > 6) then
             teleport(pos)
             landed = true
         end
@@ -1527,10 +1538,10 @@ local function grabPackRobust(loc)
         end
         holdSeedPrompts(pos)
         local part = loc:IsA("BasePart") and loc or loc:FindFirstChildWhichIsA("BasePart", true)
-        if firetouchinterest and part and r then
+        if firetouchinterest and part then
             pcall(function()
-                firetouchinterest(r, part, 0)
-                firetouchinterest(r, part, 1)
+                firetouchinterest(rootPart, part, 0)
+                firetouchinterest(rootPart, part, 1)
             end)
         end
         task.wait(0.12)
@@ -1557,9 +1568,9 @@ local function equipShovel()
         return nil
     end
     local humanoid = getHumanoid()
-    if h and sh.Parent ~= client.Character then
+    if humanoid and sh.Parent ~= client.Character then
         pcall(function()
-            h:EquipTool(sh)
+            humanoid:EquipTool(sh)
         end)
         task.wait(0.3)
     end
@@ -1738,77 +1749,6 @@ local function removeOtherGardens()
     return n
 end
 
--- bid watcher: queries NPC bid prices, auto-sells to highest bidder
-local _lastBidCheck = 0
-local function doBidCheck()
-    local manual = Library.Flags["bidNowFlag"] == true
-    if not Library.Flags["autoBid"] and not manual then
-        return
-    end
-    local now = os.clock()
-    if now < _lastBidCheck then
-        return
-    end
-    Library.Flags["bidNowFlag"] = nil
-    -- baseline: what plain Sell All would give right now
-    local okP, preview = pcall(function()
-        return netCall("NPCS.PreviewSellAll")
-    end)
-    local baseTotal = 0
-    local fruitCount = 0
-    if okP and type(preview) == "table" then
-        baseTotal = tonumber(preview.TotalSellValue) or tonumber(preview.TotalValue) or tonumber(preview.TotalBaseValue) or 0
-        fruitCount = tonumber(preview.FruitCount) or 0
-    end
-    if fruitCount <= 0 and baseTotal <= 0 then
-        if manual then
-            notify("Bid Watcher", "You have no fruits to sell", "warning")
-        end
-        _lastBidCheck = now + jitter(15, 3)
-        return
-    end
-    -- ask NPC to re-bid the whole inventory (respects server cooldown)
-    local okB, res = pcall(function()
-        return netCall("NPCS.AskBidAll")
-    end)
-    if not (okB and type(res) == "table") then
-        _lastBidCheck = now + jitter(15, 3)
-        return
-    end
-    if res.Reason == "Cooldown" then
-        local remaining = tonumber(res.Remaining) or 15
-        _lastBidCheck = now + remaining + 1
-        if manual then
-            notify("Bid Watcher", ("NPC on cooldown - retry in %ds"):format(remaining), "warning")
-        end
-        return
-    end
-    _lastBidCheck = now + jitter(15, 3)
-    if not res.Success then
-        if manual then
-            notify("Bid Watcher", "NPC refused to re-bid right now", "warning")
-        end
-        return
-    end
-    local offer = tonumber(res.NewTotalOffer) or tonumber(res.NewTotalSellValue) or baseTotal
-    local increased = tonumber(res.IncreasedCount) or 0
-    if Library.Flags["autoBid"] then
-        if offer >= baseTotal then
-            netFire("NPCS.SellAll")
-            sessionEarned = sessionEarned + math.max(0, offer - baseTotal)
-            notify("Bid Watcher", "Sold inventory for " .. fmtCash(offer) .. " (base " .. fmtCash(baseTotal) .. ")")
-            if Library.Flags["whPetPurchase"] then
-                sendWebhook("Fruit Bid Sold", "Inventory sold for " .. fmtCash(offer), 12255232)
-            end
-        end
-    elseif manual then
-        notify(
-            "Bid Watcher",
-            ("Offer %s vs base %s (%d improved)"):format(fmtCash(offer), fmtCash(baseTotal), increased)
-        )
-    end
-end
-
 -- sell preview: shows what your inventory would sell for without actually selling
 local function doSellPreview()
     local ok, val = pcall(function()
@@ -1869,173 +1809,7 @@ local function doHarvestMutated()
     end
 end
 
--- ================================================================
--- SHOP PREDICTION OVERLAY (local - reads game's own restock data, no API)
--- ================================================================
 
-local injectAllShopPredictions
-do -- scoped: shop-prediction helpers (Delta 200-register limit)
-local SHOP_NAMES = { "SeedShop", "GearShop", "CrateShop" }
-
--- read the next restock unix timestamp for a shop directly from StockValues
-local function getNextRestockUnix(shopName)
-    local sv = ReplicatedStorage:FindFirstChild("StockValues")
-    sv = sv and sv:FindFirstChild(shopName)
-    local restockTimestamp = sv and sv:FindFirstChild("UnixNextRestock")
-    return restockTimestamp and restockTimestamp.Value or nil
-end
-
--- estimate the predicted quantity for an item using SeedData restock range
-local function getPredictedQty(seedName)
-    for _, seedEntry in ipairs(SeedData or {}) do
-        if type(seedEntry) == "table" and seedEntry.SeedName == seedName then
-            local restockRange = seedEntry.RestockValues
-            if restockRange and typeof(restockRange) == "NumberRange" then
-                return math.floor((restockRange.Min + restockRange.Max) / 2 + 0.5)
-            end
-            return nil
-        end
-    end
-    return nil
-end
-
--- read an item card's name from Seed_Text (handles .Text and Frame>TextLabel)
-local function readItemName(card)
-    local mf = card:FindFirstChild("Main_Frame")
-    if not mf then
-        return nil
-    end
-    local st = mf:FindFirstChild("Seed_Text")
-    if not st then
-        return nil
-    end
-    if st:IsA("TextLabel") or st:IsA("TextButton") then
-        return st.Text
-    end
-    local tl = st:FindFirstChildOfClass("TextLabel") or st:FindFirstChild("Text")
-    return tl and tl.Text or nil
-end
-
--- detect if an item card is currently out of stock
-local function isCardOutOfStock(card)
-    local mf = card:FindFirstChild("Main_Frame")
-    if not mf then
-        return false
-    end
-    local ns = mf:FindFirstChild("NoStock")
-    if ns and ns:IsA("UIStroke") and ns.Enabled then
-        return true
-    end
-    local stxt = mf:FindFirstChild("Stock_Text")
-    if stxt then
-        local t = ""
-        if stxt:IsA("TextLabel") or stxt:IsA("TextButton") then
-            t = stxt.Text
-        else
-            local tl = stxt:FindFirstChildOfClass("TextLabel") or stxt:FindFirstChild("Text")
-            if tl then
-                t = tl.Text
-            end
-        end
-        local lower = t:lower()
-        if lower:find("sold") or lower:find("out") or lower:find("empty") or t == "" then
-            return true
-        end
-    end
-    return false
-end
-
--- set the stock text label on a card
-local function setStockText(card, text)
-    local mf = card:FindFirstChild("Main_Frame")
-    if not mf then
-        return
-    end
-    local stxt = mf:FindFirstChild("Stock_Text")
-    if not stxt then
-        return
-    end
-    if stxt:IsA("TextLabel") or stxt:IsA("TextButton") then
-        stxt.Text = text
-    else
-        local tl = stxt:FindFirstChildOfClass("TextLabel") or stxt:FindFirstChild("Text")
-        if tl then
-            tl.Text = text
-        end
-    end
-end
-
--- scan one shop gui: overwrite out-of-stock item text with local restock countdown
-local function injectShopPredictions(shopName)
-    if not Library.Flags["shopPredictOverlay"] then
-        return
-    end
-    local pg = client:FindFirstChild("PlayerGui")
-    if not pg then
-        return
-    end
-    local shop = pg:FindFirstChild(shopName)
-    if not shop then
-        return
-    end
-
-    local nextRestock = getNextRestockUnix(shopName)
-
-    -- find scrolling frames (NormalShop + ExclusiveShop for seeds, plain for others)
-    local scrollFrames = {}
-    local f = shop:FindFirstChild("Frame")
-    if f then
-        local ns = f:FindFirstChild("NormalShop")
-        local es = f:FindFirstChild("ExclusiveShop")
-        local sf = f:FindFirstChild("ScrollingFrame")
-        if ns and ns:FindFirstChild("ScrollingFrame") then
-            scrollFrames[#scrollFrames + 1] = ns.ScrollingFrame
-        end
-        if es and es:FindFirstChild("ScrollingFrame") then
-            scrollFrames[#scrollFrames + 1] = es.ScrollingFrame
-        end
-        if sf then
-            scrollFrames[#scrollFrames + 1] = sf
-        end
-    end
-
-    for _, sf in ipairs(scrollFrames) do
-        for _, card in ipairs(sf:GetChildren()) do
-            if card:IsA("Frame") or card:IsA("CanvasGroup") then
-                local mf = card:FindFirstChild("Main_Frame")
-                if mf then
-                    local name = readItemName(card)
-                    if name then
-                        if isCardOutOfStock(card) then
-                            card:SetAttribute("VAPredInjected", true)
-                            local countdown = nextRestock and fmtCountdown(nextRestock) or "?"
-                            local qty = getPredictedQty(name)
-                            local txt = "Restocks in " .. countdown
-                            if qty then
-                                txt = txt .. " (" .. qty .. "x)"
-                            end
-                            setStockText(card, txt)
-                        elseif card:GetAttribute("VAPredInjected") then
-                            -- item restocked - clear our marker so the game's script resumes
-                            card:SetAttribute("VAPredInjected", nil)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
--- scan all three shops
-injectAllShopPredictions = function()
-    if not Library.Flags["shopPredictOverlay"] then
-        return
-    end
-    for _, shopName in ipairs(SHOP_NAMES) do
-        pcall(injectShopPredictions, shopName)
-    end
-end
-end -- scoped: shop-prediction helpers
 
 -- ================================================================
 -- LOCAL WEATHER PREDICTOR (deterministic Day/Sunset/Night cycle from the
@@ -2782,15 +2556,7 @@ local function doPlant()
         hasFilter = false -- Auto Plant All ignores the seed dropdown entirely
     end
     local toPlant = {}
-    if Library.Flags["smartReplant"] then
-        local bestSeedName, bestSeedValue = getBestSeed()
-        if bestSeedName and seeds[bestSeedName] and seeds[bestSeedName] > 0 then
-            for _ = 1, math.min(seeds[bestSeedName], tonumber(Library.Flags["maxPerCycle"]) or 40) do
-                toPlant[#toPlant + 1] = bestSeedName
-            end
-        end
-    else
-        for name, count in pairs(seeds) do
+    for name, count in pairs(seeds) do
             if hasFilter then
                 local match = false
                 if type(seedFilter) == "table" then
@@ -3419,7 +3185,7 @@ end
 local function doMailboxClaim()
     -- new game packet: one-call claim-all (2026-07-28 update); per-id loop below is the cleanup
     netFire("Mailbox.ClaimAll")
-    task.wait(1)
+    task.wait(2)
     local list = netCall("Mailbox.List")
     if not (type(list) == "table") then
         return
@@ -3497,7 +3263,7 @@ end
 
 local function doCollectDropped()
     local rootPart = getHRP()
-    if not r then
+    if not rootPart then
         return
     end
     local dropped = Workspace:FindFirstChild("Temporary") or Workspace:FindFirstChild("DroppedItems")
@@ -3507,11 +3273,17 @@ local function doCollectDropped()
     for _, d in ipairs(dropped:GetChildren()) do
         if d:IsA("Tool") or (d:IsA("Model") and d:GetAttribute("Fruit")) then
             local part = d:IsA("BasePart") and d or d:FindFirstChildWhichIsA("BasePart", true)
-            if part and firetouchinterest then
-                pcall(function()
-                    firetouchinterest(r, part, 0)
-                    firetouchinterest(r, part, 1)
-                end)
+            if part then
+                if firetouchinterest then
+                    pcall(function()
+                        firetouchinterest(rootPart, part, 0)
+                        firetouchinterest(rootPart, part, 1)
+                    end)
+                else
+                    pcall(function()
+                        part.CFrame = rootPart.CFrame
+                    end)
+                end
             end
         end
     end
@@ -3570,70 +3342,7 @@ local function doESP()
     end
 end
 
--- ready/rare crop highlights (pooled, diff-based)
-local _hlPool = {}
-local function clearHighlights()
-    for m, h in pairs(_hlPool) do
-        pcall(function()
-            h:Destroy()
-        end)
-    end
-    _hlPool = {}
-end
 
-local function doHighlightLoop()
-    if not Library.Flags["highlightReady"] and not Library.Flags["highlightRare"] then
-        if next(_hlPool) then
-            clearHighlights()
-        end
-        return
-    end
-    local _alive = {}
-    local function ensure(model, fill, fillT)
-        if not (model and model.Parent) then
-            return
-        end
-        _alive[model] = true
-        local h = _hlPool[model]
-        if not h then
-            h = Instance.new("Highlight")
-            h.Adornee = model
-            h.FillColor = fill
-            h.FillTransparency = fillT
-            h.OutlineColor = Color3.new(1, 1, 1)
-            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            h.Parent = CoreGui
-            _hlPool[model] = h
-        end
-    end
-    if Library.Flags["highlightReady"] then
-        local plot = myPlot()
-        if plot then
-            for _, entry in ipairs(getRipeCrops()) do
-                ensure(entry.model, Color3.fromRGB(0, 255, 100), 0.5)
-            end
-        end
-    end
-    if Library.Flags["highlightRare"] then
-        local spawns = Workspace:FindFirstChild("Map")
-        spawns = spawns and spawns:FindFirstChild("SeedPackSpawnServerLocations")
-        if spawns then
-            for _, loc in ipairs(spawns:GetChildren()) do
-                if isRareSeedPack(loc) then
-                    ensure(loc, Color3.fromRGB(255, 215, 0), 0.4)
-                end
-            end
-        end
-    end
-    for m, h in pairs(_hlPool) do
-        if not _alive[m] or not m.Parent then
-            pcall(function()
-                h:Destroy()
-            end)
-            _hlPool[m] = nil
-        end
-    end
-end
 
 -- rare seed restock notify
 local _rareNotified = {}
@@ -3684,7 +3393,7 @@ end
 -- anti-fling
 local function doAntiFling()
     local rootPart = getHRP()
-    if not r then
+    if not rootPart then
         return
     end
     local velocity = rootPart.Velocity
@@ -3944,7 +3653,7 @@ local function doFlySystem(dt)
         return
     end
     local character = client.Character
-    if not c then
+    if not character then
         return
     end
     local hrp = character:FindFirstChild("HumanoidRootPart")
@@ -3955,7 +3664,7 @@ local function doFlySystem(dt)
     if not cam then
         return
     end
-    local h = character:FindFirstChildOfClass("Humanoid")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
     if not _flyBV then
         _flyBV = Instance.new("BodyVelocity")
         _flyBV.MaxForce = Vector3.new(1, 1, 1) * 9e9
@@ -4002,27 +3711,27 @@ end
 local _moveCache = {}
 local function doMoveLoop()
     local character = client.Character
-    if not c then
+    if not character then
         return
     end
-    local h = character:FindFirstChildOfClass("Humanoid")
-    if not h then
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then
         return
     end
-    local st = _moveCache[c]
+    local st = _moveCache[character]
     if not st then
         st = {}
-        _moveCache[c] = st
+        _moveCache[character] = st
     end
     local ws = tonumber(Library.Flags["runSpeed"]) or 16
     local jh = tonumber(Library.Flags["jumpHeight"]) or 7.2
     if st.ws ~= ws then
         st.ws = ws
-        h.WalkSpeed = ws
+        humanoid.WalkSpeed = ws
     end
     if st.jh ~= jh then
         st.jh = jh
-        h.JumpHeight = jh
+        humanoid.JumpHeight = jh
     end
     if Library.Flags["noClip"] then
         for _, p in ipairs(character:GetDescendants()) do
@@ -4084,11 +3793,10 @@ local PERSISTENT_FLAGS = {
     "plantPattern",
     "plantDelay",
     "maxPerCycle",
-    "smartReplant",
     "plantPosition",
     "savedPlantPos",
     "autoExpand",
-    "autoProgress",
+
     "autoCollect",
     "autoCollectAll",
     "autoCollectBest",
@@ -4217,8 +3925,7 @@ local PERSISTENT_FLAGS = {
     "petBuyMaxPrice",
     "removeCrops",
     "weatherAlerts",
-    "autoBid",
-    "bidNowFlag",
+
     "seedReserve",
     "reserveCount",
     "antiFling",
@@ -4245,7 +3952,7 @@ local PERSISTENT_FLAGS = {
     "noClip",
     "freeFlight",
     "flightSpeed",
-    "shopPredictOverlay",
+
     "autoTame",
     "autoEquip",
     "equipList",
@@ -4256,6 +3963,7 @@ local PERSISTENT_FLAGS = {
     "tpTween",
     "tpTweenSpeed",
     "weatherHUD",
+    "rareNotify",
     "espFruitValue",
     "espTotalValue",
     "espBaseValueOnly",
@@ -4307,18 +4015,16 @@ local sessionStartBal = getBalance()
 local profitWindow = {}
 
 -- ================================================================
--- SECTIONS (9 tabs)
+-- SECTIONS (7 tabs - Speed Hub X layout)
 -- ================================================================
 
 local Home = Setup:CreateSection("Home")
 local Main = Setup:CreateSection("Main")
+local Automatically = Setup:CreateSection("Automatically")
+local Inventory = Setup:CreateSection("Inventory")
 local Shop = Setup:CreateSection("Shop")
-local Auto = Setup:CreateSection("Pets")
-local Inv = Setup:CreateSection("Steal")
-local Hook = Setup:CreateSection("Inventory")
-local Weather = Setup:CreateSection("Weather")
-local Misc = Setup:CreateSection("[Misc]")
-local Settings = Setup:CreateSection("Settings")
+local Webhook = Setup:CreateSection("Webhook")
+local Misc = Setup:CreateSection("Misc")
 
 -- ================================================================
 -- HOME TAB (Dashboard)
@@ -4348,8 +4054,6 @@ Home:createButton({
         upd(Main, "sellFruit", getCropList())
         upd(Main, "sellPet", getPetList())
         upd(Main, "buyPet", getAllPetSpecies())
-        upd(Main, "tameAnimals", getWildList())
-        upd(Main, "equipList", getPetList())
         upd(Shop, "buySeed", getSeedList())
         upd(Shop, "buyGear", getGearList())
         upd(Shop, "buyCrate", getCrateList())
@@ -4378,36 +4082,31 @@ Home:createButton({
 -- MAIN TAB
 -- ================================================================
 
-Main:createLabel({ Name = "Teleport Manager", Special = true })
-Main:createToggle({
-    Name = "Tween Teleport",
-    Flag = false,
-    flagName = "tpTween",
-    Description = "Smooth tween movement instead of instant hops (looks more natural).",
-})
-Main:createSlider({
-    Name = "Base Tween Speed",
-    flagName = "tpTweenSpeed",
-    value = 60,
-    minValue = 20,
-    maxValue = 200,
-    Description = "Studs per second when Tween Teleport is enabled.",
-})
-
+-- Automation Plants
 Main:createLabel({ Name = "Automation Plants", Special = true })
 
+Main:createLabel({ Name = "- [ Config ] -", Special = true })
 Main:createToggle({
-    Name = "Disable Teleport (Plant)",
+    Name = "Disable Teleport",
     Flag = false,
     flagName = "plantNoTp",
     Description = "Walk instead of teleporting to planting spots.",
 })
+
+Main:createLabel({ Name = "- [ Plants ] -", Special = true })
 Main:createDropdown({
     Name = "Select Seeds",
     flagName = "plantSeeds",
     List = getSeedList(),
     multi = true,
     Description = "Which seeds to plant. Leave empty for all.",
+})
+Main:createDropdown({
+    Name = "Plant Pattern",
+    flagName = "plantPattern",
+    List = { "Fill", "Checkerboard", "Rows", "Columns", "Diagonal", "Spaced" },
+    Flag = { "Fill" },
+    Description = "Visual layout pattern for planting seeds.",
 })
 Main:createDropdown({
     Name = "Select Position",
@@ -4430,8 +4129,28 @@ Main:createButton({
 Main:createInputBox({
     Name = "Delay To Plant",
     flagName = "plantDelay",
-    Flag = "0.1",
+    Flag = "0",
     Description = "Delay in seconds between each seed planted.",
+})
+Main:createSlider({
+    Name = "Max Per Cycle",
+    flagName = "maxPerCycle",
+    value = 40,
+    minValue = 1,
+    maxValue = 100,
+    Description = "Max seeds to plant per cycle.",
+})
+Main:createToggle({
+    Name = "Seed Reserve",
+    Flag = false,
+    flagName = "seedReserve",
+    Description = "Keep a reserve of seeds in inventory.",
+})
+Main:createInputBox({
+    Name = "Reserve Count",
+    flagName = "reserveCount",
+    Flag = "10",
+    Description = "How many seeds to keep as reserve.",
 })
 createIntervalToggle(
     Main,
@@ -4441,52 +4160,19 @@ createIntervalToggle(
     Main,
     { Name = "Auto Plant All Seeds", flagName = "autoPlantAll", tag = "autoPlantAll", delay = 1.2, Step = doPlant }
 )
-Main:createToggle({
-    Name = "Smart Replant",
-    Flag = false,
-    flagName = "smartReplant",
-    Description = "Only plant your highest-value seed.",
-})
-Main:createDropdown({
-    Name = "Planting Pattern",
-    flagName = "plantPattern",
-    List = PLANT_PATTERNS,
-    Flag = { "Fill" },
-    Description = "How seeds are arranged on the soil.",
-})
-Main:createSlider({
-    Name = "Max Plants Per Cycle",
-    flagName = "maxPerCycle",
-    value = 40,
-    minValue = 5,
-    maxValue = 100,
-    Description = "How many seeds to plant each loop.",
-})
-Main:createToggle({
-    Name = "Seed Reserve (Keep N)",
-    Flag = false,
-    flagName = "seedReserve",
-    Description = "Keep a minimum amount of each seed type. Won't plant below it.",
-})
-Main:createSlider({
-    Name = "Reserve Count",
-    flagName = "reserveCount",
-    value = 0,
-    minValue = 0,
-    maxValue = 500,
-    Description = "Minimum seeds to keep unplanted per type (0 = disabled).",
-})
 
+-- Automation Collection
 Main:createLabel({ Name = "Automation Collection", Special = true })
 
+Main:createLabel({ Name = "- [ Config ] -", Special = true })
 Main:createToggle({
-    Name = "Disable Teleport (Collect)",
+    Name = "Disable Teleport",
     Flag = false,
     flagName = "collectNoTp",
     Description = "Walk instead of teleporting to crops.",
 })
 Main:createToggle({
-    Name = "Stop Collect If Backpack Is Full",
+    Name = "Stop Collect If Backpack Is Full Max",
     Flag = false,
     flagName = "stopOnFull",
     Description = "Pause collecting when backpack is full.",
@@ -4497,6 +4183,8 @@ Main:createInputBox({
     Flag = "0",
     Description = "Extra delay (seconds) before each collect.",
 })
+
+Main:createLabel({ Name = "- [ Collects ] -", Special = true })
 Main:createDropdown({
     Name = "Select Filter",
     flagName = "collectFilter",
@@ -4508,6 +4196,7 @@ Main:createDropdown({
     Name = "Select Fruit",
     flagName = "collectFruit",
     List = getCropList(),
+    multi = true,
     Description = "Specific fruit to collect (with Filtered mode).",
 })
 Main:createDropdown({
@@ -4523,12 +4212,6 @@ Main:createDropdown({
     List = { "Any", "Mutated Only", "Non-Mutated Only" },
     Flag = { "Any" },
     Description = "Mutation filter for collecting.",
-})
-Main:createToggle({
-    Name = "Mutated Only",
-    Flag = false,
-    flagName = "mutatedOnly",
-    Description = "Only harvest mutated crops (works with any mode).",
 })
 Main:createDropdown({
     Name = "Select Threshold Mode",
@@ -4567,7 +4250,24 @@ Main:createToggle({
     flagName = "autoCollectBest",
     Description = "Only collect the highest-value fruit.",
 })
-Main:createLabel({ Name = "Collect Gold / Rainbow", Special = true })
+
+Main:createLabel({ Name = "- [ Mutation Scanner ] -", Special = true })
+Main:createButton({
+    Name = "Scan Mutations",
+    Description = "List all mutated fruits in your garden.",
+    Callback = function()
+        doMutationScan()
+    end,
+})
+Main:createButton({
+    Name = "Harvest Mutated",
+    Description = "Collect all ripe mutated fruits now.",
+    Callback = function()
+        doHarvestMutated()
+    end,
+})
+
+Main:createLabel({ Name = "- [ Collect Gold / Rainbow Seed ] -", Special = true })
 Main:createToggle({
     Name = "Auto Collect Gold Seed",
     Flag = true,
@@ -4580,146 +4280,114 @@ Main:createToggle({
     flagName = "collectRainbow",
     Description = "Auto-collect rainbow seed packs from map.",
 })
+
+Main:createLabel({ Name = "- [ Collect Dropped Item ] -", Special = true })
 Main:createToggle({
     Name = "Auto Collect Dropped Item",
     Flag = false,
     flagName = "collectDropped",
     Description = "Auto-collect dropped fruit/items on ground.",
 })
-Main:createLabel({ Name = "Mutation Scanner", Special = true })
-Main:createButton({
-    Name = "Scan Mutations Now",
-    Description = "Log all mutated fruits in your tracker to console + notify.",
-    Callback = function()
-        task.spawn(doMutationScan)
-    end,
-})
-Main:createButton({
-    Name = "Harvest Mutated Only",
-    Description = "Collect only mutated fruits using live-tracked data.",
-    Callback = function()
-        task.spawn(doHarvestMutated)
-    end,
-})
 
+-- Automation Steal
+Main:createLabel({ Name = "Automation Steal", Special = true })
 
-Inv:createLabel({ Name = "Automation Steal", Special = true })
-
-Inv:createDropdown({
+Main:createLabel({ Name = "- [ Steal Fruits ] -", Special = true })
+Main:createDropdown({
     Name = "Select Filter",
     flagName = "stealFilter",
     List = { "All", "Filtered", "Best" },
     Flag = { "All" },
     Description = "Which steal mode to use.",
 })
-Inv:createDropdown({
-    Name = "Select Fruit (Steal)",
+Main:createDropdown({
+    Name = "Select Fruit",
     flagName = "stealFruit",
     List = getCropList(),
+    multi = true,
     Description = "Specific fruit to steal (with Filtered mode).",
 })
-Inv:createDropdown({
-    Name = "Select Steal Rarity",
+Main:createDropdown({
+    Name = "Select Rarity",
     flagName = "stealRarity",
     List = RARITY_LIST,
     Flag = { "Any" },
     Description = "Minimum rarity to steal.",
 })
-Inv:createDropdown({
-    Name = "Select Steal Mutation",
+Main:createDropdown({
+    Name = "Select Mutation",
     flagName = "stealMutation",
     List = { "Any", "Mutated Only", "Non-Mutated" },
     Flag = { "Any" },
     Description = "Mutation filter for stealing.",
 })
-Inv:createInputBox({
+Main:createInputBox({
     Name = "Steal Delay",
     flagName = "stealDelay",
     Flag = "0.3",
     Description = "Seconds between BeginSteal and CompleteSteal.",
 })
 createIntervalToggle(
-    Inv,
+    Main,
     { Name = "Auto Steal Fruit", flagName = "autoSteal", tag = "autoSteal", delay = 3, Step = doSteal }
 )
-Inv:createToggle({
-    Name = "Auto Steal Best Fruit (Instant Steal)",
+
+Main:createLabel({ Name = "- [ Steal Best Fruit ] -", Special = true })
+Main:createToggle({
+    Name = "Auto Steal Best Fruit",
     Flag = false,
     flagName = "autoStealBest",
     Description = "Only steal the highest-value fruit available instantly.",
 })
-Inv:createToggle({
-    Name = "Steal Return",
-    Flag = false,
-    flagName = "stealReturn",
-    Description = "Teleport back to your garden each pass.",
-})
 
-Inv:createLabel({ Name = "Defense & Locking", Special = true })
-Inv:createToggle({
-    Name = "Skip Stealing If Owner Is Home",
-    Flag = true,
-    flagName = "skipIfOwnerHome",
-    Description = "Skips neighbor gardens where the owner is actively standing on their plot.",
-})
-Inv:createToggle({
-    Name = "Steal Evasion: Dodge Approaching Players",
-    Flag = true,
-    flagName = "stealEvasion",
-    Description = "Instantly dodge and teleport upward/safe if any player closes in while you are stealing.",
-})
-Inv:createToggle({
-    Name = "Panic Harvest At Night",
-    Flag = false,
-    flagName = "panicHarvest",
-    Description = "Instantly harvest all your ready crops the moment night begins to beat thieves.",
-})
-Inv:createToggle({
-    Name = "Only Steal At Night",
+Main:createLabel({ Name = "- [ Locks Garden ] -", Special = true })
+Main:createToggle({
+    Name = "Auto Lock Garden At Night",
     Flag = true,
     flagName = "lockNight",
     Description = "Wait for nightfall to begin stealing (safest method).",
 })
-Inv:createToggle({
-    Name = "Auto Hit Intruders (Shovel & Crowbar)",
+
+Main:createLabel({ Name = "- [ Hit Players ] -", Special = true })
+Main:createToggle({
+    Name = "Auto Hit Player Stolen",
     Flag = false,
     flagName = "hitStolen",
     Description = "Shovel and crowbar players who come onto your plot or try to steal.",
 })
-Inv:createToggle({
-    Name = "Pet Purchase Protection",
-    Flag = false,
-    flagName = "petProtection",
-    Description = "Disable ProximityPrompts on wild pets so no one can buy them.",
-})
 
-Shop:createLabel({ Name = "Automation Sell", Special = true })
-Shop:createInputBox({
+-- Automation Sell
+Main:createLabel({ Name = "Automation Sell", Special = true })
+
+Main:createLabel({ Name = "- [ Config ] -", Special = true })
+Main:createInputBox({
     Name = "Delay To Sell Inventory",
     flagName = "sellDelay",
     Flag = "0",
     Description = "Extra delay (seconds) before each auto-sell.",
 })
-Shop:createToggle({
+Main:createToggle({
     Name = "Allow Sell If Backpack Is Max",
     Flag = true,
     flagName = "sellOnFull",
     Description = "Auto-sell the moment your backpack is full.",
 })
-Shop:createToggle({
+
+Main:createToggle({
     Name = "Use Daily Deal",
     Flag = false,
     flagName = "dailyDeal",
     Description = "Sell to daily deal vendor for bonus.",
 })
-Shop:createLabel({ Name = "Sell All", Special = true })
-Shop:createToggle({
+
+Main:createLabel({ Name = "- [ Sell All ] -", Special = true })
+Main:createToggle({
     Name = "Auto Sell All",
     Flag = false,
     flagName = "autoSell",
     Description = "Auto-sell everything on an interval.",
 })
-Shop:createSlider({
+Main:createSlider({
     Name = "Sell Interval (seconds)",
     flagName = "sellInterval",
     value = 20,
@@ -4727,111 +4395,122 @@ Shop:createSlider({
     maxValue = 120,
     Description = "How often to auto-sell.",
 })
-Shop:createButton({
-    Name = "Sell All Now",
+Main:createButton({
+    Name = "Sell All",
     Description = "Sell all harvested fruit.",
     Callback = function()
         doSellAll()
         notify("Sell", "Sold all fruit")
     end,
 })
-Shop:createLabel({ Name = "Sell Fruits (Selective)", Special = true })
-Shop:createDropdown({
+
+Main:createLabel({ Name = "- [ Sell Fruits ] -", Special = true })
+Main:createDropdown({
     Name = "Select Sell Fruit",
     flagName = "sellFruit",
     List = getCropList(),
     Description = "Which fruit type to selectively sell.",
 })
-Shop:createDropdown({
+Main:createDropdown({
     Name = "Select Sell Rarity",
     flagName = "sellRarity",
     List = RARITY_LIST,
     Flag = { "Any" },
     Description = "Minimum rarity to sell.",
 })
-Shop:createDropdown({
+Main:createDropdown({
     Name = "Select Sell Mutation",
     flagName = "sellMutation",
     List = { "Any", "Mutated Only", "Non-Mutated" },
     Flag = { "Any" },
     Description = "Mutation filter for selling.",
 })
-Shop:createDropdown({
+Main:createDropdown({
     Name = "Select Threshold Mode",
     flagName = "sellThreshMode",
     List = { "Disabled", "Weight", "Value" },
     Flag = { "Disabled" },
     Description = "Threshold mode for selective selling.",
 })
-Shop:createInputBox({
+Main:createInputBox({
     Name = "Weight Threshold",
     flagName = "sellThreshold",
     Flag = "0",
     Description = "Minimum weight/value to sell (0 = disabled).",
 })
-Shop:createToggle({
-    Name = "Auto Sell Fruit (Selective)",
+Main:createToggle({
+    Name = "Auto Sell Fruit",
     Flag = false,
     flagName = "autoSellSelective",
     Description = "Auto-sell fruits matching the above filters.",
 })
-Auto:createLabel({ Name = "Sell Pets", Special = true })
-Auto:createDropdown({
-    Name = "Select Pet to Sell",
+
+Main:createLabel({ Name = "- [ Sell Pets ] -", Special = true })
+Main:createDropdown({
+    Name = "Select Pets",
     flagName = "sellPet",
     List = getPetList(),
     Description = "Which pet type to sell.",
 })
-Auto:createDropdown({
-    Name = "Select Pet Rarity",
+Main:createDropdown({
+    Name = "Select Rarity Pets",
     flagName = "sellPetRarity",
     List = RARITY_LIST,
     Flag = { "Any" },
     Description = "Minimum rarity for pet selling.",
 })
-Auto:createDropdown({
-    Name = "Select Pet Size",
+Main:createDropdown({
+    Name = "Select Size Pets",
     flagName = "sellPetSize",
     List = { "Any", "Small", "Medium", "Large", "Huge" },
     Flag = { "Any" },
     Description = "Size filter for pet selling.",
 })
-Auto:createToggle({
+Main:createToggle({
     Name = "Auto Sell Pets",
     Flag = false,
     flagName = "autoSellPets",
     Description = "Auto-sell pets matching the above filters.",
 })
 
-Auto:createLabel({ Name = "Automation Pets", Special = true })
-Auto:createLabel({ Name = "Buy Pets", Special = true })
-Auto:createDropdown({
-    Name = "Select Pet to Buy",
+-- Automation Pets
+Main:createLabel({ Name = "Automation Pets", Special = true })
+
+Main:createToggle({
+    Name = "Pet Purchase Protection",
+    Flag = false,
+    flagName = "petProtection",
+    Description = "Disable ProximityPrompts on wild pets so no one can buy them.",
+})
+
+Main:createLabel({ Name = "- [ Buys Pets ] -", Special = true })
+Main:createDropdown({
+    Name = "Select Pets",
     flagName = "buyPet",
     List = getAllPetSpecies(),
     Description = "Which pet type to auto-purchase.",
 })
-Auto:createDropdown({
-    Name = "Pet Rarity to Buy",
+Main:createDropdown({
+    Name = "Select Rarity Pets",
     flagName = "buyPetRarity",
     List = RARITY_LIST,
-    Flag = { "Any" },
+    multi = true,
     Description = "Minimum rarity for pet purchases.",
 })
-Auto:createDropdown({
-    Name = "Pet Size to Buy",
+Main:createDropdown({
+    Name = "Select Size Pets",
     flagName = "buyPetSize",
     List = { "Any", "Small", "Medium", "Large", "Huge" },
     Flag = { "Any" },
     Description = "Size filter for pet purchases.",
 })
-Auto:createToggle({
-    Name = "Auto Buy Affordable Pets",
+Main:createToggle({
+    Name = "Auto Buy Pet",
     Flag = false,
     flagName = "autoBuyPet",
     Description = "Scan wild pets and buy if price is within budget.",
 })
-Auto:createSlider({
+Main:createSlider({
     Name = "Max Pet Price",
     flagName = "petBuyMaxPrice",
     value = 500,
@@ -4840,323 +4519,68 @@ Auto:createSlider({
     Description = "Maximum price to spend on a single pet.",
 })
 
-Auto:createLabel({ Name = "Taming & Equipping", Special = true })
-
-createIntervalToggle(Auto, {
-    Name = "Auto Tame Wild Pets",
+Main:createLabel({ Name = "- [ Tame / Equip ] -", Special = true })
+Main:createToggle({
+    Name = "Auto Tame Wild Pet",
+    Flag = false,
     flagName = "autoTame",
-    tag = "autoTame",
-    delay = 4,
-    Step = function()
-        local wilds = Workspace:FindFirstChild("Map")
-        wilds = wilds and wilds:FindFirstChild("WildPetRef")
-        if not wilds then
-            return
-        end
-        local anySel = type(Library.Flags["tameAnimals"]) == "table" and #Library.Flags["tameAnimals"] > 0
-        for _, pet in ipairs(wilds:GetChildren()) do
-            local species = pet:GetAttribute("PetName") or pet:GetAttribute("Type")
-            if species then
-                local match = false
-                if anySel then
-                    for _, f in ipairs(Library.Flags["tameAnimals"]) do
-                        if species:lower() == f:lower() then
-                            match = true
-                            break
-                        end
-                    end
-                else
-                    match = true
-                end
-                if match then
-                    netFire("Pets.WildPetTame", pet)
-                    break
-                end
-            end
-        end
-    end,
-})
-Auto:createDropdown({
-    Name = "Animals To Tame",
-    flagName = "tameAnimals",
-    List = getWildList(),
-    multi = true,
-    Description = "Which wild pets to tame. Leave empty for any.",
-})
-
-createIntervalToggle(Auto, {
-    Name = "Auto Buy Pet Slot",
-    flagName = "autoBuyPetSlot",
-    tag = "autoBuyPetSlot",
-    delay = 30,
-    Step = function()
-        -- server gates on cost; fires Pets.RequestPurchasePetSlot()
-        netFire("Pets.RequestPurchasePetSlot")
-    end,
-})
-
-local _lastHopPetFound = nil
-createIntervalToggle(Auto, {
-    Name = "Server Hop To Wild Pet",
-    flagName = "autoHopPet",
-    tag = "autoHopPet",
-    delay = 8,
-    Step = function()
-        -- hop low-pop servers until the chosen wild pet spawns here
-        local wilds = Workspace:FindFirstChild("Map")
-        wilds = wilds and wilds:FindFirstChild("WildPetRef")
-        local foundSpecies = nil
-        if wilds then
-            local anySel = type(Library.Flags["hopPetSpecies"]) == "table" and #Library.Flags["hopPetSpecies"] > 0
-            for _, pet in ipairs(wilds:GetChildren()) do
-                local species = pet:GetAttribute("PetName") or pet:GetAttribute("Type")
-                if species then
-                    if not anySel then
-                        foundSpecies = species
-                        break
-                    end
-                    for _, f in ipairs(Library.Flags["hopPetSpecies"]) do
-                        if species:lower() == f:lower() then
-                            foundSpecies = species
-                            break
-                        end
-                    end
-                    if foundSpecies then
-                        break
-                    end
-                end
-            end
-        end
-        if foundSpecies then
-            if _lastHopPetFound ~= foundSpecies then
-                _lastHopPetFound = foundSpecies
-                notify("Pet Finder", "Wild pet on this server: " .. tostring(foundSpecies), "info")
-                if Library.Flags["whPetPurchase"] then
-                    sendWebhook("Wild Pet Found", tostring(foundSpecies) .. " is on this server!", 5763719)
-                end
-            end
-        else
-            _lastHopPetFound = nil
-            serverHop(true)
-        end
-    end,
-})
-Auto:createDropdown({
-    Name = "Hop Pet Species",
-    flagName = "hopPetSpecies",
-    List = getWildList(),
-    multi = true,
-    Description = "Which wild pets to look for while hopping. Leave empty for any wild pet.",
-})
-createIntervalToggle(Auto, {
-    Name = "Auto Equip Best Pets",
-    flagName = "autoEquip",
-    tag = "autoEquip",
-    delay = 8,
-    Step = function()
-        local playerData = getData()
-        if not (playerData and playerData.Inventory and playerData.Inventory.Pets) then
-            return
-        end
-        local bestPet, bestRarity
-        for _, info in pairs(playerData.Inventory.Pets) do
-            local nm = (type(info) == "table" and (info.PetType or info.Name)) or tostring(info)
-            local rarity = (type(info) == "table" and info.Rarity) or 0
-            if not bestRarity or rarity > bestRarity then
-                bestPet, bestRarity = nm, rarity
-            end
-        end
-        if bestPet then
-            netFire("Pets.RequestEquipByName", bestPet)
-        end
-    end,
-})
-Auto:createDropdown({
-    Name = "Equip Filter List",
-    flagName = "equipList",
-    List = getPetList(),
-    multi = true,
-    Description = "Only equip these pet types. Leave empty for best.",
-})
-Auto:createButton({
-    Name = "Refresh Pet Lists",
-    Description = "Update pet/wild/equip dropdowns.",
-    Callback = function()
-        local function upd(tag, list)
-            local dd = Main:FindFirstChild(tag)
-            if dd and dd.updateList then
-                dd:updateList(list)
-            end
-        end
-        upd("tameAnimals", getWildList())
-        upd("equipList", getPetList())
-        upd("buyPet", getAllPetSpecies())
-        upd("sellPet", getPetList())
-    end,
+    Description = "Automatically tame wild pets on your plot.",
 })
 Main:createToggle({
-    Name = "Auto Expand Garden",
+    Name = "Auto Equip Best Pet",
     Flag = false,
-    flagName = "autoExpand",
-    Description = "Buy the next expansion whenever you can afford it.",
+    flagName = "autoEquip",
+    Description = "Equip the best owned pet automatically.",
+})
+Main:createDropdown({
+    Name = "Equip List",
+    flagName = "equipList",
+    List = {},
+    Description = "Specific pet to equip (leave empty for best).",
+})
+Main:createDropdown({
+    Name = "Tame Animals",
+    flagName = "tameAnimals",
+    List = {},
+    Description = "Which animal types to tame.",
 })
 
-Main:createButton({
-    Name = "Expand Now",
-    Description = "Buy one expansion if affordable.",
-    Callback = function()
-        netFire("Actions.ExpandGarden")
-        task.wait(1)
-        notify("Expand", "Expansion level: " .. getExpansionLevel())
-    end,
-})
-local GOOD_PETS = {
-    Raccoon = true,
-    Dragonfly = true,
-    ["Dragon Fly"] = true,
-    Dragonling = true,
-    Mimic = true,
-    ["Disco Bee"] = true,
-    ["Queen Bee"] = true,
-    Kitsune = true,
-    ["Red Fox"] = true,
-    Fox = true,
-    Owl = true,
-    ["Night Owl"] = true,
-    Bear = true,
-    ["Polar Bear"] = true,
-    Butterfly = true,
-    ["Golden Lab"] = true,
-    Cat = true,
-    ["Red Giant Ant"] = true,
-    Snail = true,
-}
--- extend with every Legendary+ species from live PetData (self-heals on game updates)
-for _gpKey, _gpVal in pairs(PetCache or {}) do
-    if type(_gpVal) == "table"
-        and (_gpVal.Rarity == "Legendary" or _gpVal.Rarity == "Mythic" or _gpVal.Rarity == "Super" or _gpVal.Rarity == "Divine")
-    then
-        if type(_gpKey) == "string" then
-            GOOD_PETS[_gpKey] = true
-        end
-        if type(_gpVal.DisplayName) == "string" then
-            GOOD_PETS[_gpVal.DisplayName] = true
-        end
-    end
-end
-createIntervalToggle(Main, {
-    Name = "Full Auto Mode",
-    flagName = "autoProgress",
-    tag = "autoProgress",
-    delay = 4,
-    Step = function()
-        doHarvest()
-        if getFruitCount() > 0 then
-            doSellAll()
-            task.wait(0.2)
-        end
-        local stockParent = seedStock()
-        if stockParent then
-            local bal = getBalance()
-            local bestCropName, bestCropValue
-            for _, stockValue in ipairs(stockParent:GetChildren()) do
-                if stockValue:IsA("ValueBase") and stockValue.Value > 0 then
-                    local price = SeedPrice[stockValue.Name] or math.huge
-                    if price <= bal * 0.5 then
-                        local val = SeedBaseValue[stockValue.Name] or 0
-                        if not bestCropValue or val > bestCropValue then
-                            bestCropName, bestCropValue = stockValue.Name, val
-                        end
-                    end
-                end
-            end
-            if bestCropName then
-                for _ = 1, 6 do
-                    if getBalance() < (SeedPrice[bestCropName] or 0) then
-                        break
-                    end
-                    netFire("SeedShop.PurchaseSeed", bestCropName)
-                    task.wait(0.1)
-                end
-            end
-        end
-        doPlant()
-        -- expand garden when affordable
-        if Library.Flags["autoExpand"] and getBalance() > 50000 then
-            netFire("Actions.ExpandGarden")
-        end
-        -- tame valuable pets and open free loot
-        local wilds = Workspace:FindFirstChild("Map")
-        wilds = wilds and wilds:FindFirstChild("WildPetRef")
-        if wilds then
-            for _, pet in ipairs(wilds:GetChildren()) do
-                local species = pet:GetAttribute("PetName")
-                if species and GOOD_PETS[species] then
-                    netFire("Pets.WildPetTame", pet)
-                end
-            end
-        end
-        -- auto-open eggs/crates/packs that might have accumulated
-        local playerData = getData()
-        if playerData and playerData.Inventory then
-            if playerData.Inventory.Eggs then
-                for name, count in pairs(playerData.Inventory.Eggs) do
-                    if (count or 0) > 0 then
-                        netFire("Egg.OpenEgg", name)
-                        break
-                    end
-                end
-            end
-            if playerData.Inventory.Crates then
-                for name, count in pairs(playerData.Inventory.Crates) do
-                    if (count or 0) > 0 then
-                        netFire("Crate.OpenCrate", name)
-                        break
-                    end
-                end
-            end
-            if playerData.Inventory.SeedPacks then
-                for name, count in pairs(playerData.Inventory.SeedPacks) do
-                    if (count or 0) > 0 then
-                        netFire("SeedPack.OpenSeedPack", name)
-                        break
-                    end
-                end
-            end
-        end
-    end,
-})
 -- ================================================================
 -- AUTOMATICALLY TAB
 -- ================================================================
 
-Main:createLabel({ Name = "Automation Sprinkler", Special = true })
-Main:createToggle({
-    Name = "Disable Teleport (Sprinkler)",
+-- Automation Sprinkler
+Automatically:createLabel({ Name = "Automation Sprinkler", Special = true })
+
+Automatically:createLabel({ Name = "- [ Config ] -", Special = true })
+Automatically:createToggle({
+    Name = "Disable Teleport",
     Flag = false,
     flagName = "sprinklerNoTp",
     Description = "Walk instead of teleporting when placing sprinklers.",
 })
-Main:createDropdown({
+
+Automatically:createLabel({ Name = "- [ Sprinkler ] -", Special = true })
+Automatically:createDropdown({
     Name = "Select Sprinkler",
     flagName = "sprinklerSelect",
     List = {},
     Description = "Which sprinkler type to place.",
 })
-Main:createDropdown({
-    Name = "Sprinkler Position",
+Automatically:createDropdown({
+    Name = "Select Position",
     flagName = "sprinklerPos",
-    List = { "Random", "Saved Position", "Player Position", "Near Fruit" },
+    List = { "Saved Position", "Random", "Player Position", "Near Fruit" },
     Flag = { "Random" },
     Description = "Where to place sprinklers.",
 })
-Main:createInputBox({
+Automatically:createInputBox({
     Name = "Sprinkler Spacing",
     flagName = "sprinklerSpacing",
     Flag = "8",
     Description = "Offset distance between sprinklers when using 'Near Fruit'.",
 })
-Main:createButton({
+Automatically:createButton({
     Name = "Save Position",
     Description = "Save current position for sprinkler placement.",
     Callback = function()
@@ -5167,38 +4591,40 @@ Main:createButton({
         end
     end,
 })
-Main:createInputBox({
+Automatically:createInputBox({
     Name = "Delay To Sprinkler",
     flagName = "sprinklerDelay",
     Flag = "0",
     Description = "Delay in seconds between sprinkler placements.",
 })
 createIntervalToggle(
-    Main,
+    Automatically,
     { Name = "Auto Place Sprinkler", flagName = "autoSprinkler", tag = "autoSprinkler", delay = 20, Step = doSprinkler }
 )
-Main:createToggle({
-    Name = "Auto Place All Sprinklers",
+Automatically:createToggle({
+    Name = "Auto Place All Sprinkler",
     Flag = false,
     flagName = "autoSprinklerAll",
     Description = "Place all owned sprinklers at once.",
 })
 
-Main:createLabel({ Name = "Automation Trowel", Special = true })
-Main:createDropdown({
+-- Automation Trowel
+Automatically:createLabel({ Name = "Automation Trowel", Special = true })
+
+Automatically:createDropdown({
     Name = "Select Plant",
     flagName = "trowelPlant",
     List = getCropList(),
     Description = "Which plant type to trowel/dig up.",
 })
-Main:createDropdown({
+Automatically:createDropdown({
     Name = "Select Position",
     flagName = "trowelPos",
     List = { "Saved Position", "Random", "Player Position" },
     Flag = { "Saved Position" },
     Description = "Where to use trowel.",
 })
-Main:createButton({
+Automatically:createButton({
     Name = "Save Position",
     Description = "Save current position for trowel use.",
     Callback = function()
@@ -5209,92 +4635,90 @@ Main:createButton({
         end
     end,
 })
-Main:createInputBox({
+Automatically:createInputBox({
     Name = "Delay To Trowel",
     flagName = "trowelDelay",
     Flag = "0",
     Description = "Delay between trowel uses.",
 })
 createIntervalToggle(
-    Main,
+    Automatically,
     { Name = "Auto Trowel Plant", flagName = "autoTrowel", tag = "autoTrowel", delay = 3, Step = doTrowel }
 )
 
-Main:createLabel({ Name = "Automation Shovel", Special = true })
-Main:createLabel({ Name = "Tree Shovel", Special = true })
-Main:createDropdown({
+-- Automation Shovel
+Automatically:createLabel({ Name = "Automation Shovel", Special = true })
+
+Automatically:createLabel({ Name = "- [ Tree Shovel ] -", Special = true })
+Automatically:createDropdown({
     Name = "Select Tree",
     flagName = "shovelTree",
     List = getCropList(),
     Description = "Which tree type to shovel.",
 })
-Main:createDropdown({
+Automatically:createDropdown({
     Name = "Select Rarity Tree",
     flagName = "shovelTreeRarity",
     List = RARITY_LIST,
     Flag = { "Any" },
     Description = "Minimum rarity to shovel trees.",
 })
-Main:createDropdown({
+Automatically:createDropdown({
     Name = "Select Mutation Tree",
     flagName = "shovelTreeMutation",
     List = { "Any", "Mutated Only", "Non-Mutated" },
     Flag = { "Any" },
     Description = "Mutation filter for tree shoveling.",
 })
-Main:createInputBox({
+Automatically:createInputBox({
     Name = "Delay To Shovel Tree",
     flagName = "shovelTreeDelay",
     Flag = "0",
     Description = "Delay between tree shovel uses.",
 })
-createIntervalToggle(
-    Main,
-    { Name = "Auto Shovel Tree", flagName = "autoShovelTree", tag = "autoShovelTree", delay = 3, Step = doShovelTree }
-)
 
-Main:createLabel({ Name = "Fruits Shovel", Special = true })
-Main:createDropdown({
+Automatically:createLabel({ Name = "- [ Fruits Shovel ] -", Special = true })
+Automatically:createDropdown({
     Name = "Select Fruit",
     flagName = "shovelFruit",
     List = getCropList(),
     Description = "Which fruit type to shovel.",
 })
-Main:createDropdown({
+Automatically:createDropdown({
     Name = "Select Rarity",
     flagName = "shovelFruitRarity",
     List = RARITY_LIST,
     Flag = { "Any" },
     Description = "Minimum rarity to shovel fruits.",
 })
-Main:createDropdown({
+Automatically:createDropdown({
     Name = "Select Mutation",
     flagName = "shovelFruitMutation",
     List = { "Any", "Mutated Only", "Non-Mutated" },
     Flag = { "Any" },
     Description = "Mutation filter for fruit shoveling.",
 })
-Main:createDropdown({
+Automatically:createDropdown({
     Name = "Select Threshold Mode",
     flagName = "shovelThreshMode",
     List = { "Disabled", "Weight", "Value" },
     Flag = { "Disabled" },
     Description = "Threshold mode for shoveling.",
 })
-Main:createInputBox({
+Automatically:createInputBox({
     Name = "Weight Threshold",
     flagName = "shovelThreshold",
     Flag = "0",
     Description = "Minimum weight/value to shovel (0 = disabled).",
 })
-Main:createInputBox({
+Automatically:createInputBox({
     Name = "Delay To Shovel Fruit",
     flagName = "shovelFruitDelay",
     Flag = "0",
     Description = "Delay between fruit shovel uses.",
 })
 createIntervalToggle(
-    Main,
+    Automatically,
     {
         Name = "Auto Shovel Fruit",
         flagName = "autoShovelFruit",
@@ -5304,350 +4728,84 @@ createIntervalToggle(
     }
 )
 
-Main:createLabel({ Name = "Automation Watering Can", Special = true })
-Main:createDropdown({
-    Name = "Select Water Plants",
-    flagName = "waterPlants",
-    List = getCropList(),
-    Description = "Which plants to water.",
-})
-Main:createDropdown({
-    Name = "Select Watering Can",
-    flagName = "wateringCan",
-    List = {},
-    Description = "Which watering can to use.",
-})
-createIntervalToggle(
-    Main,
-    {
-        Name = "Auto Water Decaying Plants",
-        flagName = "autoWaterDecaying",
-        tag = "autoWaterDecaying",
-        delay = 5,
-        Step = doWateringCan,
-    }
-)
-Main:createLabel({ Name = "Garden Cleanup", Special = true })
-Main:createDropdown({
-    Name = "Plants To Remove",
-    flagName = "removeCrops",
-    List = getCropList(),
-    multi = true,
-    Description = "Select crop types to shovel. Leave empty + click Remove All to shovel everything.",
-})
-Main:createButton({
-    Name = "Remove Selected Plants",
-    Description = "Shovel only the selected crop types.",
-    Callback = function()
-        local selected = Library.Flags["removeCrops"]
-        if not (type(selected) == "table" and next(selected) ~= nil) then
-            notify("Cleanup", "Select crops to remove first", "warning")
-            return
-        end
-        task.spawn(function()
-            local n = removeSelectedPlants(selected)
-            notify("Cleanup", "Removed " .. n .. " plants")
-        end)
-    end,
-})
-Main:createButton({
-    Name = "Remove All Plants",
-    Description = "Shovel up every plant on your plot.",
-    Callback = function()
-        task.spawn(function()
-            local n = removeAllPlants()
-            notify("Cleanup", "Removed " .. n .. " plants")
-        end)
-    end,
-})
-Main:createButton({
-    Name = "Remove All Buildings",
-    Description = "Pick up every building on your plot.",
-    Callback = function()
-        task.spawn(function()
-            local n = removeAllBuildings()
-            notify("Cleanup", "Removed " .. n .. " buildings")
-        end)
-    end,
-})
+-- ================================================================
+-- INVENTORY TAB
+-- ================================================================
 
-Main:createToggle({
-    Name = "Auto Water Decaying All Plants",
-    Flag = false,
-    flagName = "autoWaterAll",
-    Description = "Water all decaying plants, not just selected.",
-})
+-- Automation Favorite
+Inventory:createLabel({ Name = "Automation Favorite", Special = true })
 
-Hook:createLabel({ Name = "Automation Mailbox", Special = true })
-Hook:createInputBox({
-    Name = "Player Username",
-    flagName = "mbUsername",
-    Flag = "",
-    Description = "Write the recipient's username here.",
-})
-Hook:createInputBox({
-    Name = "Send Note Message",
-    flagName = "mbNote",
-    Flag = "",
-    Description = "Write a note message here.",
-})
-Hook:createLabel({ Name = "Send Seeds", Special = true })
-Hook:createDropdown({
-    Name = "Select Send Seed",
-    flagName = "sendSeed",
-    List = getSeedList(),
-    Description = "Which seed to send.",
-})
-Hook:createInputBox({
-    Name = "Amount Send",
-    flagName = "sendSeedAmount",
-    Flag = "full",
-    Description = "Input an amount or 'full' for full.",
-})
-Hook:createToggle({
-    Name = "Auto Send Seed",
-    Flag = false,
-    flagName = "autoSendSeed",
-    Description = "Auto-send seeds via mailbox.",
-})
-Hook:createLabel({ Name = "Send Pets", Special = true })
-Hook:createDropdown({
-    Name = "Select Pets",
-    flagName = "sendPet",
-    List = getPetList(),
-    Description = "Which pet to send.",
-})
-Hook:createToggle({
-    Name = "Auto Send Pet",
-    Flag = false,
-    flagName = "autoSendPet",
-    Description = "Auto-send pets via mailbox.",
-})
-Hook:createLabel({ Name = "Claim Mail", Special = true })
-createIntervalToggle(Hook, {
-    Name = "Auto Claim Mail",
-    flagName = "autoClaimMail",
-    tag = "autoClaimMail",
-    delay = 10,
-    Step = doMailboxClaim,
-})
-Hook:createLabel({ Name = "Automation Favorite", Special = true })
-Hook:createDropdown({
+Inventory:createDropdown({
     Name = "Select Favorite Fruit",
     flagName = "favFruit",
     List = getCropList(),
     Description = "Which fruit type to favorite.",
 })
-Hook:createDropdown({
+Inventory:createDropdown({
     Name = "Select Favorite Rarity",
     flagName = "favRarity",
     List = RARITY_LIST,
     Flag = { "Any" },
     Description = "Minimum rarity for auto-favorite.",
 })
-Hook:createDropdown({
+Inventory:createDropdown({
     Name = "Select Favorite Mutation",
     flagName = "favMutation",
     List = { "Any", "Mutated Only", "Non-Mutated" },
     Flag = { "Any" },
     Description = "Mutation filter for auto-favorite.",
 })
-Hook:createDropdown({
+Inventory:createDropdown({
     Name = "Select Threshold Mode",
     flagName = "favThreshMode",
     List = { "Disabled", "Weight", "Value" },
     Flag = { "Disabled" },
     Description = "Threshold mode for auto-favorite.",
 })
-Hook:createInputBox({
+Inventory:createInputBox({
     Name = "Weight Threshold",
     flagName = "favThreshold",
     Flag = "0",
     Description = "Minimum weight/value to favorite (0 = disabled).",
 })
-Hook:createToggle({
+Inventory:createToggle({
     Name = "Auto Favorite Fruit",
     Flag = false,
     flagName = "autoFav",
     Description = "Auto-favorite fruits matching filters.",
 })
-Hook:createToggle({
+Inventory:createToggle({
     Name = "Auto UnFavorite Fruit",
     Flag = false,
     flagName = "autoUnfav",
     Description = "Auto-unfavorite fruits that don't match filters.",
 })
-Hook:createToggle({
+Inventory:createToggle({
     Name = "Auto UnFavorite All Fruit",
     Flag = false,
     flagName = "autoUnfavAll",
     Description = "Remove all favorites from inventory.",
 })
 
-Hook:createLabel({ Name = "Auto Open", Special = true })
-createIntervalToggle(Hook, {
-    Name = "Auto Open Eggs",
-    flagName = "autoEggs",
-    tag = "autoEggs",
-    delay = 5,
-    Step = function()
-        local playerData = getData()
-        if playerData and playerData.Inventory and playerData.Inventory.Eggs then
-            for name, count in pairs(playerData.Inventory.Eggs) do
-                if (count or 0) > 0 then
-                    netFire("Egg.OpenEgg", name)
-                    break
-                end
-            end
-        end
-    end,
-})
-createIntervalToggle(Hook, {
-    Name = "Auto Open Crates",
-    flagName = "autoCrates",
-    tag = "autoCrates",
-    delay = 5,
-    Step = function()
-        local playerData = getData()
-        if playerData and playerData.Inventory and playerData.Inventory.Crates then
-            for name, count in pairs(playerData.Inventory.Crates) do
-                if (count or 0) > 0 then
-                    netFire("Crate.OpenCrate", name)
-                    break
-                end
-            end
-        end
-    end,
-})
-createIntervalToggle(Hook, {
-    Name = "Auto Open Seed Packs",
-    flagName = "autoPacks",
-    tag = "autoPacks",
-    delay = 4,
-    Step = function()
-        local playerData = getData()
-        if playerData and playerData.Inventory and playerData.Inventory.SeedPacks then
-            for name, count in pairs(playerData.Inventory.SeedPacks) do
-                if (count or 0) > 0 then
-                    netFire("SeedPack.OpenSeedPack", name)
-                    break
-                end
-            end
-        end
-    end,
-})
-Hook:createButton({
-    Name = "Open All Eggs",
-    Description = "Open every egg in inventory.",
-    Callback = function()
-        local playerData = getData()
-        if playerData and playerData.Inventory and playerData.Inventory.Eggs then
-            for name, count in pairs(playerData.Inventory.Eggs) do
-                for _ = 1, math.min(count or 0, 50) do
-                    netFire("Egg.OpenEgg", name)
-                    task.wait(0.1)
-                end
-            end
-            notify("Eggs", "Opened all eggs")
-        end
-    end,
-})
-Hook:createButton({
-    Name = "Open All Crates",
-    Description = "Open every crate in inventory.",
-    Callback = function()
-        local playerData = getData()
-        if playerData and playerData.Inventory and playerData.Inventory.Crates then
-            for name, count in pairs(playerData.Inventory.Crates) do
-                for _ = 1, math.min(count or 0, 50) do
-                    netFire("Crate.OpenCrate", name)
-                    task.wait(0.1)
-                end
-            end
-            notify("Crates", "Opened all crates")
-        end
-    end,
-})
-Hook:createButton({
-    Name = "Open All Seed Packs",
-    Description = "Open every seed pack in inventory.",
-    Callback = function()
-        local playerData = getData()
-        if playerData and playerData.Inventory and playerData.Inventory.SeedPacks then
-            for name, count in pairs(playerData.Inventory.SeedPacks) do
-                for _ = 1, math.min(count or 0, 50) do
-                    netFire("SeedPack.OpenSeedPack", name)
-                    task.wait(0.1)
-                end
-            end
-            notify("Seed Packs", "Opened all packs")
-        end
-    end,
-})
-
-
--- ================================================================
--- INVENTORY TAB
--- ================================================================
-
 -- ================================================================
 -- SHOP TAB
 -- ================================================================
 
-Shop:createLabel({ Name = "Fruit Bid Watcher", Special = true })
-Shop:createToggle({
-    Name = "Auto Bid Sell (Best Offer)",
-    Flag = false,
-    flagName = "autoBid",
-    Description = "Check NPC bids every 15s and auto-sell to highest bidder.",
-})
-Shop:createButton({
-    Name = "Check Bids Now",
-    Description = "Query all NPC bids and show the highest offer.",
-    Callback = function()
-        Library.Flags["bidNowFlag"] = true
-        task.spawn(function()
-            doBidCheck()
-        end)
-    end,
-})
-
-Shop:createLabel({ Name = "Sell Preview", Special = true })
-Shop:createButton({
-    Name = "Preview Sell Value",
-    Description = "Estimate your inventory's sell value without selling.",
-    Callback = function()
-        task.spawn(doSellPreview)
-    end,
-})
-
+-- Shop Seeds
 Shop:createLabel({ Name = "Shop Seeds", Special = true })
+
 Shop:createDropdown({
     Name = "Select Seed",
     flagName = "buySeed",
     List = getSeedList(),
+    multi = true,
     Description = "Which seed to auto-purchase.",
 })
-createIntervalToggle(Shop, {
+Shop:createToggle({
     Name = "Auto Buy Seeds",
+    Flag = false,
     flagName = "autoBuySeed",
-    tag = "autoBuySeed",
-    delay = 10,
-    Step = function()
-        local name = firstValue(Library.Flags["buySeed"] or {})
-        if not name or name == "" then
-            return
-        end
-        local price = SeedPrice[name] or math.huge
-        local sprees = tonumber(Library.Flags["buySprees"]) or 5
-        for _ = 1, sprees do
-            if getBalance() < price then
-                break
-            end
-            netFire("SeedShop.PurchaseSeed", name)
-            task.wait(0.08)
-        end
-    end,
+    Description = "Auto-purchase the selected seed.",
 })
 Shop:createToggle({
     Name = "Auto Buy All Seeds",
@@ -5656,25 +4814,20 @@ Shop:createToggle({
     Description = "Buy every available seed in stock.",
 })
 
+-- Shop Gear
 Shop:createLabel({ Name = "Shop Gear", Special = true })
+
 Shop:createDropdown({
     Name = "Select Gear",
     flagName = "buyGear",
     List = getGearList(),
     Description = "Which gear item to auto-purchase.",
 })
-createIntervalToggle(Shop, {
+Shop:createToggle({
     Name = "Auto Buy Gear",
+    Flag = false,
     flagName = "autoBuyGear",
-    tag = "autoBuyGear",
-    delay = 15,
-    Step = function()
-        local name = firstValue(Library.Flags["buyGear"] or {})
-        if not name or name == "" then
-            return
-        end
-        netFire("GearShop.PurchaseGear", name)
-    end,
+    Description = "Auto-purchase the selected gear.",
 })
 Shop:createToggle({
     Name = "Auto Buy All Gear",
@@ -5683,25 +4836,20 @@ Shop:createToggle({
     Description = "Buy every available gear item.",
 })
 
+-- Shop Crate
 Shop:createLabel({ Name = "Shop Crate", Special = true })
+
 Shop:createDropdown({
     Name = "Select Crate",
     flagName = "buyCrate",
     List = getCrateList(),
     Description = "Which crate to auto-purchase.",
 })
-createIntervalToggle(Shop, {
+Shop:createToggle({
     Name = "Auto Buy Crate",
+    Flag = false,
     flagName = "autoBuyCrate",
-    tag = "autoBuyCrate",
-    delay = 12,
-    Step = function()
-        local name = firstValue(Library.Flags["buyCrate"] or {})
-        if not name or name == "" then
-            return
-        end
-        netFire("CrateShop.PurchaseCrate", name)
-    end,
+    Description = "Auto-purchase the selected crate.",
 })
 Shop:createToggle({
     Name = "Auto Buy All Crate",
@@ -5718,148 +4866,73 @@ Shop:createSlider({
     maxValue = 25,
     Description = "How many of each to buy per cycle.",
 })
-Shop:createButton({
-    Name = "Refresh Shop Lists",
-    Description = "Update seed/gear/crate dropdowns.",
-    Callback = function()
-        local function upd(tag, list)
-            local dd = Shop:FindFirstChild(tag)
-            if dd and dd.updateList then
-                dd:updateList(list)
-            end
-        end
-        upd("buySeed", getSeedList())
-        upd("buyGear", getGearList())
-        upd("buyCrate", getCrateList())
-        notify("Shop", "Lists refreshed")
-    end,
-})
-Shop:createLabel({ Name = "Shop Overlay", Special = true })
-Shop:createToggle({
-    Name = "Shop Prediction Overlay",
-    Flag = true,
-    flagName = "shopPredictOverlay",
-    Description = "Show restock countdowns + predicted quantities on out-of-stock shop items.",
-})
-Shop:createButton({
-    Name = "Refresh Shop Predictions",
-    Description = "Re-scan shops for prediction data.",
-    Callback = function()
-        pcall(injectAllShopPredictions)
-        notify("Shop", "Prediction overlay refreshed")
-    end,
-})
-
 
 -- ================================================================
 -- WEBHOOK TAB
 -- ================================================================
 
-Hook:createLabel({ Name = "Config Webhook", Special = true })
-Hook:createInputBox({
+-- Config Webhook
+Webhook:createLabel({ Name = "Config Webhook", Special = true })
+
+Webhook:createInputBox({
     Name = "Webhook URL",
     flagName = "webhookUrl",
     Flag = "",
-    Description = "Discord webhook URL for notifications.",
+    Description = "Input your webhook URL.",
 })
-Hook:createInputBox({
-    Name = "Bot Name",
-    flagName = "whName",
-    Flag = "GAG2 Bot",
-    Description = "Name shown in Discord embed.",
+Webhook:createInputBox({
+    Name = "Ping Message/ID",
+    flagName = "whPing",
+    Flag = "",
+    Description = "Ping message or ID for notifications.",
+})
+Webhook:createToggle({
+    Name = "Allow Ping On Ping Message/ID",
+    Flag = false,
+    flagName = "whAllowPing",
+    Description = "Allow pings on the specified message/ID.",
 })
 
-Hook:createLabel({ Name = "Notify Events", Special = true })
-Hook:createToggle({
-    Name = "Notify Rare Seed Found",
-    Flag = false,
-    flagName = "whRareSeed",
-    Description = "Send webhook when rare seed pack is found.",
-})
-Hook:createToggle({
-    Name = "Notify Large Harvest",
-    Flag = false,
-    flagName = "whBigHarvest",
-    Description = "Send webhook after harvesting 50+ crops.",
-})
-Hook:createToggle({
-    Name = "Notify Steal Defended",
-    Flag = false,
-    flagName = "whStealReturn",
-    Description = "Send webhook when you steal back.",
-})
-Hook:createToggle({
-    Name = "Notify Server Hop",
-    Flag = false,
-    flagName = "whHop",
-    Description = "Send webhook on server hop.",
-})
-Hook:createToggle({
-    Name = "Notify Weather Events",
-    Flag = false,
-    flagName = "whWeather",
-    Description = "Send webhook for weather changes.",
-})
-Hook:createButton({
-    Name = "Test Webhook",
-    Description = "Send a test message to Discord.",
-    Callback = function()
-        local url = Library.Flags["webhookUrl"]
-        if not url or url == "" then
-            notify("Webhook", "Set a URL first", "warning")
-            return
-        end
-        sendWebhook(
-            "GAG2 Test",
-            "Webhook is working!",
-            5763719,
-            {
-                { name = "Player", value = client.Name, inline = true },
-                { name = "Time", value = os.date("%H:%M:%S"), inline = true },
-            }
-        )
-        notify("Webhook", "Test sent")
-    end,
-})
+-- Pets Purchase Webhook
+Webhook:createLabel({ Name = "Pets Purchase Webhook", Special = true })
 
-Hook:createLabel({ Name = "Pets Purchase Webhook", Special = true })
-Hook:createDropdown({
+Webhook:createDropdown({
     Name = "Select Pets",
     flagName = "whPetFilter",
     List = getPetList(),
-    multi = true,
     Description = "Only notify for these pet types.",
 })
-Hook:createDropdown({
+Webhook:createDropdown({
     Name = "Select Rarity Pets",
     flagName = "whPetRarity",
     List = RARITY_LIST,
     Flag = { "Any" },
     Description = "Minimum pet rarity to notify.",
 })
-Hook:createDropdown({
+Webhook:createDropdown({
     Name = "Select Size Pets",
     flagName = "whPetSize",
     List = { "Any", "Small", "Medium", "Large", "Huge" },
     Flag = { "Any" },
     Description = "Pet size filter for notifications.",
 })
-Hook:createToggle({
+Webhook:createToggle({
     Name = "Pets Purchase Webhook",
     Flag = false,
     flagName = "whPetPurchase",
     Description = "Send webhook when a matching pet is purchased or tamed.",
 })
 
-Hook:createLabel({ Name = "Webhook Collection Event Seed", Special = true })
-Hook:createDropdown({
+-- Webhook Collection Event Seed
+Webhook:createLabel({ Name = "Webhook Collection Event Seed", Special = true })
+
+Webhook:createDropdown({
     Name = "Select Event Seed",
     flagName = "whEventSeed",
     List = getSeedList(),
-    multi = true,
     Description = "Which event/rare seeds to notify about.",
 })
-Hook:createToggle({
+Webhook:createToggle({
     Name = "Webhook Collection Event Seed",
     Flag = false,
     flagName = "whEventSeedEnabled",
@@ -5867,107 +4940,13 @@ Hook:createToggle({
 })
 
 -- ================================================================
--- WEATHER TAB (event alerts + timers)
--- ================================================================
-
-Weather:createLabel({ Name = "Weather Alerts", Special = true })
-Weather:createToggle({
-    Name = "Weather Event Alerts",
-    Flag = true,
-    flagName = "weatherAlerts",
-    Description = "Notify when Rain, Night, Bloodmoon, Blizzard, Lightning, or Rainbow starts/ends.",
-})
-Weather:createToggle({
-    Name = "Webhook Weather Events",
-    Flag = false,
-    flagName = "whWeather",
-    Description = "Send Discord webhook on every weather event change.",
-})
-
-Weather:createLabel({ Name = "Weather Predictor", Special = true })
-Weather:createToggle({
-    Name = "Weather & Moon HUD",
-    Flag = true,
-    flagName = "weatherHUD",
-    Description = "Embedded in-game overlay: current weather, next moons and live event timers (draggable).",
-})
-Weather:createLabel({ Name = "Next Moons: ---", flagName = "weatherNextMoons", Special = true })
-
-Weather:createLabel({ Name = "Timers", Special = true })
-Weather:createLabel({ Name = "Phase: unknown", flagName = "weatherPhase", Special = true })
-Weather:createLabel({ Name = "Seed Restock: ---", flagName = "weatherSeedRestock", Special = true })
-Weather:createLabel({ Name = "Gear Restock: ---", flagName = "weatherGearRestock", Special = true })
-Weather:createLabel({ Name = "Crate Restock: ---", flagName = "weatherCrateRestock", Special = true })
-Weather:createButton({
-    Name = "Refresh Timers",
-    Description = "Re-read the current weather phase and shop restock timers.",
-    Callback = function()
-        local function ul(tag, text)
-            local lb = Weather:FindFirstChild(tag)
-            if lb and lb.updateText then
-                lb:updateText(text)
-            end
-        end
-        -- everything below is 100% local (game-stamped data + deterministic predictor)
-        local cur = WeatherPredictor.current()
-        ul(
-            "weatherPhase",
-            "Now: "
-                .. tostring(cur.weather)
-                .. " ("
-                .. tostring(cur.phase)
-                .. ", "
-                .. WeatherPredictor.fmtRel(math.max(0, (cur.endsAt or cur.time) - cur.time))
-                .. " left)"
-        )
-        local nxS = nextRestock("SeedShop")
-        local nxG = nextRestock("GearShop")
-        local nxC = nextRestock("CrateShop")
-        ul("weatherSeedRestock", "Seeds: " .. (nxS and ("restock in " .. WeatherPredictor.fmtRel(nxS)) or "waiting for shop"))
-        ul("weatherGearRestock", "Gears: " .. (nxG and ("restock in " .. WeatherPredictor.fmtRel(nxG)) or "waiting for shop"))
-        ul("weatherCrateRestock", "Crates: " .. (nxC and ("restock in " .. WeatherPredictor.fmtRel(nxC)) or "waiting for shop"))
-        notify("Timers", "Local predictor & timers refreshed")
-    end,
-})
-
--- ================================================================
 -- MISC TAB
 -- ================================================================
 
-Misc:createLabel({ Name = "Fling", Special = true })
-Misc:createToggle({
-    Name = "Anti-Fling",
-    Flag = true,
-    flagName = "antiFling",
-    Description = "Prevent other players from flinging you.",
-})
-
-Misc:createLabel({ Name = "Knockback", Special = true })
-Misc:createToggle({
-    Name = "Less Knockback",
-    Flag = false,
-    flagName = "lessKnockback",
-    Description = "Reduce physical knockback from attacks and tools.",
-})
-
-Misc:createLabel({ Name = "Prompt", Special = true })
-Misc:createToggle({
-    Name = "Instant Interact Prompt",
-    Flag = false,
-    flagName = "instantPrompt",
-    Description = "Skip proximity prompt hold timer.",
-})
-
-Misc:createLabel({ Name = "Gameplay Paused", Special = true })
-Misc:createToggle({
-    Name = "Bypass Gameplay Paused",
-    Flag = true,
-    flagName = "bypassPause",
-    Description = "Prevent the gameplay paused screen from appearing.",
-})
-
+-- ESP
 Misc:createLabel({ Name = "ESP", Special = true })
-Misc:createLabel({ Name = "ESP Fruit", Special = true })
+
+Misc:createLabel({ Name = "- [ ESP Fruit ] -", Special = true })
 Misc:createDropdown({
     Name = "Select ESP Fruit",
     flagName = "espFruit",
@@ -5994,7 +4973,8 @@ Misc:createToggle({
     flagName = "espFruitEnabled",
     Description = "Highlight fruits matching filters through walls.",
 })
-Misc:createLabel({ Name = "ESP Spawned Pets", Special = true })
+
+Misc:createLabel({ Name = "- [ ESP Spawned Pets ] -", Special = true })
 Misc:createDropdown({
     Name = "Select Pets",
     flagName = "espPet",
@@ -6021,19 +5001,79 @@ Misc:createToggle({
     flagName = "espPetEnabled",
     Description = "Highlight spawned pets matching filters through walls.",
 })
+
+-- Misc
+Misc:createLabel({ Name = "Misc", Special = true })
+
+Misc:createLabel({ Name = "- [ Fling ] -", Special = true })
 Misc:createToggle({
-    Name = "Highlight Ready Crops",
-    Flag = false,
-    flagName = "highlightReady",
-    Description = "Outlines your own ripe crops.",
-})
-Misc:createToggle({
-    Name = "Highlight Rare Objects",
-    Flag = false,
-    flagName = "highlightRare",
-    Description = "Highlight rare seed packs and items.",
+    Name = "Anti-Fling",
+    Flag = true,
+    flagName = "antiFling",
+    Description = "Prevent other players from flinging you.",
 })
 
+Misc:createLabel({ Name = "- [ Knockback ] -", Special = true })
+Misc:createToggle({
+    Name = "Less Knockback",
+    Flag = false,
+    flagName = "lessKnockback",
+    Description = "Reduce physical knockback from attacks and tools.",
+})
+
+Misc:createLabel({ Name = "- [ Prompt ] -", Special = true })
+Misc:createToggle({
+    Name = "Instant Interact Prompt",
+    Flag = false,
+    flagName = "instantPrompt",
+    Description = "Skip proximity prompt hold timer.",
+})
+
+Misc:createLabel({ Name = "- [ Gameplay Paused ] -", Special = true })
+Misc:createToggle({
+    Name = "Bypass Gameplay Paused",
+    Flag = true,
+    flagName = "bypassPause",
+    Description = "Prevent the gameplay paused screen from appearing.",
+})
+
+-- Misc Garden
+Misc:createLabel({ Name = "Misc Garden", Special = true })
+
+Misc:createLabel({ Name = "- [ Plants ] -", Special = true })
+Misc:createToggle({
+    Name = "Noclip Plants",
+    Flag = false,
+    flagName = "noclipPlants",
+    Description = "Disable collision on plants for easy movement.",
+})
+
+-- Server
+Misc:createLabel({ Name = "Server", Special = true })
+
+Misc:createButton({
+    Name = "Hop Server",
+    Description = "Teleport to a different server.",
+    Callback = function()
+        serverHop(false)
+    end,
+})
+Misc:createButton({
+    Name = "Low-Pop Server Hop",
+    Description = "Teleport to the emptiest server.",
+    Callback = function()
+        serverHop(true)
+    end,
+})
+Misc:createButton({
+    Name = "Rejoin Server",
+    Description = "Rejoin this same server.",
+    Callback = function()
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, client)
+        end)
+    end,
+})
 Misc:createLabel({ Name = "ESP Inventory", Special = true })
 Misc:createToggle({
     Name = "ESP Fruit Value",
@@ -6075,13 +5115,6 @@ Misc:createButton({
     end,
 })
 
-Misc:createLabel({ Name = "Misc Garden", Special = true })
-Misc:createToggle({
-    Name = "Noclip Plants",
-    Flag = false,
-    flagName = "noclipPlants",
-    Description = "Disable collision on plants for easy movement.",
-})
 Misc:createLabel({ Name = "Player & Account", Special = true })
 
 Misc:createToggle({
@@ -6485,9 +5518,6 @@ task.spawn(function()
             if Library.Flags["hitStolen"] then
                 doRetaliateShovel()
             end
-            if Library.Flags["highlightReady"] or Library.Flags["highlightRare"] then
-                doHighlightLoop()
-            end
             if Library.Flags["rareNotify"] then
                 doRareNotify()
             end
@@ -6582,10 +5612,6 @@ task.spawn(function()
             -- auto mailbox
             if Library.Flags["autoSendSeed"] or Library.Flags["autoSendPet"] then
                 doMailboxSend()
-            end
-            -- auto bid watcher
-            if Library.Flags["autoBid"] then
-                doBidCheck()
             end
             -- weather labels, predictor, HUD and value ESP refresh run in the local 1s predictor loop
             -- ESP
@@ -6758,17 +5784,6 @@ task.spawn(function()
     end
 end)
 
--- shop prediction overlay: inject restock countdowns into native shop UI every 1s
-task.spawn(function()
-    pcall(injectAllShopPredictions)
-    while task.wait(1) do
-        if not Hub.running then
-            break
-        end
-        pcall(injectAllShopPredictions)
-    end
-end)
-
 -- pack grab + collect loop (faster - 0.6s)
 task.spawn(function()
     while task.wait(0.6) do
@@ -6914,15 +5929,7 @@ function Hub.unload()
         end
         _plantConns = {}
     end
-    if _weatherConns then
-        for _, c in ipairs(_weatherConns) do
-            pcall(function()
-                c:Disconnect()
-            end)
-        end
-        _weatherConns = {}
-    end
-    clearHighlights()
+
     clearESP()
     stopFly()
     local humanoid = getHumanoid()
