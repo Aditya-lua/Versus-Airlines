@@ -4168,6 +4168,17 @@ Home:createButton({
         end
     end,
 })
+Home:createButton({
+    Name = "Test Notification",
+    Description = "Send a test notification to verify the game's native notification system works.",
+    Callback = function()
+        if NotificationController then
+            NotificationController:CreateNotification("GAG2 test notification! If you see this, native notifications are working. ✅")
+        else
+            notify("GAG2", "NotificationController not available - using library fallback", "warning")
+        end
+    end,
+})
 Home:createDropdown({
     Name = "Transport Mode",
     flagName = "tpMode",
