@@ -14,6 +14,9 @@ local TweenService = game:GetService("TweenService")
 
 local client = Players.LocalPlayer
 
+local NotificationController
+pcall(function() NotificationController = require(game.StarterPlayer.StarterPlayerScripts.Controllers.NotificationController) end)
+
 -- Prevent duplicate script instances & memory leaks on re-execution
 if getgenv and type(getgenv().GAG2_unload) == "function" then
     pcall(getgenv().GAG2_unload)
@@ -316,9 +319,14 @@ end))
 
 -- helpers
 local function notify(title, desc, style)
-    pcall(function()
-        Library:createDisplayMessage(title, desc, { { text = "OK" } }, style or "info")
-    end)
+    local msg = title .. ": " .. desc
+    if NotificationController then
+        NotificationController:CreateNotification(msg)
+    else
+        pcall(function()
+            Library:createDisplayMessage(title, desc, { { text = "OK" } }, style or "info")
+        end)
+    end
 end
 local function firstValue(v)
     if type(v) == "table" then
@@ -2317,6 +2325,7 @@ do
         end
         return invVal, count
     end
+    ValueESP = {}
     ValueESP.update = function()
         local onTags = Library.Flags["espFruitValue"] == true
         local onTotal = Library.Flags["espTotalValue"] == true
