@@ -889,6 +889,80 @@ end
 -- UI (Weather tab)
 -- ================================================================
 local Setup = Library:Setup({ Location = CoreGui, OpenCloseLocation = "Bottom Right" })
+
+do -- CreateSection proxy: captures create* returns + FindFirstChild adapter (updateText->Set)
+local _ctrls = {}
+local _origCreateSection = Setup.CreateSection
+local function _adapt(obj)
+    if not obj then
+        return nil
+    end
+    return setmetatable({}, {
+        __index = function(_, k)
+            if k == "updateText" then
+                return function(_, t)
+                    if obj.Set then
+                        obj:Set(t)
+                    elseif obj.updateText then
+                        obj:updateText(t)
+                    end
+                end
+            end
+            if k == "Set" then
+                return function(_, ...)
+                    if obj.Set then
+                        obj:Set(...)
+                    end
+                end
+            end
+            if k == "updateList" then
+                return function(_, l)
+                    if obj.updateList then
+                        obj:updateList(l)
+                    end
+                end
+            end
+            local v = obj[k]
+            if type(v) == "function" then
+                return function(_, ...)
+                    return obj[k](obj, ...)
+                end
+            end
+            return v
+        end,
+    })
+end
+function Setup:CreateSection(name)
+    local sec = _origCreateSection(self, name)
+    local proxy = setmetatable({}, {
+        __index = function(_, k)
+            if k == "FindFirstChild" then
+                return function(_, tag)
+                    return _adapt(_ctrls[tag])
+                end
+            end
+            return sec[k]
+        end,
+    })
+    for _, m in ipairs({
+        "createLabel",
+        "createDropdown",
+        "createToggle",
+        "createSlider",
+        "createButton",
+        "createInputBox",
+    }) do
+        proxy[m] = function(_, cfg)
+            local ok, obj = pcall(sec[m], sec, cfg)
+            if cfg and cfg.flagName and obj then
+                _ctrls[cfg.flagName] = obj
+            end
+            return obj
+        end
+    end
+    return proxy
+end
+end -- scoped: CreateSection proxy
 local Weather = Setup:CreateSection("Weather")
 
 Weather:createLabel({ Name = "Current: --", flagName = "weatherPhase", Special = true })
