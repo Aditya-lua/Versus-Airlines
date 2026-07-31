@@ -662,6 +662,159 @@ local function doRareNotify()
     end
 end
 
+-- ================================================================
+-- LIVE API SYNC (exact server-side predictions from gag2.gg)
+-- Uses the same data as the official companion site; falls back to
+-- the local deterministic math below when unreachable.
+-- ================================================================
+local Live = { weather = nil, items = nil, sell = nil, updatedAt = 0 }
+local LIVE_TTL = 30
+local SHOP_CATEGORY = { SeedShop = "seed", GearShop = "gear", CrateShop = "crate" }
+
+local function httpGet(url)
+    -- server defaults to zstd (Roblox can't decode it) - force identity via request()
+    if httpRequest then
+        local ok0, res0 = pcall(function()
+            return httpRequest({
+                Url = url,
+                Method = "GET",
+                Headers = { ["Accept-Encoding"] = "identity" },
+            })
+        end)
+        if ok0 and res0 and res0.StatusCode == 200 and res0.Body then
+            local okJ, j = pcall(function()
+                return HttpService:JSONDecode(res0.Body)
+            end)
+            if okJ and type(j) == "table" then
+                return j
+            end
+        end
+    end
+    local ok, body = pcall(function()
+        return game:HttpGet(url, true)
+    end)
+    if not ok or not body or body == "" then
+        return nil
+    end
+    local ok2, res = pcall(function()
+        return HttpService:JSONDecode(body)
+    end)
+    if ok2 and type(res) == "table" then
+        return res
+    end
+    local ok3, decoded = pcall(function()
+        if HttpService.Base64Decode then
+            return HttpService:Base64Decode(body)
+        end
+        return nil
+    end)
+    if ok3 and decoded then
+        local ok4, res4 = pcall(function()
+            return HttpService:JSONDecode(decoded)
+        end)
+        if ok4 and type(res4) == "table" then
+            return res4
+        end
+    end
+    return nil
+end
+
+local function syncLive()
+    if not Hub.running or os.clock() - Live.updatedAt < LIVE_TTL then
+        return
+    end
+    Live.updatedAt = os.clock()
+    task.spawn(function()
+        local w = httpGet("https://api.gag2.gg/api/live/weather")
+        if w and w.weather then
+            Live.weather = w.weather
+        end
+        local it = httpGet("https://api.gag2.gg/api/live/predictions/items")
+        if it and it.items then
+            Live.items = it.items
+        end
+        local s = httpGet("https://api.gag2.gg/api/live/sell")
+        if s and s.sell then
+            Live.sell = s.sell
+        end
+    end)
+end
+
+-- live upcoming moon map (first occurrence of each moon) -> name -> unix ts
+local function liveMoonMap()
+    local map = {}
+    local up = Live.weather and Live.weather.upcomingMoons
+    if type(up) == "table" then
+        for _, m in ipairs(up) do
+            if type(m) == "table" and m.name and not map[m.name] then
+                local b = tonumber(m.boundary)
+                if b then
+                    map[m.name] = b
+                end
+            end
+        end
+    end
+    return map
+end
+
+-- prefer live boundaries; fill gaps with the local deterministic scan
+local function moonTimes()
+    local map = liveMoonMap()
+    local hasLive = false
+    for _, n in ipairs(UPCOMING_MOONS) do
+        if map[n] then
+            hasLive = true
+            break
+        end
+    end
+    if not hasLive then
+        return WeatherPredictor.nextMoons(48), false
+    end
+    local localMoons = WeatherPredictor.nextMoons(48)
+    for _, n in ipairs(UPCOMING_MOONS) do
+        if not map[n] and localMoons[n] then
+            map[n] = localMoons[n]
+        end
+    end
+    return map, true
+end
+
+-- seconds until the shop's next restock (live prediction first)
+local function liveRestock(shop)
+    local cat = SHOP_CATEGORY[shop]
+    local items = cat and Live.items and Live.items[cat]
+    local best
+    if type(items) == "table" then
+        for _, it in ipairs(items) do
+            local b = tonumber(it.nextBoundary)
+            if b and (not best or b < best) then
+                best = b
+            end
+        end
+    end
+    return best and math.max(0, best - os.time()) or nil
+end
+
+-- currently boosted sell items (tier != normal) -> "Name x2 | Name2 x2" or nil
+local function sellBoostInfo()
+    local entries = Live.sell and Live.sell.entries
+    if type(entries) ~= "table" then
+        return nil
+    end
+    local parts = {}
+    for _, e in ipairs(entries) do
+        if e.tier and e.tier ~= "normal" then
+            local nm = e.name or e.key
+            local mult = tonumber(e.multiplier) or 1
+            parts[#parts + 1] = nm .. " x" .. tostring(mult)
+        end
+    end
+    if #parts == 0 then
+        return nil
+    end
+    return table.concat(parts, " | ")
+end
+
 local function serverHop(lowPop)
     notify("Server Hop", "Teleporting to a new server...")
     pcall(function()
@@ -706,6 +859,7 @@ Weather:createLabel({ Name = "Seeds: --", flagName = "weatherSeedRestock", Speci
 Weather:createLabel({ Name = "Gears: --", flagName = "weatherGearRestock", Special = true })
 Weather:createLabel({ Name = "Crates: --", flagName = "weatherCrateRestock", Special = true })
 Weather:createLabel({ Name = "All Weathers: --", flagName = "weatherAllEvents", Special = true })
+Weather:createLabel({ Name = "Sell Boost: --", flagName = "weatherSellBoost", Special = true })
 
 Weather:createToggle({
     Name = "Weather Alerts",
@@ -748,6 +902,7 @@ task.spawn(function()
             break
         end
         pcall(function()
+            syncLive()
             local cur = WeatherPredictor.current()
             -- moon/phase transition alerts
             if WeatherWatch.weather ~= nil and cur.weather ~= WeatherWatch.weather then
@@ -791,7 +946,7 @@ task.spawn(function()
                     .. " left)"
                     .. activeEvents
             )
-            local moons = WeatherPredictor.nextMoons(48)
+            local moons, liveMoons = moonTimes()
             local moonParts = {}
             for _, mname in ipairs({ "Goldmoon", "Bloodmoon", "Rainbow Moon", "Mega Moon" }) do
                 local t = moons[mname]
@@ -804,23 +959,31 @@ task.spawn(function()
             if wv then
                 WeatherPredictor.updateGameWeatherUI(cur, wv, moons)
             end
-            local nxSeed = nextRestock("SeedShop")
-            local nxGear = nextRestock("GearShop")
-            local nxCrate = nextRestock("CrateShop")
+            local nxSeed = liveRestock("SeedShop") or nextRestock("SeedShop")
+            local nxGear = liveRestock("GearShop") or nextRestock("GearShop")
+            local nxCrate = liveRestock("CrateShop") or nextRestock("CrateShop")
+            local liveTag = (Live.items and "[live] ") or ""
             ul(
                 "weatherSeedRestock",
-                "Seeds: " .. (nxSeed and ("restock in " .. WeatherPredictor.fmtRel(nxSeed)) or "waiting for shop")
+                "Seeds: " .. liveTag .. (nxSeed and ("restock in " .. WeatherPredictor.fmtRel(nxSeed)) or "waiting for shop")
             )
             ul(
                 "weatherGearRestock",
-                "Gears: " .. (nxGear and ("restock in " .. WeatherPredictor.fmtRel(nxGear)) or "waiting for shop")
+                "Gears: " .. liveTag .. (nxGear and ("restock in " .. WeatherPredictor.fmtRel(nxGear)) or "waiting for shop")
             )
             ul(
                 "weatherCrateRestock",
-                "Crates: " .. (nxCrate and ("restock in " .. WeatherPredictor.fmtRel(nxCrate)) or "waiting for shop")
+                "Crates: " .. liveTag .. (nxCrate and ("restock in " .. WeatherPredictor.fmtRel(nxCrate)) or "waiting for shop")
             )
+            local sb = sellBoostInfo()
+            if sb then
+                ul("weatherSellBoost", "Sell Boost: " .. sb)
+            else
+                ul("weatherSellBoost", "Sell Boost: --")
+            end
+            local allMoons = WeatherPredictor.nextMoons(48)
             local allParts = {}
-            for wname, wt in pairs(moons) do
+            for wname, wt in pairs(allMoons) do
                 allParts[#allParts + 1] = wname .. " " .. WeatherPredictor.fmtRel(wt - cur.time)
             end
             ul("weatherAllEvents", "All: " .. (#allParts > 0 and table.concat(allParts, " | ") or "--"))
@@ -876,5 +1039,6 @@ print(
         .. tostring(WeatherPredictor.Total or 0)
         .. "s | Phases: "
         .. tostring(#phases)
+        .. " | Live API: enabled (30s refresh)"
 )
 notify("GAG2 Weather", "Predictor loaded - Weather HUD - Seed Restock - Rare Seed Alerts", "info")
