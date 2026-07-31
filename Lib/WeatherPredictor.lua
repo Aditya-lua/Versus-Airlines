@@ -1,7 +1,199 @@
--- Weather Predictor Module for Grow a Garden 2
--- Extracted from main script for better maintainability
--- Uses the game's own TimeCycleData for deterministic weather prediction
+-- Weather & Seed Predictor for Grow a Garden 2
+-- Standalone script (independent of the main GAG2 auto-farm)
+-- Predicts weather phases, moon events (Goldmoon/Bloodmoon/Rainbow Moon/Mega Moon),
+-- shop restock timers and rare seed stock. Injects icons into the game's WeatherUI.
 
+-- services
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TeleportService = game:GetService("TeleportService")
+
+local client = Players.LocalPlayer
+
+local NotificationController
+pcall(function() NotificationController = require(game.StarterPlayer.StarterPlayerScripts.Controllers.NotificationController) end)
+
+-- Prevent duplicate script instances on re-execution
+if getgenv and type(getgenv().GAG2Weather_unload) == "function" then
+    pcall(getgenv().GAG2Weather_unload)
+    task.wait(0.1)
+end
+
+local Hub = { running = true, conns = {} }
+local HubConns = Hub.conns
+local function track(conn)
+    if conn then
+        table.insert(HubConns, conn)
+    end
+    return conn
+end
+
+local httpRequest = (syn and syn.request)
+    or (http and http.request)
+    or (fluxus and fluxus.request)
+    or (typeof(request) == "function" and request)
+    or http_request
+
+-- load library (same pattern as the main script)
+print("Loading Library...")
+local Library
+do
+    local src
+    local ok, s = pcall(function()
+        return game:HttpGet("https://versusairlines.top/scripts/NewLibrary.lua")
+    end)
+    if ok and s then
+        src = s
+    end
+    if not src then
+        local ok2, s2 = pcall(function()
+            return game:HttpGet("https://raw.githubusercontent.com/versusairlines/scripts/main/NewLibrary.lua")
+        end)
+        if ok2 and s2 then
+            src = s2
+        end
+    end
+    if not src and readfile then
+        local ok3, s3 = pcall(function()
+            return readfile("Scripts/Lua/NewLibrary.lua")
+        end)
+        if ok3 and s3 then
+            src = s3
+        end
+    end
+    if not src then
+        local noop = function() end
+        local dummyUpdate = { updateText = noop, updateList = noop, Set = noop }
+        local function dummySection()
+            return {
+                createLabel = noop,
+                createToggle = noop,
+                createDropdown = noop,
+                createSlider = noop,
+                createButton = noop,
+                createInputBox = noop,
+                FindFirstChild = function()
+                    return dummyUpdate
+                end,
+            }
+        end
+        Library = { Flags = {}, _ElementControllers = {}, _openModalCount = 0, isClosed = false }
+        Library.Setup = function()
+            return {
+                CreateSection = function()
+                    return dummySection()
+                end,
+                UpdateUI = noop,
+                OnClose = nil,
+            }
+        end
+        Library.createDisplayMessage = noop
+        Library.TrackConnection = noop
+        Library.CleanupConnectionsByTag = noop
+        Library.CleanupConnections = noop
+        Library.CloseAllPopups = noop
+        warn("[GAG2 Weather] Could not load UI library - running in headless mode")
+    else
+        local ls = (getgenv and getgenv().loadstring) or loadstring
+        local chunk, err = ls(src)
+        if not chunk then
+            warn("[GAG2 Weather Library Load Error] " .. tostring(err))
+            local noop = function() end
+            local dummyUpdate = { updateText = noop, updateList = noop, Set = noop }
+            local function dummySection()
+                return {
+                    createLabel = noop,
+                    createToggle = noop,
+                    createDropdown = noop,
+                    createSlider = noop,
+                    createButton = noop,
+                    createInputBox = noop,
+                    FindFirstChild = function()
+                        return dummyUpdate
+                    end,
+                }
+            end
+            Library = { Flags = {}, _ElementControllers = {}, _openModalCount = 0, isClosed = false }
+            Library.Setup = function()
+                return {
+                    CreateSection = function()
+                        return dummySection()
+                    end,
+                    UpdateUI = noop,
+                    OnClose = nil,
+                }
+            end
+            Library.createDisplayMessage = noop
+            Library.TrackConnection = noop
+            Library.CleanupConnectionsByTag = noop
+            Library.CleanupConnections = noop
+            Library.CloseAllPopups = noop
+        else
+            local okInit, errInit = pcall(chunk)
+            if not okInit then
+                warn("[GAG2 Weather Library Init Error] " .. tostring(errInit))
+            end
+        end
+    end
+end
+
+local function notify(title, desc, style)
+    local msg = title .. ": " .. desc
+    if NotificationController then
+        NotificationController:CreateNotification(msg)
+    else
+        pcall(function()
+            Library:createDisplayMessage(title, desc, { { text = "OK" } }, style or "info")
+        end)
+    end
+end
+
+local lastWebhook = 0
+local function sendWebhook(title, desc, color, fields)
+    local url = Library.Flags["webhookUrl"]
+    if not url or url == "" then
+        return
+    end
+    local now = os.clock()
+    if now - lastWebhook < 3 then
+        return
+    end
+    lastWebhook = now
+    pcall(function()
+        httpRequest({
+            Url = url,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode({
+                embeds = {
+                    {
+                        title = tostring(title),
+                        description = tostring(desc),
+                        color = color or 5763719,
+                        fields = fields or {},
+                        footer = { text = client.Name .. " | GAG2 Weather" },
+                        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                },
+                username = Library.Flags["whName"] or "GAG2 Weather Bot",
+            }),
+        })
+    end)
+end
+
+local function tryRequire(loader)
+    local success, result = pcall(loader)
+    return success and result or nil
+end
+
+-- ================================================================
+-- WEATHER PREDICTOR (deterministic Day/Sunset/Night cycle from the
+-- game's own TimeCycleData - no external API, same math as the client)
+-- ================================================================
 local WeatherPredictor = {}
 
 local FALLBACK_PHASES = {
@@ -30,19 +222,6 @@ local FALLBACK_PHASES = {
         },
     },
 }
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local CoreGui = game:GetService("CoreGui")
-
-local function tryRequire(loader)
-    local success, result = pcall(loader)
-    return success and result or nil
-end
-
 local phases = FALLBACK_PHASES
 local cycleLen = 600
 local moonGating = tryRequire(function()
@@ -77,7 +256,6 @@ end
 if total > 0 then
     cycleLen = total
 end
-
 WeatherPredictor.Phases = phases
 WeatherPredictor.Total = cycleLen
 
@@ -160,6 +338,7 @@ WeatherPredictor.current = function()
     }
 end
 
+-- finds the NEXT occurrence of every weather event (all moons included)
 WeatherPredictor.nextMoons = function(horizonCycles)
     local found = {}
     local now = os.time()
@@ -167,7 +346,7 @@ WeatherPredictor.nextMoons = function(horizonCycles)
     local cIdx, pIdx = c0, p0
     local steps = 0
     local maxSteps = (horizonCycles or 48) * #phases
-    while steps <= maxSteps do
+    while steps < maxSteps do
         if steps > 0 then
             pIdx = pIdx + 1
             if pIdx > #phases then
@@ -176,17 +355,12 @@ WeatherPredictor.nextMoons = function(horizonCycles)
             end
         end
         local p = phases[pIdx]
-        local wcount = 0
-        for _ in pairs(p.Weathers or {}) do
-            wcount = wcount + 1
+        local startT = cIdx * cycleLen
+        for i2 = 1, pIdx - 1 do
+            startT = startT + phases[i2].Lasts
         end
-        if wcount > 1 then
-            local startT = cIdx * cycleLen
-            for i2 = 1, pIdx - 1 do
-                startT = startT + phases[i2].Lasts
-            end
-            local wname = pickWeather(p, cIdx * 1000 + pIdx)
-            if startT + p.Lasts >= now and not found[wname] then
+        for wname, w in pairs(p.Weathers or {}) do
+            if not w.AdminOnly and startT + p.Lasts >= now and not found[wname] then
                 found[wname] = math.max(startT, now)
             end
         end
@@ -195,7 +369,6 @@ WeatherPredictor.nextMoons = function(horizonCycles)
     return found
 end
 
--- formatting helper
 local function fmtLeft(secs)
     secs = math.max(0, math.floor(tonumber(secs) or 0))
     local h = math.floor(secs / 3600)
@@ -216,6 +389,7 @@ local GAME_WEATHER_ICONS = {
     Rain = "Rain", Lightning = "Lightning", Bloodmoon = "Bloodmoon",
     Snowfall = "Snowfall", Night = "Night", Starfall = "Starfall",
     Rainbow = "Rainbow", Goldmoon = "Goldmoon",
+    Aurora = "Aurora", Sunburst = "Sunburst", Eclipse = "Eclipse",
 }
 local UPCOMING_MOONS = { "Goldmoon", "Bloodmoon", "Rainbow Moon", "Mega Moon" }
 local MOON_ICON_NAMES = {
@@ -224,18 +398,32 @@ local MOON_ICON_NAMES = {
     ["Rainbow Moon"] = "Rainbow",
     ["Mega Moon"] = "MegaMoon",
 }
+local MOON_IMAGES = {
+    Goldmoon = "rbxassetid://84902063004871",
+    Bloodmoon = "rbxassetid://140465339393451",
+    Rainbow = "rbxassetid://93602895495056",
+    MegaMoon = "rbxassetid://107925838920918",
+}
 
 local function findWeatherUI()
     local pg = CoreGui
     for _, sg in ipairs(pg:GetChildren()) do
         if sg:IsA("ScreenGui") and sg.Name == "WeatherUI" then
+            local frame = sg:FindFirstChild("Frame")
+            if frame then
+                return frame
+            end
             return sg
         end
     end
-    local lp = Players.LocalPlayer
-    if lp then
-        for _, sg in ipairs(lp:FindFirstChildOfClass("PlayerGui"):GetChildren()) do
+    local pg2 = client and client:FindFirstChildOfClass("PlayerGui")
+    if pg2 then
+        for _, sg in ipairs(pg2:GetChildren()) do
             if sg:IsA("ScreenGui") and sg.Name == "WeatherUI" then
+                local frame = sg:FindFirstChild("Frame")
+                if frame then
+                    return frame
+                end
                 return sg
             end
         end
@@ -253,7 +441,8 @@ local function ensureMoonIcon(ui, iconName, weatherName)
     icon.BackgroundTransparency = 1
     icon.BorderSizePixel = 0
     icon.Size = UDim2.new(0, 34, 0, 34)
-    icon.Position = UDim2.new(0.5, -17, 0.5, -17)
+    icon.LayoutOrder = 2
+    icon.Image = MOON_IMAGES[iconName] or ""
     icon.Visible = false
     local timeLabel = Instance.new("TextLabel")
     timeLabel.Name = "Time"
@@ -325,7 +514,367 @@ WeatherPredictor.updateGameWeatherUI = function(cur, wv, moons)
     end
 end
 
-WeatherPredictor.update = function() end
-WeatherPredictor.destroy = function() end
+-- ================================================================
+-- WEATHER WATCH (attribute-driven live events + alerts)
+-- ================================================================
+local WeatherWatch = {
+    events = {},
+    night = false,
+    weather = nil,
+    eventList = { "Rain", "Lightning", "Rainbow", "Snowfall", "Starfall", "Aurora", "Sunburst", "Eclipse" },
+}
+WeatherWatch.alert = function(label, style)
+    if Library.Flags["weatherAlerts"] then
+        notify("Weather", label, style or "info")
+    end
+    if Library.Flags["whWeather"] then
+        sendWebhook("Weather Alert", label, style == "warning" and 5763719 or 5324800)
+    end
+end
+do
+    -- prefer the game's live WeatherData list (self-heals if events are renamed/added)
+    local wd = tryRequire(function()
+        local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+        return require(sm:FindFirstChild("WeatherData") or sm:WaitForChild("WeatherData", 5))
+    end)
+    if type(wd) == "table" and type(wd.Data) == "table" then
+        local live = {}
+        for _, evEntry in ipairs(wd.Data) do
+            if type(evEntry) == "table" and type(evEntry.Name) == "string" then
+                live[#live + 1] = evEntry.Name
+            end
+        end
+        if #live > 0 then
+            WeatherWatch.eventList = live
+        end
+    end
+end
+do
+    task.defer(function()
+        local wv = ReplicatedStorage:FindFirstChild("WeatherValues") or ReplicatedStorage:WaitForChild("WeatherValues", 30)
+        if not wv then
+            return
+        end
+        for _, evName in ipairs(WeatherWatch.eventList) do
+            WeatherWatch.events[evName] = wv:GetAttribute(evName .. "_Playing") == true
+            pcall(function()
+                track(wv:GetAttributeChangedSignal(evName .. "_Playing"):Connect(function()
+                    local now = wv:GetAttribute(evName .. "_Playing") == true
+                    if now ~= WeatherWatch.events[evName] then
+                        WeatherWatch.events[evName] = now
+                        WeatherWatch.alert(
+                            evName .. (now and " started" or " ended"),
+                            now and "warning" or "info"
+                        )
+                    end
+                end))
+            end)
+        end
+        local nightObj = ReplicatedStorage:FindFirstChild("Night")
+        if nightObj then
+            WeatherWatch.night = nightObj.Value == true
+            pcall(function()
+                track(nightObj.Changed:Connect(function()
+                    local now = nightObj.Value == true
+                    if now ~= WeatherWatch.night then
+                        WeatherWatch.night = now
+                        WeatherWatch.alert(now and "Night started - stealing enabled" or "Night ended", "warning")
+                    end
+                end))
+            end)
+        end
+    end)
+end
 
-return WeatherPredictor
+-- ================================================================
+-- SEED PREDICTOR (restock timers + rare seed detection)
+-- ================================================================
+local SeedPrice = {}
+do
+    local ok, mod = pcall(function()
+        local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+        return require(sm and (sm:FindFirstChild("SeedData") or sm:WaitForChild("SeedData", 10)) or ReplicatedStorage.SharedModules.SeedData)
+    end)
+    if ok and type(mod) == "table" then
+        for _, seedEntry in ipairs(mod) do
+            if type(seedEntry) == "table" and seedEntry.SeedName then
+                SeedPrice[seedEntry.SeedName] = tonumber(seedEntry.PurchasePrice) or math.huge
+            end
+        end
+    end
+end
+
+local function seedStock()
+    local sv = ReplicatedStorage:FindFirstChild("StockValues")
+    return sv and sv:FindFirstChild("SeedShop") or nil
+end
+
+local function nextRestock(shop)
+    local stockValues = ReplicatedStorage:FindFirstChild("StockValues")
+    stockValues = stockValues and stockValues:FindFirstChild(shop)
+    local restockTimestamp = stockValues and stockValues:FindFirstChild("UnixNextRestock")
+    return restockTimestamp and math.max(0, restockTimestamp.Value - os.time()) or nil
+end
+
+local function fmtCountdown(unixTs)
+    local diff = math.max(0, tonumber(unixTs) - os.time())
+    local h = math.floor(diff / 3600)
+    local m = math.floor((diff % 3600) / 60)
+    local s = diff % 60
+    if h > 0 then
+        return string.format("%dh %02dm", h, m)
+    end
+    if m > 0 then
+        return string.format("%dm %02ds", m, s)
+    end
+    return string.format("%ds", s)
+end
+
+local _rareNotified = {}
+local function rareSeedInStock()
+    local stockParent = seedStock()
+    if not stockParent then
+        return false
+    end
+    for _, stockValue in ipairs(stockParent:GetChildren()) do
+        if stockValue:IsA("ValueBase") and stockValue.Value > 0 and (SeedPrice[stockValue.Name] or 0) >= 5000 then
+            return true, stockValue.Name
+        end
+    end
+    return false
+end
+local function doRareNotify()
+    local stockParent = seedStock()
+    if not stockParent then
+        return
+    end
+    for _, stockValue in ipairs(stockParent:GetChildren()) do
+        if stockValue:IsA("ValueBase") then
+            local inStock = stockValue.Value > 0
+            if inStock and not _rareNotified[stockValue.Name] and (SeedPrice[stockValue.Name] or 0) >= 5000 then
+                notify("Rare Seed In Stock", stockValue.Name .. " restocked (" .. stockValue.Value .. "x)")
+                sendWebhook("Rare Seed In Stock", stockValue.Name .. " (" .. stockValue.Value .. "x)", 12255232)
+                _rareNotified[stockValue.Name] = true
+            elseif not inStock then
+                _rareNotified[stockValue.Name] = nil
+            end
+        end
+    end
+end
+
+local function serverHop(lowPop)
+    notify("Server Hop", "Teleporting to a new server...")
+    pcall(function()
+        if lowPop then
+            local ok, data = pcall(function()
+                return HttpService:JSONDecode(
+                    game:HttpGet(
+                        "https://games.roblox.com/v1/games/"
+                            .. game.PlaceId
+                            .. "/servers/Public?sortOrder=Asc&limit=100"
+                    )
+                )
+            end)
+            if ok and data and data.data then
+                local best
+                for _, s in ipairs(data.data) do
+                    if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                        if not best or s.playing < best.playing then
+                            best = s
+                        end
+                    end
+                end
+                if best then
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, best.id, client)
+                    return
+                end
+            end
+        end
+        TeleportService:Teleport(game.PlaceId, client)
+    end)
+end
+
+-- ================================================================
+-- UI (Weather tab)
+-- ================================================================
+local Setup = Library.Setup()
+local Weather = Setup:CreateSection("Weather")
+
+Weather:createLabel({ Name = "Current: --", flagName = "weatherPhase", Special = true })
+Weather:createLabel({ Name = "Next up: --", flagName = "weatherNextMoons", Special = true })
+Weather:createLabel({ Name = "Seeds: --", flagName = "weatherSeedRestock", Special = true })
+Weather:createLabel({ Name = "Gears: --", flagName = "weatherGearRestock", Special = true })
+Weather:createLabel({ Name = "Crates: --", flagName = "weatherCrateRestock", Special = true })
+Weather:createLabel({ Name = "All Weathers: --", flagName = "weatherAllEvents", Special = true })
+
+Weather:createToggle({
+    Name = "Weather Alerts",
+    Flag = true,
+    flagName = "weatherAlerts",
+    Description = "Show notifications on weather transitions.",
+})
+Weather:createToggle({
+    Name = "Rare Seed Restock Alert",
+    Flag = false,
+    flagName = "rareNotify",
+    Description = "Notify when a pricey seed hits the shop.",
+})
+Weather:createToggle({
+    Name = "Auto Hop Until Rare Seed",
+    Flag = false,
+    flagName = "autoHopRare",
+    Description = "Hop servers until a rare seed is in stock.",
+})
+Weather:createInputBox({
+    Name = "Webhook URL",
+    flagName = "webhookUrl",
+    Flag = "",
+    Description = "Input your webhook URL for weather/rare-seed alerts.",
+})
+Weather:createToggle({
+    Name = "Weather Webhook",
+    Flag = false,
+    flagName = "whWeather",
+    Description = "Send webhook on weather transitions.",
+})
+
+-- ================================================================
+-- LOOPS
+-- ================================================================
+-- predictor / restock / HUD loop (1s; zero external network calls)
+task.spawn(function()
+    while task.wait(1) do
+        if not Hub.running then
+            break
+        end
+        pcall(function()
+            local cur = WeatherPredictor.current()
+            -- moon/phase transition alerts
+            if WeatherWatch.weather ~= nil and cur.weather ~= WeatherWatch.weather then
+                WeatherWatch.alert(
+                    tostring(cur.weather)
+                        .. " started (about "
+                        .. tostring(math.max(0, (cur.endsAt or cur.time) - cur.time))
+                        .. "s)",
+                    "warning"
+                )
+            end
+            WeatherWatch.weather = cur.weather
+            local function ul(tag, text)
+                local lb = Weather:FindFirstChild(tag)
+                if lb and lb.updateText then
+                    lb:updateText(text)
+                end
+            end
+            local remain = math.max(0, (cur.endsAt or cur.time) - cur.time)
+            local activeEvents = ""
+            local wv = ReplicatedStorage:FindFirstChild("WeatherValues")
+            if wv then
+                for _, ev in ipairs(WeatherWatch.eventList) do
+                    if wv:GetAttribute(ev .. "_Playing") == true then
+                        local endT = tonumber(wv:GetAttribute(ev .. "_EndTime")) or 0
+                        activeEvents = activeEvents
+                            .. " | "
+                            .. ev
+                            .. (endT > cur.time and (" " .. WeatherPredictor.fmtRel(endT - cur.time)) or "")
+                    end
+                end
+            end
+            ul(
+                "weatherPhase",
+                "Now: "
+                    .. tostring(cur.weather)
+                    .. " ("
+                    .. tostring(cur.phase)
+                    .. ", "
+                    .. WeatherPredictor.fmtRel(remain)
+                    .. " left)"
+                    .. activeEvents
+            )
+            local moons = WeatherPredictor.nextMoons(48)
+            local moonParts = {}
+            for _, mname in ipairs({ "Goldmoon", "Bloodmoon", "Rainbow Moon", "Mega Moon" }) do
+                local t = moons[mname]
+                if t then
+                    local nm = (mname == "Goldmoon") and "Gold Moon" or mname
+                    moonParts[#moonParts + 1] = nm .. " " .. WeatherPredictor.fmtRel(t - cur.time)
+                end
+            end
+            ul("weatherNextMoons", "Next up: " .. (#moonParts > 0 and table.concat(moonParts, " | ") or "--"))
+            if wv then
+                WeatherPredictor.updateGameWeatherUI(cur, wv, moons)
+            end
+            local nxSeed = nextRestock("SeedShop")
+            local nxGear = nextRestock("GearShop")
+            local nxCrate = nextRestock("CrateShop")
+            ul(
+                "weatherSeedRestock",
+                "Seeds: " .. (nxSeed and ("restock in " .. WeatherPredictor.fmtRel(nxSeed)) or "waiting for shop")
+            )
+            ul(
+                "weatherGearRestock",
+                "Gears: " .. (nxGear and ("restock in " .. WeatherPredictor.fmtRel(nxGear)) or "waiting for shop")
+            )
+            ul(
+                "weatherCrateRestock",
+                "Crates: " .. (nxCrate and ("restock in " .. WeatherPredictor.fmtRel(nxCrate)) or "waiting for shop")
+            )
+            local allParts = {}
+            for wname, wt in pairs(moons) do
+                allParts[#allParts + 1] = wname .. " " .. WeatherPredictor.fmtRel(wt - cur.time)
+            end
+            ul("weatherAllEvents", "All: " .. (#allParts > 0 and table.concat(allParts, " | ") or "--"))
+        end)
+    end
+end)
+
+-- rare seed / auto hop loop (2s)
+task.spawn(function()
+    while task.wait(2) do
+        if not Hub.running then
+            break
+        end
+        pcall(function()
+            if Library.Flags["rareNotify"] then
+                doRareNotify()
+            end
+            if Library.Flags["autoHopRare"] and not rareSeedInStock() then
+                serverHop(false)
+            end
+        end)
+    end
+end)
+
+-- ================================================================
+-- LIFECYCLE
+-- ================================================================
+function Hub.unload()
+    if not Hub.running then
+        return
+    end
+    Hub.running = false
+    for _, c in ipairs(Hub.conns) do
+        pcall(function()
+            c:Disconnect()
+        end)
+    end
+    Hub.conns = {}
+    print("[GAG2 Weather] unloaded.")
+end
+if getgenv then
+    getgenv().GAG2Weather_unload = Hub.unload
+end
+if Setup.OnClose then
+    track(Setup.OnClose:Connect(function()
+        Hub.unload()
+    end))
+end
+
+print("[GAG2 Weather] Loaded successfully (" .. os.date("%H:%M:%S") .. ")")
+print(
+    "[GAG2 Weather] Predictor cycle: "
+        .. tostring(WeatherPredictor.Total or 0)
+        .. "s | Phases: "
+        .. tostring(#phases)
+)
+notify("GAG2 Weather", "Predictor loaded - Weather HUD - Seed Restock - Rare Seed Alerts", "info")
