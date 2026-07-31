@@ -133,9 +133,47 @@ do
             Library.CleanupConnections = noop
             Library.CloseAllPopups = noop
         else
-            local okInit, errInit = pcall(chunk)
-            if not okInit then
-                warn("[GAG2 Weather Library Init Error] " .. tostring(errInit))
+            local okInit, lib = pcall(chunk)
+            if okInit and type(lib) == "table" then
+                Library = lib
+            elseif okInit then
+                local g = (getgenv and getgenv()) or _G
+                if type(g.Library) == "table" then
+                    Library = g.Library
+                end
+            end
+            if not Library then
+                warn("[GAG2 Weather Library Init Error] library returned no table - headless mode")
+                local noop = function() end
+                local dummyUpdate = { updateText = noop, updateList = noop, Set = noop }
+                local function dummySection()
+                    return {
+                        createLabel = noop,
+                        createToggle = noop,
+                        createDropdown = noop,
+                        createSlider = noop,
+                        createButton = noop,
+                        createInputBox = noop,
+                        FindFirstChild = function()
+                            return dummyUpdate
+                        end,
+                    }
+                end
+                Library = { Flags = {}, _ElementControllers = {}, _openModalCount = 0, isClosed = false }
+                Library.Setup = function()
+                    return {
+                        CreateSection = function()
+                            return dummySection()
+                        end,
+                        UpdateUI = noop,
+                        OnClose = nil,
+                    }
+                end
+                Library.createDisplayMessage = noop
+                Library.TrackConnection = noop
+                Library.CleanupConnectionsByTag = noop
+                Library.CleanupConnections = noop
+                Library.CloseAllPopups = noop
             end
         end
     end
@@ -850,7 +888,7 @@ end
 -- ================================================================
 -- UI (Weather tab)
 -- ================================================================
-local Setup = Library.Setup()
+local Setup = Library:Setup({ Location = CoreGui, OpenCloseLocation = "Bottom Right" })
 local Weather = Setup:CreateSection("Weather")
 
 Weather:createLabel({ Name = "Current: --", flagName = "weatherPhase", Special = true })
