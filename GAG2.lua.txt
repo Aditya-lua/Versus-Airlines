@@ -2804,7 +2804,7 @@ local function doMailboxSend()
     end
     -- pets: respect sendPet dropdown (equipped pets cannot be mailed - unequip first)
     if Library.Flags["autoSendPet"] and playerData.Inventory and playerData.Inventory.Pets then
-        local equipped = netCall("Pets.GetEquippedPets")
+        local equipped = netCall("Pets.GetEquipped")
         if type(equipped) == "table" then
             for _, pet in pairs(equipped) do
                 if type(pet) == "table" and pet.Id then
