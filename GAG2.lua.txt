@@ -3420,18 +3420,6 @@ local function removeAllBuildings()
     return count
 end
 
--- auto skill: spend skill points on a selected skill
-local function doAutoSkill()
-    if not Library.Flags["autoSkill"] then
-        return
-    end
-    local skillId = Library.Flags["skillId"] or ""
-    if skillId == "" then
-        return
-    end
-    netFire("SkillPoints.SpendSkillPoint", skillId)
-end
-
 -- redeem a promo code
 local function doRedeemCode()
     local code = Library.Flags["redeemCode"] or ""
@@ -3784,8 +3772,6 @@ local PERSISTENT_FLAGS = {
     "whPetFilter",
     "whPetRarity",
     "whPetSize",
-    "autoSkill",
-    "skillId",
     "redeemCode",
     "autoBuyPet",
     "petBuyMaxPrice",
@@ -3884,15 +3870,16 @@ local profitWindow = {}
 -- SECTIONS (9 tabs)
 -- ================================================================
 
-local Home = Setup:CreateSection("Home")
-local Main = Setup:CreateSection("Main")
-local Automatically = Setup:CreateSection("Automatically")
-local Inventory = Setup:CreateSection("Inventory")
-local Shop = Setup:CreateSection("Shop")
-local Webhook = Setup:CreateSection("Webhook")
-local Misc = Setup:CreateSection("Misc")
-local Visual = Setup:CreateSection("Visual")
-local Settings = Setup:CreateSection("Settings")
+local Home = Setup:CreateSection("🏠 Home")
+local Main = Setup:CreateSection("🌱 Main")
+local Automatically = Setup:CreateSection("⚙️ Automatically")
+local Inventory = Setup:CreateSection("🎒 Inventory")
+local Shop = Setup:CreateSection("🛒 Shop")
+local Webhook = Setup:CreateSection("📡 Webhook")
+local Misc = Setup:CreateSection("🧰 Misc")
+local Visual = Setup:CreateSection("👁️ Visual")
+local DevTools = Setup:CreateSection("🐞 Dev Tools")
+local Settings = Setup:CreateSection("🔧 Settings")
 
 -- ================================================================
 -- HOME TAB (Dashboard)
@@ -3942,79 +3929,6 @@ Home:createButton({
             notify("Home", "Went to your garden")
         else
             notify("Home", "Garden not found", "warning")
-        end
-    end,
-})
-Home:createButton({
-    Name = "Dump Packet Names",
-    Description = "Print all real remote packet names + IDs from the game's Packet module to console.",
-    Callback = function()
-        local pk = ReplicatedStorage and ReplicatedStorage:FindFirstChild("SharedModules")
-            and ReplicatedStorage.SharedModules:FindFirstChild("Packet")
-        local ev = pk and pk:FindFirstChild("RemoteEvent")
-        if not (ev and ev.GetAttributes) then
-            notify("Packets", "Packet module / RemoteEvent not found", "warning")
-            return
-        end
-        local attrs = pcall(function()
-            return ev:GetAttributes()
-        end)
-        if not attrs then
-            notify("Packets", "Failed to read packet attributes", "warning")
-            return
-        end
-        local count = 0
-        local lines = {}
-        for name, id in pairs(ev:GetAttributes()) do
-            if type(name) == "string" then
-                count = count + 1
-                lines[#lines + 1] = string.format("[%s] id=%s", name, tostring(id))
-            end
-        end
-        table.sort(lines)
-        local text = table.concat(lines, "\n")
-        for _, line in ipairs(lines) do
-            print("[GAG2] packet " .. line)
-        end
-        local okClip, errClip = pcall(function()
-            setclipboard(text)
-        end)
-        local filePath = nil
-        if writefile then
-            pcall(function()
-                filePath = "gag2_packets_" .. tostring(os.date("%Y%m%d_%H%M%S")) .. ".txt"
-                writefile(filePath, text)
-            end)
-        end
-        local extras = {}
-        if okClip then
-            extras[#extras + 1] = "copied to clipboard"
-        else
-            extras[#extras + 1] = "clipboard failed: " .. tostring(errClip)
-        end
-        if filePath then
-            extras[#extras + 1] = "saved to " .. filePath
-        end
-        notify("Packets", count .. " packet names dumped - " .. table.concat(extras, ", "))
-    end,
-})
-Home:createButton({
-    Name = "Dump Debug Log",
-    Description = "Save the live action log (fires, equips, errors) to gag2_debug_log.txt.",
-    Callback = function()
-        if #DebugLogBuf == 0 then
-            notify("Debug", "No log entries yet - enable toggles first", "warning")
-            return
-        end
-        local ok, err = pcall(function()
-            local payload = "GAG2 debug log " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n" .. table.concat(DebugLogBuf, "\n") .. "\n"
-            writefile("gag2_debug_log.txt", payload)
-        end)
-        if ok then
-            LastDebugDump = #DebugLogBuf
-            notify("Debug", "Saved " .. #DebugLogBuf .. " entries to gag2_debug_log.txt")
-        else
-            notify("Debug", "writefile failed: " .. tostring(err), "warning")
         end
     end,
 })
@@ -4973,16 +4887,6 @@ Misc:createToggle({
 -- Misc
 Misc:createLabel({ Name = "Misc", Special = true })
 
-Misc:createToggle({
-    Name = "Debug Logging",
-    Flag = true,
-    flagName = "debugLogging",
-    Description = "Log every remote fire, equip and error to console + gag2_debug_log.txt.",
-    Callback = function(v)
-        DebugLogOn = v and true or false
-    end,
-})
-
 Misc:createLabel({ Name = "- [ Fling ] -", Special = true })
 Misc:createToggle({
     Name = "Anti-Fling",
@@ -5101,18 +5005,6 @@ Misc:createButton({
 
 Misc:createLabel({ Name = "Player & Account", Special = true })
 
-Misc:createToggle({
-    Name = "Auto Spend Skill Points",
-    Flag = false,
-    flagName = "autoSkill",
-    Description = "Automatically spend skill points on the selected skill.",
-})
-Misc:createInputBox({
-    Name = "Skill ID",
-    flagName = "skillId",
-    Flag = "",
-    Description = "Skill name or ID to auto-spend points on.",
-})
 Misc:createInputBox({
     Name = "Promo Code",
     flagName = "redeemCode",
@@ -5247,6 +5139,94 @@ Misc:createButton({
         sessionHarvests = 0
         sessionStart = os.clock()
         notify("Stats", "Session stats reset")
+    end,
+})
+
+-- ================================================================
+-- DEV TOOLS TAB
+-- ================================================================
+
+DevTools:createLabel({ Name = "Debug", Special = true })
+DevTools:createToggle({
+    Name = "Debug Logging",
+    Flag = true,
+    flagName = "debugLogging",
+    Description = "Log every remote fire, equip and error to console + gag2_debug_log.txt.",
+    Callback = function(v)
+        DebugLogOn = v and true or false
+    end,
+})
+DevTools:createButton({
+    Name = "Dump Debug Log",
+    Description = "Save the live action log (fires, equips, errors) to gag2_debug_log.txt.",
+    Callback = function()
+        if #DebugLogBuf == 0 then
+            notify("Debug", "No log entries yet - enable toggles first", "warning")
+            return
+        end
+        local ok, err = pcall(function()
+            local payload = "GAG2 debug log " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n" .. table.concat(DebugLogBuf, "\n") .. "\n"
+            writefile("gag2_debug_log.txt", payload)
+        end)
+        if ok then
+            LastDebugDump = #DebugLogBuf
+            notify("Debug", "Saved " .. #DebugLogBuf .. " entries to gag2_debug_log.txt")
+        else
+            notify("Debug", "writefile failed: " .. tostring(err), "warning")
+        end
+    end,
+})
+DevTools:createButton({
+    Name = "Dump Packet Names",
+    Description = "Print all real remote packet names + IDs from the game's Packet module to console.",
+    Callback = function()
+        local pk = ReplicatedStorage and ReplicatedStorage:FindFirstChild("SharedModules")
+            and ReplicatedStorage.SharedModules:FindFirstChild("Packet")
+        local ev = pk and pk:FindFirstChild("RemoteEvent")
+        if not (ev and ev.GetAttributes) then
+            notify("Packets", "Packet module / RemoteEvent not found", "warning")
+            return
+        end
+        local attrs = pcall(function()
+            return ev:GetAttributes()
+        end)
+        if not attrs then
+            notify("Packets", "Failed to read packet attributes", "warning")
+            return
+        end
+        local count = 0
+        local lines = {}
+        for name, id in pairs(ev:GetAttributes()) do
+            if type(name) == "string" then
+                count = count + 1
+                lines[#lines + 1] = string.format("[%s] id=%s", name, tostring(id))
+            end
+        end
+        table.sort(lines)
+        local text = table.concat(lines, "\n")
+        for _, line in ipairs(lines) do
+            print("[GAG2] packet " .. line)
+        end
+        local okClip, errClip = pcall(function()
+            setclipboard(text)
+        end)
+        local filePath = nil
+        if writefile then
+            pcall(function()
+                filePath = "gag2_packets_" .. tostring(os.date("%Y%m%d_%H%M%S")) .. ".txt"
+                writefile(filePath, text)
+            end)
+        end
+        local extras = {}
+        if okClip then
+            extras[#extras + 1] = "copied to clipboard"
+        else
+            extras[#extras + 1] = "clipboard failed: " .. tostring(errClip)
+        end
+        if filePath then
+            extras[#extras + 1] = "saved to " .. filePath
+        end
+        notify("Packets", count .. " packet names dumped - " .. table.concat(extras, ", "))
     end,
 })
 
@@ -5669,9 +5649,6 @@ task.spawn(function()
             end
             if Library.Flags["petProtection"] then
                 doPetProtection()
-            end
-            if Library.Flags["autoSkill"] then
-                doAutoSkill()
             end
             if Library.Flags["autoBuyPet"] then
                 doAutoBuyPet()
