@@ -440,6 +440,46 @@ end
 -- utility helpers
 
 -- game API bootstrap
+-- debug logger: prints to console and appends to a ring buffer so it can
+-- be written to a file on demand (Dump Debug Log button in Quick Actions).
+local DebugLogBuf = {}
+local DebugLogOn = true
+local function DebugLog(...)
+    if not DebugLogOn then
+        return
+    end
+    local parts = { ... }
+    local line = os.time() .. " " .. table.concat(parts, " | ")
+    print("[GAG2DBG] " .. line)
+    DebugLogBuf[#DebugLogBuf + 1] = line
+    if #DebugLogBuf > 2000 then
+        table.remove(DebugLogBuf, 1)
+    end
+end
+-- auto-writer: flush the log to a file every few seconds so it can be
+-- inspected live from outside the game (Delta writefile).
+local LastDebugDump = 0
+local function DumpDebugLog()
+    if not DebugLogOn or #DebugLogBuf == 0 then
+        return
+    end
+    local ok, err = pcall(function()
+        local payload = "GAG2 debug log " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n" .. table.concat(DebugLogBuf, "\n") .. "\n"
+        writefile("gag2_debug_log.txt", payload)
+    end)
+    if ok then
+        LastDebugDump = #DebugLogBuf
+    end
+end
+task.spawn(function()
+    while true do
+        task.wait(4)
+        if DebugLogOn and #DebugLogBuf ~= LastDebugDump then
+            DumpDebugLog()
+        end
+    end
+end)
+
 local Network, PlayerState, SeedData, SeedPrice, PetCache, FruitValueCalc, SeedBaseValue, SeedRarity
 local function tryRequire(loader)
     local success, result = pcall(loader)
@@ -481,6 +521,7 @@ if not mod then
     return
 end
 Network = mod
+DebugLog("bootstrap", "Network resolved", "hasPlantSeed=" .. tostring(Network.Plant and Network.Plant.PlantSeed ~= nil), "leafType=" .. typeof(Network.Plant and Network.Plant.PlantSeed))
 mod = tryRequire(function()
     local cm = ReplicatedStorage:FindFirstChild("ClientModules") or ReplicatedStorage:WaitForChild("ClientModules", 10)
     return require(cm and (cm:FindFirstChild("PlayerStateClient") or cm:WaitForChild("PlayerStateClient", 10)) or ReplicatedStorage.ClientModules.PlayerStateClient)
@@ -752,6 +793,7 @@ end
 -- reject Instances since Luau returns "Instance" for them).
 local function netFire(path, ...)
     if not Network then
+        DebugLog("netFire", path, "SKIP: Network is nil")
         return
     end
     local node = Network
@@ -760,15 +802,19 @@ local function netFire(path, ...)
     end
     if node ~= nil then
         local args = { ... }
-        pcall(function()
+        local ok, err = pcall(function()
             node:Fire(table.unpack(args))
         end)
+        DebugLog("netFire", path, ok and "OK" or ("ERR: " .. tostring(err)), "leafType=" .. typeof(node))
+    else
+        DebugLog("netFire", path, "MISSING: node is nil")
     end
 end
 
 -- netCall: invoke a RemoteFunction by dotted path (uses InvokeServer, not Fire)
 local function netCall(path, ...)
     if not Network then
+        DebugLog("netCall", path, "SKIP: Network is nil")
         return nil
     end
     local node = Network
@@ -783,8 +829,12 @@ local function netCall(path, ...)
             end
             return node:Fire(table.unpack(args))
         end)
+        if not ok then
+            DebugLog("netCall", path, "ERR: " .. tostring(res), "leafType=" .. typeof(node))
+        end
         return ok and res or nil
     end
+    DebugLog("netCall", path, "MISSING: node is nil")
     return nil
 end
 
@@ -952,9 +1002,11 @@ local function equipTool(tool)
     local char = client.Character
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
     if not (humanoid and tool and tool.Parent) then
+        DebugLog("equipTool", tool and tool.Name or "?", "SKIP: no humanoid/tool")
         return nil
     end
     if tool.Parent == char then
+        DebugLog("equipTool", tool.Name, "already equipped")
         return tool
     end
     pcall(function()
@@ -964,7 +1016,9 @@ local function equipTool(tool)
     if tool.Parent ~= char then
         task.wait(0.15)
     end
-    return (tool.Parent == char) and tool or nil
+    local ok = (tool.Parent == char) and tool or nil
+    DebugLog("equipTool", tool.Name, ok and "OK" or "FAILED")
+    return ok
 end
 
 -- position mode resolver
@@ -2350,6 +2404,7 @@ local function doPlant()
     -- find open soil slots
     local free = getOpenSlots(plot, firstValue(Library.Flags["plantPattern"]) or "Fill", sortPosition)
     if #free == 0 then
+        DebugLog("doPlant", "no free slots")
         return
     end
     local cap = math.min(#free, #toPlant)
@@ -2372,6 +2427,7 @@ local function doPlant()
         grouped[seedName].slots[#grouped[seedName].slots + 1] = free[i]
     end
     local planted = 0
+    DebugLog("doPlant", "slots=" .. #free, "groups=" .. #order, "cap=" .. cap)
     for _, group in ipairs(order) do
         local seedName = group.seed
         -- find the seed tool (backpack first, then character)
@@ -2411,6 +2467,7 @@ local function doPlant()
             end
         end
     end
+    DebugLog("doPlant", "cycle done, planted=" .. planted)
     return planted
 end
 
@@ -3902,6 +3959,26 @@ Home:createButton({
         notify("Packets", count .. " packet names dumped - " .. table.concat(extras, ", "))
     end,
 })
+Home:createButton({
+    Name = "Dump Debug Log",
+    Description = "Save the live action log (fires, equips, errors) to gag2_debug_log.txt.",
+    Callback = function()
+        if #DebugLogBuf == 0 then
+            notify("Debug", "No log entries yet - enable toggles first", "warning")
+            return
+        end
+        local ok, err = pcall(function()
+            local payload = "GAG2 debug log " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n" .. table.concat(DebugLogBuf, "\n") .. "\n"
+            writefile("gag2_debug_log.txt", payload)
+        end)
+        if ok then
+            LastDebugDump = #DebugLogBuf
+            notify("Debug", "Saved " .. #DebugLogBuf .. " entries to gag2_debug_log.txt")
+        else
+            notify("Debug", "writefile failed: " .. tostring(err), "warning")
+        end
+    end,
+})
 Home:createDropdown({
     Name = "Transport Mode",
     flagName = "tpMode",
@@ -4856,6 +4933,16 @@ Misc:createToggle({
 
 -- Misc
 Misc:createLabel({ Name = "Misc", Special = true })
+
+Misc:createToggle({
+    Name = "Debug Logging",
+    Flag = true,
+    flagName = "debugLogging",
+    Description = "Log every remote fire, equip and error to console + gag2_debug_log.txt.",
+    Callback = function(v)
+        DebugLogOn = v and true or false
+    end,
+})
 
 Misc:createLabel({ Name = "- [ Fling ] -", Special = true })
 Misc:createToggle({
