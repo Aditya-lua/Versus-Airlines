@@ -959,6 +959,19 @@ local function nearPlot()
 end
 
 -- authoritative tool helpers (game client requires the matching tool equipped)
+local function getToolParents()
+    local parents = {}
+    local char = client and client.Character
+    if char then
+        parents[#parents + 1] = char
+    end
+    local bp = client and client:FindFirstChild("Backpack")
+    if bp then
+        parents[#parents + 1] = bp
+    end
+    return parents
+end
+
 local function findToolByAttr(attrName, expectedName)
     local want = type(expectedName) == "string" and expectedName:lower() or nil
     local fuzzyHit, fuzzyAttr = nil, nil
@@ -1196,6 +1209,45 @@ local function getAllPetSpecies()
             seen[key] = true
             list[#list + 1] = key
         end
+    end
+    table.sort(list)
+    return list
+end
+
+-- sprinkler names from the game's SprinklerData module (SprinklerName field);
+-- falls back to the tool's "Sprinkler" attribute values seen in inventory.
+local function getSprinklerList()
+    local seen = {}
+    local sprData = tryRequire(function()
+        local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+        return require(sm:FindFirstChild("SprinklerData") or sm:WaitForChild("SprinklerData", 5))
+    end)
+    if type(sprData) == "table" then
+        for _, entry in ipairs(sprData) do
+            if type(entry) == "table" and entry.SprinklerName then
+                seen[entry.SprinklerName] = true
+            end
+        end
+    end
+    for _, parent in ipairs(getToolParents()) do
+        for _, tool in ipairs(parent:GetChildren()) do
+            if tool:IsA("Tool") then
+                local s = tool:GetAttribute("Sprinkler")
+                if type(s) == "string" and s ~= "" then
+                    seen[s] = true
+                end
+            end
+        end
+    end
+    local playerData = getData()
+    if playerData and playerData.Inventory and playerData.Inventory.Sprinklers then
+        for k in pairs(playerData.Inventory.Sprinklers) do
+            seen[tostring(k)] = true
+        end
+    end
+    local list = {}
+    for k in pairs(seen) do
+        list[#list + 1] = k
     end
     table.sort(list)
     return list
@@ -2056,6 +2108,23 @@ do
                 end
             end
         end
+        -- fruits live in the player's backpack as Tools (game grid renders from there)
+        if count == 0 then
+            for _, parent in ipairs(getToolParents()) do
+                for _, tool in ipairs(parent:GetChildren()) do
+                    if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName")) then
+                        local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Seed") or tool.Name or ""
+                        local weight = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or 1) or 1
+                        local mname = tool:GetAttribute("Mutation")
+                        if type(mname) ~= "string" then
+                            mname = nil
+                        end
+                        invVal = invVal + ValueEngine.compute(fname, weight, mname)
+                        count = count + 1
+                    end
+                end
+            end
+        end
         local now = os.time()
         if now ~= _lastInvDbg then
             _lastInvDbg = now
@@ -2073,7 +2142,15 @@ do
             DebugLog("invValue", "data=" .. tostring(d ~= nil), "inv=" .. tostring(d and d.Inventory ~= nil),
                 "hf=" .. tostring(type(hf)), "count=" .. tostring(count), "val=" .. tostring(invVal),
                 "FVC=" .. tostring(FruitValueCalc ~= nil), "sellLive=" .. tostring(ValueDB.sellLive ~= nil),
-                "sample[" .. tostring(hf and (function()
+                "invKeys=" .. (d and d.Inventory and type(d.Inventory) == "table" and (function()
+                    local ks = {}
+                    for k in pairs(d.Inventory) do
+                        ks[#ks + 1] = tostring(k)
+                    end
+                    table.sort(ks)
+                    return table.concat(ks, ",")
+                end)() or "?") ..
+                " sample[" .. tostring(hf and (function()
                     local c = 0
                     for _ in pairs(hf) do
                         c = c + 1
@@ -2655,14 +2732,11 @@ local function doSellSelective()
     if not (playerData and playerData.Inventory) then
         return
     end
-    local fruits = playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
-    if not fruits then
-        return
-    end
+    local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
     for uid, info in pairs(fruits) do
         if type(info) == "table" then
-            local cropName = info.CropName or info.SeedName or info.Name or ""
-            local wt = tonumber(info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
+            local cropName = info.FruitName or info.CropName or info.SeedName or info.Name or ""
+            local wt = tonumber(info.SizeMultiplier or info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
             local mutName = info.Mutation
             local entry = {
                 crop = cropName,
@@ -2709,16 +2783,13 @@ local function doFavorite(setFav, all)
     if not (playerData and playerData.Inventory) then
         return
     end
-    local fruits = playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
-    if not fruits then
-        return
-    end
+    local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
     for uid, info in pairs(fruits) do
         if type(info) == "table" then
             local match = all == true
             if not match then
-                local cropName = info.CropName or info.SeedName or info.Name or ""
-                local wt = tonumber(info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
+                local cropName = info.FruitName or info.CropName or info.SeedName or info.Name or ""
+                local wt = tonumber(info.SizeMultiplier or info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
                 local mutName = info.Mutation
                 local entry = {
                     crop = cropName,
@@ -4475,7 +4546,7 @@ Automatically:createLabel({ Name = "- [ Sprinkler ] -", Special = true })
 Automatically:createDropdown({
     Name = "Select Sprinkler",
     flagName = "sprinklerSelect",
-    List = {},
+    List = getSprinklerList(),
     Description = "Which sprinkler type to place.",
 })
 Automatically:createDropdown({
