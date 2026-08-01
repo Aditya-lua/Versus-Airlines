@@ -2268,36 +2268,29 @@ local function doPlant()
     table.sort(toPlant, function(a, b) return a < b end)
     local delay = math.max(0.02, tonumber(Library.Flags["plantDelay"]) or 0.05)
     local planted = 0
-    local equippedSeed, equippedTool = nil, nil
-    local missingWarned = false
+    -- no tool equipping: the server validates the remote directly. We just pass the
+    -- matching backpack tool as the 3rd arg (kaitun fix style), or the plot as fallback
+    -- (reference hub style). Equipping per seed type made auto-plant-all spin on swaps.
     local toolCache = {}
+    local function seedToolFor(name)
+        if toolCache[name] ~= nil then
+            return toolCache[name]
+        end
+        local tool = findToolByAttr("SeedTool", name)
+        if not tool then
+            tool = findToolByAttr("SeedTool", nil)
+        end
+        toolCache[name] = tool
+        return tool
+    end
     for i = 1, cap do
         local seedName = toPlant[i]
-        if equippedSeed ~= seedName then
-            local tool = toolCache[seedName]
-            if not tool then
-                tool = findToolByAttr("SeedTool", seedName)
-                if not tool then
-                    tool = findToolByAttr("SeedTool", nil)
-                end
-                toolCache[seedName] = tool
-            end
-            equippedTool = tool and equipTool(tool) or nil
-            equippedSeed = equippedTool and (equippedTool:GetAttribute("SeedTool") or seedName) or nil
-            if not equippedTool then
-                if not missingWarned then
-                    missingWarned = true
-                    dumpTools("SeedTool")
-                    notify("Auto Plant", "Seed tool not found / equip failed for " .. tostring(seedName) .. " (see console)", "warn")
-                end
-                task.wait(jitter(delay, delay * 0.15))
-            end
-        end
-        if equippedTool then
-            local sName = equippedTool:GetAttribute("SeedTool") or seedName
-            netFire("Plant.PlantSeed", free[i], sName, equippedTool)
+        local tool = seedToolFor(seedName)
+        if tool then
+            local sName = tool:GetAttribute("SeedTool") or seedName
+            netFire("Plant.PlantSeed", free[i], sName, tool)
         else
-            netFire("Plant.PlantSeed", free[i], seedName)
+            netFire("Plant.PlantSeed", free[i], seedName, plot)
         end
         planted = planted + 1
         task.wait(jitter(delay, delay * 0.15))
