@@ -3761,10 +3761,30 @@ Home:createButton({
             end
         end
         table.sort(lines)
+        local text = table.concat(lines, "\n")
         for _, line in ipairs(lines) do
             print("[GAG2] packet " .. line)
         end
-        notify("Packets", count .. " packet names dumped to console")
+        local okClip, errClip = pcall(function()
+            setclipboard(text)
+        end)
+        local filePath = nil
+        if writefile then
+            pcall(function()
+                filePath = "gag2_packets_" .. tostring(os.date("%Y%m%d_%H%M%S")) .. ".txt"
+                writefile(filePath, text)
+            end)
+        end
+        local extras = {}
+        if okClip then
+            extras[#extras + 1] = "copied to clipboard"
+        else
+            extras[#extras + 1] = "clipboard failed: " .. tostring(errClip)
+        end
+        if filePath then
+            extras[#extras + 1] = "saved to " .. filePath
+        end
+        notify("Packets", count .. " packet names dumped - " .. table.concat(extras, ", "))
     end,
 })
 Home:createDropdown({
