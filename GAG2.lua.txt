@@ -2130,10 +2130,14 @@ do
             end
         end
         -- fruits live in the player's backpack as Tools (game grid renders from there)
-        if count == 0 then
-            for _, parent in ipairs(getToolParents()) do
-                for _, tool in ipairs(parent:GetChildren()) do
-                    if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName")) then
+        local backpackCount = 0
+        for _, parent in ipairs(getToolParents()) do
+            for _, tool in ipairs(parent:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local hasHF = tool:GetAttribute("HarvestedFruit")
+                    local hasFN = tool:GetAttribute("FruitName")
+                    local hasSeed = tool:GetAttribute("Seed")
+                    if hasHF or hasFN or hasSeed then
                         local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Seed") or tool.Name or ""
                         local weight = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or 1) or 1
                         local mname = tool:GetAttribute("Mutation")
@@ -2142,9 +2146,13 @@ do
                         end
                         invVal = invVal + ValueEngine.compute(fname, weight, mname)
                         count = count + 1
+                        backpackCount = backpackCount + 1
                     end
                 end
             end
+        end
+        if backpackCount > 0 and now ~= _lastInvDbg then
+            DebugLog("invValue", "backpackScan", "found=" .. backpackCount, "totalCount=" .. count, "val=" .. invVal)
         end
         local now = os.time()
         if now ~= _lastInvDbg then
