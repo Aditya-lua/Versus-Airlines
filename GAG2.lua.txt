@@ -3683,7 +3683,7 @@ local sessionStartBal = getBalance()
 local profitWindow = {}
 
 -- ================================================================
--- SECTIONS (8 tabs)
+-- SECTIONS (9 tabs)
 -- ================================================================
 
 local Home = Setup:CreateSection("Home")
@@ -3693,6 +3693,7 @@ local Inventory = Setup:CreateSection("Inventory")
 local Shop = Setup:CreateSection("Shop")
 local Webhook = Setup:CreateSection("Webhook")
 local Misc = Setup:CreateSection("Misc")
+local Visual = Setup:CreateSection("Visual")
 local Settings = Setup:CreateSection("Settings")
 
 -- ================================================================
@@ -5170,6 +5171,157 @@ Settings:createToggle({
 Settings:createLabel({ Name = "Config: " .. SAVE_FILE, Special = true })
 
 -- ================================================================
+-- VISUAL TAB (client-side only - fake inventory preview)
+-- ================================================================
+
+-- These mutate the LOCAL PlayerState replica only. The server ignores
+-- them and overwrites on the next sync - purely visual previews.
+local fakeInjected = {}
+
+local function localReplicaData()
+    local replica = getReplica()
+    if not replica then
+        return nil
+    end
+    local ok, data = pcall(function()
+        return replica.Data
+    end)
+    return ok and data or nil
+end
+
+local function ensureInventoryPath()
+    local data = localReplicaData()
+    if not data then
+        return nil
+    end
+    data.Inventory = data.Inventory or {}
+    return data
+end
+
+local function visualNotify(msg)
+    notify("Visual", msg, "info")
+end
+
+Visual:createLabel({ Name = "Fake Money", Special = true })
+Visual:createInputBox({
+    Name = "Fake Sheckles Amount",
+    flagName = "visualMoneyAmount",
+    Flag = "1000000",
+    Description = "Amount shown in the local balance (client-side only).",
+})
+Visual:createButton({
+    Name = "Set Fake Sheckles",
+    Description = "Overwrite the local balance display.",
+    Callback = function()
+        local data = localReplicaData()
+        if not data then
+            visualNotify("Player state not ready yet")
+            return
+        end
+        local amount = tonumber(Library.Flags["visualMoneyAmount"]) or 0
+        pcall(function()
+            if fakeInjected["sheckles"] == nil then
+                fakeInjected["sheckles"] = data.Sheckles or 0
+            end
+            data.Sheckles = amount
+        end)
+        visualNotify("Fake Sheckles set to $" .. amount)
+    end,
+})
+
+Visual:createLabel({ Name = "Fake Seeds", Special = true })
+Visual:createInputBox({
+    Name = "Seed Name",
+    flagName = "visualSeedName",
+    Flag = "Gold",
+    Description = "Seed to add to the local inventory.",
+})
+Visual:createInputBox({
+    Name = "Seed Count",
+    flagName = "visualSeedCount",
+    Flag = "100",
+    Description = "How many to show (client-side only).",
+})
+Visual:createButton({
+    Name = "Add Fake Seed",
+    Description = "Inject a seed into the local inventory view.",
+    Callback = function()
+        local data = ensureInventoryPath()
+        if not data then
+            visualNotify("Player state not ready yet")
+            return
+        end
+        local name = tostring(Library.Flags["visualSeedName"] or "")
+        local count = tonumber(Library.Flags["visualSeedCount"]) or 1
+        if name == "" then
+            visualNotify("Enter a seed name first")
+            return
+        end
+        pcall(function()
+            data.Inventory.Seeds = data.Inventory.Seeds or {}
+            data.Inventory.Seeds[name] = (data.Inventory.Seeds[name] or 0) + count
+        end)
+        fakeInjected["seed:" .. name] = true
+        visualNotify("Fake seed added: " .. name .. " x" .. count)
+    end,
+})
+
+Visual:createLabel({ Name = "Fake Pets", Special = true })
+Visual:createInputBox({
+    Name = "Pet Type",
+    flagName = "visualPetType",
+    Flag = "Cat",
+    Description = "Pet species to add to the local inventory.",
+})
+Visual:createInputBox({
+    Name = "Pet Count",
+    flagName = "visualPetCount",
+    Flag = "5",
+    Description = "How many to show (client-side only).",
+})
+Visual:createButton({
+    Name = "Add Fake Pet",
+    Description = "Inject pets into the local inventory view.",
+    Callback = function()
+        local data = ensureInventoryPath()
+        if not data then
+            visualNotify("Player state not ready yet")
+            return
+        end
+        local ptype = tostring(Library.Flags["visualPetType"] or "")
+        local count = tonumber(Library.Flags["visualPetCount"]) or 1
+        if ptype == "" then
+            visualNotify("Enter a pet type first")
+            return
+        end
+        pcall(function()
+            data.Inventory.Pets = data.Inventory.Pets or {}
+            for _ = 1, count do
+                data.Inventory.Pets[#data.Inventory.Pets + 1] = { PetType = ptype, Name = ptype }
+            end
+        end)
+        fakeInjected["pet:" .. ptype] = true
+        visualNotify("Fake pet added: " .. ptype .. " x" .. count)
+    end,
+})
+
+Visual:createLabel({ Name = "Reset", Special = true })
+Visual:createButton({
+    Name = "Reset All Visuals",
+    Description = "Clear injected fake values (server sync would do it anyway).",
+    Callback = function()
+        local data = localReplicaData()
+        if data then
+            pcall(function()
+                data.Sheckles = fakeInjected["sheckles"] or 0
+            end)
+        end
+        fakeInjected = {}
+        visualNotify("Visuals reset - waiting for server sync")
+    end,
+})
+
+-- ================================================================
 -- BACKGROUND LOOPS
 -- ================================================================
 
@@ -5622,4 +5774,4 @@ print(
         .. " | FruitCalc: "
         .. tostring(FruitValueCalc ~= nil)
 )
-notify("GAG2", "8 tabs loaded - Value ESP", "info")
+notify("GAG2", "9 tabs loaded - Value ESP", "info")
