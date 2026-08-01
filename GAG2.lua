@@ -1423,8 +1423,22 @@ end
 local function getSoilAreas(plot)
     local areas = {}
     for _, p in ipairs(CollectionService:GetTagged("PlantArea")) do
-        if p:IsA("BasePart") and p:IsDescendantOf(plot) and p.Size.X * p.Size.Z > 400 then
+        if p:IsA("BasePart") and p:IsDescendantOf(plot) then
             areas[#areas + 1] = p
+        end
+    end
+    if #areas == 0 then
+        for _, desc in ipairs(plot:GetDescendants()) do
+            if desc:IsA("BasePart") and desc:GetAttribute("PlantArea") then
+                areas[#areas + 1] = desc
+            end
+        end
+    end
+    if #areas == 0 then
+        for _, p in ipairs(CollectionService:GetTagged("GardenTotalArea")) do
+            if p:IsA("BasePart") and p:IsDescendantOf(plot) then
+                areas[#areas + 1] = p
+            end
         end
     end
     if #areas == 0 then
@@ -1482,16 +1496,16 @@ end
 
 local function getPlantSlots(plot, pattern)
     pattern = pattern or "Fill"
-    local stepSpacing = 6
+    local stepSpacing = 3
     local seen, list = {}, {}
     for _, area in ipairs(getSoilAreas(plot)) do
         local cf = area.CFrame
         local size = area.Size
         local topY = area.Position.Y + size.Y / 2 + 0.3
-        local halfExtentX = size.X / 2 - 3
-        local halfExtentZ = size.Z / 2 - 3
-        local gridCountX = math.floor((2 * halfExtentX) / stepSpacing)
-        local gridCountZ = math.floor((2 * halfExtentZ) / stepSpacing)
+        local halfExtentX = size.X / 2 - 1.5
+        local halfExtentZ = size.Z / 2 - 1.5
+        local gridCountX = math.max(0, math.floor((2 * halfExtentX) / stepSpacing))
+        local gridCountZ = math.max(0, math.floor((2 * halfExtentZ) / stepSpacing))
         for ix = 0, gridCountX do
             for iz = 0, gridCountZ do
                 local w = (cf * CFrame.new(-halfExtentX + ix * stepSpacing, 0, -halfExtentZ + iz * stepSpacing)).Position
@@ -1509,7 +1523,7 @@ local function getPlantSlots(plot, pattern)
                     keep = gx % 2 == 0 and gz % 2 == 0
                 end
                 if keep then
-                    local key = math.floor(w.X / 4 + 0.5) .. "," .. math.floor(w.Z / 4 + 0.5)
+                    local key = math.floor(w.X / stepSpacing + 0.5) .. "," .. math.floor(w.Z / stepSpacing + 0.5)
                     if not seen[key] then
                         seen[key] = true
                         list[#list + 1] = Vector3.new(w.X, topY, w.Z)
@@ -1543,7 +1557,7 @@ local function getOpenSlots(plot, pattern, sortPos)
         for _, pos in ipairs(grid) do
             local clear = true
             for _, occ in ipairs(occupiedPositions) do
-                if (Vector3.new(occ.X, 0, occ.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude < 6 then
+                if (Vector3.new(occ.X, 0, occ.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude < 2.5 then
                     clear = false
                     break
                 end
