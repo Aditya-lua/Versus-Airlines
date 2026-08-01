@@ -2268,30 +2268,10 @@ local function doPlant()
     table.sort(toPlant, function(a, b) return a < b end)
     local delay = math.max(0.02, tonumber(Library.Flags["plantDelay"]) or 0.05)
     local planted = 0
-    -- no tool equipping: the server validates the remote directly. We just pass the
-    -- matching backpack tool as the 3rd arg (kaitun fix style), or the plot as fallback
-    -- (reference hub style). Equipping per seed type made auto-plant-all spin on swaps.
-    local toolCache = {}
-    local function seedToolFor(name)
-        if toolCache[name] ~= nil then
-            return toolCache[name]
-        end
-        local tool = findToolByAttr("SeedTool", name)
-        if not tool then
-            tool = findToolByAttr("SeedTool", nil)
-        end
-        toolCache[name] = tool
-        return tool
-    end
+    -- y2k hub logic: the server only cares about the remote payload.
+    -- fire PlantSeed(pos, seedName, plot) - no tool lookup, no equipping.
     for i = 1, cap do
-        local seedName = toPlant[i]
-        local tool = seedToolFor(seedName)
-        if tool then
-            local sName = tool:GetAttribute("SeedTool") or seedName
-            netFire("Plant.PlantSeed", free[i], sName, tool)
-        else
-            netFire("Plant.PlantSeed", free[i], seedName, plot)
-        end
+        netFire("Plant.PlantSeed", free[i], toPlant[i], plot)
         planted = planted + 1
         task.wait(jitter(delay, delay * 0.15))
     end
@@ -2594,16 +2574,9 @@ local function doSprinkler()
     if not pos then
         return
     end
-    -- authoritative 4th arg: numeric plot id from plot name (game GetPlotId = name digits)
-    local plotId = tonumber(tostring(plot.Name):match("%d+")) or 1
-    local tool, toolName = findToolByAttr("Sprinkler", name)
-    if tool then
-        tool = equipTool(tool)
-    end
-    if tool then
-        -- authoritative: Fire(position, sprinklerName-from-tool-attr, equippedTool, plotId)
-        netFire("Place.PlaceSprinkler", pos, toolName or name, tool, plotId)
-    end
+    -- authoritative signature (from full deobfuscated GAG2):
+    -- Place.PlaceSprinkler:Fire(pos, sprinklerName, plot, 1) - no tool, no equipping
+    netFire("Place.PlaceSprinkler", pos, name, plot, 1)
 end
 
 local function doTrowel()
@@ -4356,6 +4329,16 @@ Automatically:createInputBox({
     Flag = "0",
     Description = "Delay between tree shovel uses.",
 })
+createIntervalToggle(
+    Automatically,
+    {
+        Name = "Auto Shovel Tree",
+        flagName = "autoShovelTree",
+        tag = "autoShovelTree",
+        delay = 3,
+        Step = doShovelTree,
+    }
+)
 
 Automatically:createLabel({ Name = "- [ Fruits Shovel ] -", Special = true })
 Automatically:createDropdown({
