@@ -1214,6 +1214,27 @@ local function getAllPetSpecies()
     return list
 end
 
+-- trowel tool names: tools carrying the "Trowel" attribute (e.g. "Basic Trowel")
+local function getTrowelList()
+    local seen = {}
+    for _, parent in ipairs(getToolParents()) do
+        for _, tool in ipairs(parent:GetChildren()) do
+            if tool:IsA("Tool") then
+                local s = tool:GetAttribute("Trowel")
+                if type(s) == "string" and s ~= "" then
+                    seen[s] = true
+                end
+            end
+        end
+    end
+    local list = {}
+    for k in pairs(seen) do
+        list[#list + 1] = k
+    end
+    table.sort(list)
+    return list
+end
+
 -- sprinkler names from the game's SprinklerData module (SprinklerName field);
 -- falls back to the tool's "Sprinkler" attribute values seen in inventory.
 local function getSprinklerList()
@@ -2733,6 +2754,9 @@ local function doSellSelective()
         return
     end
     local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
+    if not fruits then
+        return
+    end
     for uid, info in pairs(fruits) do
         if type(info) == "table" then
             local cropName = info.FruitName or info.CropName or info.SeedName or info.Name or ""
@@ -2784,6 +2808,9 @@ local function doFavorite(setFav, all)
         return
     end
     local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
+    if not fruits then
+        return
+    end
     for uid, info in pairs(fruits) do
         if type(info) == "table" then
             local match = all == true
@@ -2808,6 +2835,7 @@ local function doFavorite(setFav, all)
     end
 end
 
+local placeOneSprinkler
 local function doSprinkler()
     local playerData = getData()
     if not (playerData and playerData.Inventory and playerData.Inventory.Sprinklers) then
@@ -2848,6 +2876,44 @@ local function doSprinkler()
         DebugLog("doSprinkler", "exit: no sprinkler name found")
         return
     end
+    placeOneSprinkler(plot, name, playerData.Inventory.Sprinklers[name])
+end
+
+local function doSprinklerAll()
+    local playerData = getData()
+    if not (playerData and playerData.Inventory and playerData.Inventory.Sprinklers) then
+        return
+    end
+    local plot = myPlot()
+    if not plot then
+        return
+    end
+    if not Library.Flags["sprinklerNoTp"] then
+        nearPlot()
+    end
+    local existing = plot:FindFirstChild("Sprinklers")
+    local count = existing and #existing:GetChildren() or 0
+    if count >= 4 then
+        DebugLog("doSprinklerAll", "exit: already " .. count .. " sprinklers (>=4)")
+        return
+    end
+    local placed = 0
+    for sname, sval in pairs(playerData.Inventory.Sprinklers) do
+        if type(sname) == "string" and placeOneSprinkler(plot, sname, sval) then
+            placed = placed + 1
+            task.wait(tonumber(Library.Flags["sprinklerDelay"]) or 0)
+            local re = plot:FindFirstChild("Sprinklers")
+            if re and #re:GetChildren() >= 4 then
+                break
+            end
+        end
+    end
+    DebugLog("doSprinklerAll", "done", "placed=" .. placed)
+end
+
+-- place a single sprinkler of the given name inside the plot; returns true on fire
+placeOneSprinkler = function(plot, name, ownedCount)
+    local existing = plot:FindFirstChild("Sprinklers")
     local existingPts = {}
     if existing then
         for _, sp in ipairs(existing:GetChildren()) do
@@ -2866,7 +2932,6 @@ local function doSprinkler()
         if not cand and plants then
             local kids = plants:GetChildren()
             if #kids > 0 then
-                -- prefer placing near a random plant (coverage) then snap to soil
                 local ok3, ppos = pcall(function()
                     return kids[math.random(#kids)]:GetPivot().Position
                 end)
@@ -2894,8 +2959,8 @@ local function doSprinkler()
         end
     end
     if not pos then
-        DebugLog("doSprinkler", "exit: no position resolved")
-        return
+        DebugLog("doSprinkler", "exit: no position resolved", "name=" .. tostring(name))
+        return false
     end
     -- authoritative signature (from game dump SprinklerController.TryPlace):
     -- Place.PlaceSprinkler:Fire(position, tool:SprinklerAttr, equippedTool, plotId)
@@ -2903,17 +2968,18 @@ local function doSprinkler()
     local sTool, sAttr = findToolByAttr("Sprinkler", name)
     if not sTool then
         DebugLog("doSprinkler", "exit: no sprinkler tool found", "want=" .. tostring(name))
-        return
+        return false
     end
     sTool = equipTool(sTool)
     if not sTool then
         DebugLog("doSprinkler", "exit: sprinkler equip failed", tostring(sAttr))
-        return
+        return false
     end
     sAttr = sTool:GetAttribute("Sprinkler") or sAttr
     local plotId = tonumber(tostring(plot.Name):match("%d+"))
     netFire("Place.PlaceSprinkler", pos, sAttr, sTool, plotId or 0)
-    DebugLog("doSprinkler", "fire", sAttr, "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z), "plotId=" .. tostring(plotId))
+    DebugLog("doSprinkler", "fire", sAttr, "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z), "plotId=" .. tostring(plotId), "owned=" .. tostring(ownedCount))
+    return true
 end
 
 local function doTrowel()
@@ -2943,6 +3009,15 @@ local function doTrowel()
         return
     end
     local moved = 0
+    -- server rejects MovePlant unless a trowel tool is equipped (SpeedHub X confirmed)
+    local trowelTool = findToolByAttr("Trowel", firstValue(Library.Flags["trowelSelect"] or {}))
+    if trowelTool then
+        trowelTool = equipTool(trowelTool)
+    end
+    if not trowelTool then
+        DebugLog("doTrowel", "exit: no trowel tool equipped")
+        return
+    end
     for _, pl in ipairs(plants:GetChildren()) do
         local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
         if (not target) or (crop and crop:lower() == target:lower()) then
@@ -4600,6 +4675,12 @@ Automatically:createDropdown({
     Description = "Which plant type to trowel/dig up.",
 })
 Automatically:createDropdown({
+    Name = "Select Trowel",
+    flagName = "trowelSelect",
+    List = getTrowelList(),
+    Description = "Which trowel tool to equip (server rejects moves without one).",
+})
+Automatically:createDropdown({
     Name = "Select Position",
     flagName = "trowelPos",
     List = { "Saved Position", "Random", "Player Position" },
@@ -5747,8 +5828,7 @@ task.spawn(function()
             end
             if Library.Flags["antiFling"] then
                 doAntiFling()
-            end
-            if Library.Flags["bypassPause"] then
+            end            if Library.Flags["bypassPause"] then
                 doBypassPause()
             end
             if Library.Flags["noclipPlants"] then
@@ -5840,6 +5920,10 @@ task.spawn(function()
             -- auto water all
             if Library.Flags["autoWaterAll"] then
                 doWateringCan()
+            end
+            -- auto place all sprinklers
+            if Library.Flags["autoSprinklerAll"] then
+                doSprinklerAll()
             end
             -- auto expand garden
             if Library.Flags["autoExpand"] then
@@ -5945,6 +6029,8 @@ task.spawn(function()
             hl("homeFruit", "Fruit: " .. fc .. "/" .. mc .. invValStr)
             hl("homeTime", "Time: " .. math.floor(elapsed / 60) .. "m")
             ValueESP.update()
+        end, function(err)
+            DebugLog("mainLoop", "error", tostring(err))
         end)
     end
 end)
