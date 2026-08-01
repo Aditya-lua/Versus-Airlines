@@ -953,6 +953,18 @@ end
 local function crateStock()
     return stockItems("CrateShop")
 end
+local function rareSeedInStock()
+    local stockParent = seedStock()
+    if not stockParent then
+        return false
+    end
+    for _, stockValue in ipairs(stockParent:GetChildren()) do
+        if stockValue:IsA("ValueBase") and stockValue.Value > 0 and (SeedPrice[stockValue.Name] or 0) >= 5000 then
+            return true, stockValue.Name
+        end
+    end
+    return false
+end
 
 -- formatting
 local function fmtCash(n)
@@ -2192,7 +2204,17 @@ local function doPlant()
         hasFilter = false -- Auto Plant All ignores the seed dropdown entirely
     end
     local toPlant = {}
-    for name, count in pairs(seeds) do
+    if Library.Flags["smartReplant"] then
+        -- plant only the most profitable seed you own (reference hub behavior)
+        local best = getBestSeed()
+        if best then
+            local keep = Library.Flags["seedReserve"] and (tonumber(Library.Flags["reserveCount"]) or 0) or 0
+            for _ = 1, math.min(math.max(0, (seeds[best] or 0) - keep), tonumber(Library.Flags["maxPerCycle"]) or 80) do
+                toPlant[#toPlant + 1] = best
+            end
+        end
+    else
+        for name, count in pairs(seeds) do
             if hasFilter then
                 local match = false
                 if type(seedFilter) == "table" then
@@ -2218,6 +2240,7 @@ local function doPlant()
                     toPlant[#toPlant + 1] = name
                 end
             end
+        end
     end
     if #toPlant == 0 then
         return
@@ -2400,6 +2423,13 @@ local function doSteal()
                 end
             end
             netFire("Steal.CompleteSteal")
+            -- multi-carry: fire CompleteSteal N times so the server registers several fruits
+            -- in the same steal session (reference hub behavior; server counts each completion)
+            local mult = math.max(1, tonumber(Library.Flags["stealMult"]) or 1)
+            for _ = 2, mult do
+                netFire("Steal.CompleteSteal")
+                task.wait(0.05)
+            end
             task.wait(jitter(tonumber(Library.Flags["stealDelay"]) or 0.25, 0.05))
             if Library.Flags["autoStealBest"] or mode == "Best" then
                 break
@@ -3032,6 +3062,27 @@ local function doBypassPause()
     end
 end
 
+-- rare seed restock notify
+local _rareNotified = {}
+local function doRareNotify()
+    local stockParent = seedStock()
+    if not stockParent then
+        return
+    end
+    for _, stockValue in ipairs(stockParent:GetChildren()) do
+        if stockValue:IsA("ValueBase") then
+            local inStock = stockValue.Value > 0
+            if inStock and not _rareNotified[stockValue.Name] and (SeedPrice[stockValue.Name] or 0) >= 5000 then
+                notify("Rare Seed In Stock", stockValue.Name .. " restocked (" .. stockValue.Value .. "x)")
+                sendWebhook("Rare Seed In Stock", stockValue.Name .. " (" .. stockValue.Value .. "x)", 12255232)
+                _rareNotified[stockValue.Name] = true
+            elseif not inStock then
+                _rareNotified[stockValue.Name] = nil
+            end
+        end
+    end
+end
+
 -- anti-fling
 local function doAntiFling()
     local rootPart = getHRP()
@@ -3431,6 +3482,7 @@ local SAVE_FILE = "GAG2_Settings.json"
 local PERSISTENT_FLAGS = {
     "autoPlant",
     "autoPlantAll",
+    "smartReplant",
     "plantNoTp",
     "plantSeeds",
     "plantPattern",
@@ -3464,6 +3516,7 @@ local PERSISTENT_FLAGS = {
     "stealRarity",
     "stealMutation",
     "stealDelay",
+    "stealMult",
     "stealReturn",
     "lockNight",
     "hitStolen",
@@ -3605,6 +3658,8 @@ local PERSISTENT_FLAGS = {
     "espFruitValue",
     "espTotalValue",
     "espBaseValueOnly",
+    "rareNotify",
+    "autoHopRare",
     "espInvValue",
     "autoSave",
 }
@@ -3810,6 +3865,12 @@ createIntervalToggle(
     Main,
     { Name = "Auto Plant All Seeds", flagName = "autoPlantAll", tag = "autoPlantAll", delay = 1.2, Step = doPlant }
 )
+Main:createToggle({
+    Name = "Smart Replant",
+    Flag = false,
+    flagName = "smartReplant",
+    Description = "Plant only the most profitable seed you own.",
+})
 
 -- Automation Collection
 Main:createLabel({ Name = "Automation Collection", Special = true })
@@ -3982,6 +4043,14 @@ Main:createInputBox({
     flagName = "stealDelay",
     Flag = "0.3",
     Description = "Seconds between BeginSteal and CompleteSteal.",
+})
+Main:createSlider({
+    Name = "Fruits Per Steal",
+    flagName = "stealMult",
+    Flag = 1,
+    Min = 1,
+    Max = 10,
+    Description = "Fire CompleteSteal N times to carry multiple fruits per steal.",
 })
 createIntervalToggle(
     Main,
@@ -4742,6 +4811,12 @@ Misc:createToggle({
     flagName = "espBaseValueOnly",
     Description = "Value ESP shows base price only (ignores weight and mutations).",
 })
+Misc:createToggle({
+    Name = "Rare Seed Restock Alert",
+    Flag = false,
+    flagName = "rareNotify",
+    Description = "Notify when a pricey seed hits the shop.",
+})
 Misc:createButton({
     Name = "Refresh ESP Lists",
     Description = "Update ESP dropdowns.",
@@ -5072,6 +5147,17 @@ Settings:createButton({
         end)
     end,
 })
+createIntervalToggle(Settings, {
+    Name = "Auto Hop Until Rare Seed",
+    flagName = "autoHopRare",
+    tag = "autoHopRare",
+    delay = 20,
+    Step = function()
+        if not rareSeedInStock() then
+            serverHop(false)
+        end
+    end,
+})
 Settings:createLabel({ Name = "Configuration", Special = true })
 Settings:createButton({
     Name = "Save Settings",
@@ -5148,6 +5234,9 @@ task.spawn(function()
         pcall(function()
             if Library.Flags["hitStolen"] then
                 doRetaliateShovel()
+            end
+            if Library.Flags["rareNotify"] then
+                doRareNotify()
             end
             if Library.Flags["antiFling"] then
                 doAntiFling()
