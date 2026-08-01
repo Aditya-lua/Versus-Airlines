@@ -2198,9 +2198,9 @@ local function doHarvest(forceAll)
     elseif Library.Flags["enableFilters"] and mode ~= "Best" then
         mode = "Filtered"
     end
-
     local targets = getRipeCrops()
     if #targets == 0 and next(fruitData) then
+        DebugLog("doHarvest", "no ripe crop models, fallback fruitData=" .. tostring(next(fruitData) ~= nil))
         for fruitId, fd in pairs(fruitData) do
             if fd.grown and fd.plantId then
                 local cropName = fd.name or ""
@@ -2242,6 +2242,7 @@ local function doHarvest(forceAll)
     end
 
     if #targets > 0 then
+        DebugLog("doHarvest", "mode=" .. mode, "targets=" .. #targets)
         local plot = myPlot()
         local ref = plot and plot:FindFirstChild("PlotSizeReference")
         local rootPart = getHRP()
@@ -2272,6 +2273,11 @@ local function doHarvest(forceAll)
                 task.wait(jitter(tonumber(Library.Flags["collectDelay"]) or 0.05, 0.02))
             end
         end
+    elseif not forceAll then
+        DebugLog("doHarvest", "no targets", "ripe=" .. #targets, "fruitData=" .. tostring(next(fruitData) ~= nil))
+    end
+    if collected > 0 then
+        DebugLog("doHarvest", "collected=" .. collected, "mode=" .. mode)
     end
     return collected
 end
@@ -2707,10 +2713,19 @@ end
 local function doSprinkler()
     local playerData = getData()
     if not (playerData and playerData.Inventory and playerData.Inventory.Sprinklers) then
+        DebugLog("doSprinkler", "exit: no Inventory.Sprinklers data", "invKeys=" .. (playerData and playerData.Inventory and type(playerData.Inventory) == "table" and (function()
+            local ks = {}
+            for k in pairs(playerData.Inventory) do
+                ks[#ks + 1] = tostring(k)
+            end
+            table.sort(ks)
+            return table.concat(ks, ",")
+        end)() or "nil"))
         return
     end
     local plot = myPlot()
     if not plot then
+        DebugLog("doSprinkler", "exit: no plot")
         return
     end
     if not Library.Flags["sprinklerNoTp"] then
@@ -2719,6 +2734,7 @@ local function doSprinkler()
     local existing = plot:FindFirstChild("Sprinklers")
     local count = existing and #existing:GetChildren() or 0
     if count >= 4 then
+        DebugLog("doSprinkler", "exit: already " .. count .. " sprinklers (>=4)")
         return
     end
     local name = firstValue(Library.Flags["sprinklerSelect"] or {})
@@ -2731,6 +2747,7 @@ local function doSprinkler()
         end
     end
     if not name then
+        DebugLog("doSprinkler", "exit: no sprinkler name found")
         return
     end
     local existingPts = {}
@@ -2779,21 +2796,25 @@ local function doSprinkler()
         end
     end
     if not pos then
+        DebugLog("doSprinkler", "exit: no position resolved")
         return
     end
     -- authoritative signature (from full deobfuscated GAG2):
     -- Place.PlaceSprinkler:Fire(pos, sprinklerName, plot, 1) - no tool, no equipping
     netFire("Place.PlaceSprinkler", pos, name, plot, 1)
+    DebugLog("doSprinkler", "fire", name, "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z))
 end
 
 local function doTrowel()
     local plot = myPlot()
     if not plot then
+        DebugLog("doTrowel", "exit: no plot")
         return
     end
     nearPlot()
     local plants = plot:FindFirstChild("Plants")
     if not plants then
+        DebugLog("doTrowel", "exit: no Plants folder")
         return
     end
     local target = firstValue(Library.Flags["trowelPlant"] or {})
@@ -2807,18 +2828,22 @@ local function doTrowel()
         end
     end
     if not pos then
+        DebugLog("doTrowel", "exit: no position resolved")
         return
     end
+    local moved = 0
     for _, pl in ipairs(plants:GetChildren()) do
         local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
         if (not target) or (crop and crop:lower() == target:lower()) then
             local plantId = pl:GetAttribute("PlantId") or pl:GetAttribute("Id") or pl.Name
             if plantId then
                 netFire("Trowel.MovePlant", tostring(plantId), pos, 0)
+                moved = moved + 1
                 task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
             end
         end
     end
+    DebugLog("doTrowel", "done", "moved=" .. moved)
 end
 
 local function doWateringCan()
