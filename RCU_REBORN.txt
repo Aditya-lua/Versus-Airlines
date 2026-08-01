@@ -663,6 +663,8 @@ TitleService = safeGetKnitService("TitleService")
 TotemService = safeGetKnitService("TotemService")
 SummerService = safeGetKnitService("SummerService")
 CoconutIslandService = safeGetKnitService("CoconutIslandService")
+TapSkinService = safeGetKnitService("TapSkinService")
+SupremeAltarService = safeGetKnitService("SupremeAltarService")
 
 -- Controllers
 DataController = safeGetKnitController("DataController")
@@ -690,6 +692,8 @@ InventoryController = safeGetKnitController("InventoryController")
 TotemController = safeGetKnitController("TotemController")
 SeasonController = safeGetKnitController("SeasonController")
 ShopController = safeGetKnitController("ShopController")
+ClanController = safeGetKnitController("ClanController")
+ExclusiveEggController = safeGetKnitController("ExclusiveEggController")
 
 TeleportFrameComponent = nil
 
@@ -6516,6 +6520,501 @@ function resolveBestEgg(selectedEgg, eggOptions, displayToEggName)
 end
 
 
+-- Quest Machine helpers
+
+function claimQuestMachineRewardsStep()
+    local data = getData()
+    if not data or type(data.questMachineRewards) ~= "table" then return end
+    local rewardsList = safeRequirePath(ReplicatedStorage, { "Shared", "List", "QuestMachine", "QuestMachineRewards" }, "QuestMachine.Rewards") or {}
+    local xp = tonumber(data.questMachineXp) or 0
+    for index, tier in ipairs(rewardsList) do
+        if type(tier) == "table" and tonumber(tier.required) and xp >= tonumber(tier.required) then
+            if not table.find(data.questMachineRewards, index) then
+                safeServiceCall(QuestService, "claimQuestMachineReward", index)
+                task.wait(0.3)
+            end
+        end
+    end
+end
+
+-- Clan helpers
+
+function getClanAchievementOptions()
+    local options, map = {}, {}
+    local achievements = safeRequirePath(ReplicatedStorage, { "Shared", "List", "Clans", "ClanAchievements" }, "Clans.ClanAchievements") or {}
+    for questId, entry in pairs(achievements) do
+        if type(entry) == "table" and type(entry.list) == "table" and #entry.list > 0 then
+            local display = tostring(entry.name or questId) .. " (" .. tostring(questId) .. ")"
+            table.insert(options, display)
+            map[display] = questId
+        end
+    end
+    table.sort(options)
+    return options, map
+end
+
+function getAchievementProgress(data, questId)
+    local progress = 0
+    pcall(function()
+        local values = data and data.achievements and data.achievements[questId]
+        if type(values) == "table" then
+            for _, value in values do
+                progress = progress + (tonumber(value) or 0)
+            end
+        elseif type(values) == "number" then
+            progress = values
+        end
+    end)
+    return progress
+end
+
+function autoClaimClanAchievementsStep()
+    local selected = readSelectedDropdownValues(Library.Flags["SelectedClanAchievements"])
+    if #selected == 0 then return end
+    local _, achievementMap = getClanAchievementOptions()
+    local achievements = safeRequirePath(ReplicatedStorage, { "Shared", "List", "Clans", "ClanAchievements" }, "Clans.ClanAchievements") or {}
+    local data = getData()
+    if not data then return end
+
+    for _, displayName in ipairs(selected) do
+        local questId = achievementMap[displayName]
+        local entry = questId and achievements[questId]
+        if type(entry) == "table" then
+            local firstTier = type(entry.list) == "table" and entry.list[1]
+            local required = tonumber(firstTier and firstTier.amount) or 0
+            if required > 0 and getAchievementProgress(data, questId) >= required then
+                local result, err = safeServiceCall(ClanService, "claimAchievement", questId)
+                if serviceCallSucceeded(result, err) then
+                    task.wait(0.3)
+                end
+            end
+        end
+    end
+end
+
+function autoClaimClanPrestigeStep()
+    local data = getData()
+    if not data or not data.clanId then return end
+    local ok, clanData = pcall(function()
+        return ClanService and ClanService:getClanData(data.clanId)
+    end)
+    if not ok or type(clanData) ~= "table" then return end
+    local prestiges = safeRequirePath(ReplicatedStorage, { "Shared", "List", "Clans", "ClanPrestiges" }, "Clans.ClanPrestiges") or {}
+    local current = tonumber(clanData.prestige) or 0
+    local nextTier = prestiges[current + 1]
+    if type(nextTier) == "table" and tonumber(nextTier.required) then
+        local xp = tonumber(clanData.prestigeXp) or 0
+        if xp >= tonumber(nextTier.required) then
+            safeServiceCall(ClanService, "claimPrestige")
+        end
+    end
+end
+
+function activateClanWeatherStep()
+    local ok, cache = pcall(function()
+        return ClanController and ClanController:getClanCache()
+    end)
+    if not ok or type(cache) ~= "table" then return end
+    local lastActivation = tonumber(cache.events and cache.events.weather) or 0
+    if getServerTimeNowSafe() - lastActivation < 86400 then return end
+    local result, err = safeServiceCall(ClanService, "activateClanWeather")
+    if serviceCallSucceeded(result, err) then
+        pcall(function()
+            ClanController:setClanCache({ ["update"] = false })
+        end)
+    end
+end
+
+function claimGrowYourTutelPetStep()
+    local data = getData()
+    if not data then return end
+    local given = false
+    pcall(function() given = data.growYourTutelGivenPet == true end)
+    if not given then
+        safeServiceCall(RewardService, "claimGrowYourTutelPet")
+    end
+end
+
+function autoSpinClanBoostWheelStep()
+    local data = getData()
+    if not data then return end
+    local lastSpin = tonumber(data.clanBoostWheelSpin) or 0
+    if getServerTimeNowSafe() - lastSpin < 86400 then return end
+    safeServiceCall(ClanService, "clanBoostWheelSpin")
+end
+
+-- Pet Adventure helpers
+
+function getPetAdventureDurationsList()
+    return safeRequirePath(ReplicatedStorage, { "Shared", "List", "PetAdventureDurations" }, "PetAdventureDurations") or {}
+end
+
+function getPetAdventureTimeLeft(adventure)
+    if type(adventure) ~= "table" then return math.huge end
+    local durations = getPetAdventureDurationsList()
+    local durationDef = durations[adventure.durationId] or durations[tonumber(adventure.durationId)]
+    if not durationDef or not tonumber(durationDef.duration) then return math.huge end
+    local startedAt = (adventure.petAdventureData and adventure.petAdventureData.startedAt) or adventure.startedAt
+    if not tonumber(startedAt) then return 0 end
+    return tonumber(durationDef.duration) - (getServerTimeNowSafe() - tonumber(startedAt))
+end
+
+function canPetBeUsedInAdventure(petObject)
+    if not petObject then return false end
+    local utils = Util and Util.petAdventureUtils
+    if utils and type(utils.canUsePet) == "function" then
+        local ok, result = pcall(function() return utils.canUsePet(petObject) end)
+        if ok and result == false then return false end
+    end
+    return true
+end
+
+function getPetAdventureMaxPets()
+    local data = getData()
+    if Values and type(Values.adventureMaxPetsAmount) == "function" then
+        local ok, amount = pcall(function() return Values.adventureMaxPetsAmount(client, data) end)
+        if ok and tonumber(amount) then return math.max(1, math.floor(tonumber(amount))) end
+    end
+    return 5
+end
+
+function buildPetAdventurePetsTable(data)
+    local pets = {}
+    local maxPets = getPetAdventureMaxPets()
+    local used = {}
+    if type(data.petAdventures2) == "table" then
+        for _, adventure in pairs(data.petAdventures2) do
+            if type(adventure) == "table" and type(adventure.pets) == "table" then
+                for petId, amount in pairs(adventure.pets) do
+                    used[petId] = (used[petId] or 0) + (tonumber(amount) or 0)
+                end
+            end
+        end
+    end
+
+    local candidates = {}
+    if type(data.inventory) == "table" and type(data.inventory.pet) == "table" then
+        for petId, rawPet in pairs(data.inventory.pet) do
+            local petObject = getPetObjectFromId(data, petId)
+            if petObject and canPetBeUsedInAdventure(petObject) then
+                local available = (tonumber(getPetStackAmountFromObject(petObject, rawPet)) or 0) - (used[petId] or 0)
+                if available > 0 then
+                    table.insert(candidates, {
+                        id = petId,
+                        score = getPetMultiplierScore(data, petObject),
+                        available = available,
+                    })
+                end
+            end
+        end
+    end
+    table.sort(candidates, function(a, b) return a.score > b.score end)
+
+    local total = 0
+    for _, candidate in ipairs(candidates) do
+        if total >= maxPets then break end
+        local count = math.min(candidate.available, maxPets - total)
+        pets[candidate.id] = (pets[candidate.id] or 0) + count
+        total = total + count
+    end
+    return pets
+end
+
+function getUnlockedPetAdventureDuration(data)
+    local durations = getPetAdventureDurationsList()
+    local upgrades = type(data.petAdventureUpgrades) == "table" and data.petAdventureUpgrades or {}
+    local unlockedMax = 1 + (tonumber(upgrades.adventureDuration) or 0)
+    local best = 1
+    for id, def in ipairs(durations) do
+        if id <= unlockedMax and def then best = id end
+    end
+    return best
+end
+
+function autoClaimPetAdventuresStep()
+    local data = getData()
+    if not data or type(data.petAdventures2) ~= "table" then return end
+    for adventureId, adventure in pairs(data.petAdventures2) do
+        if type(adventure) == "table" and getPetAdventureTimeLeft(adventure) <= 0 then
+            safeServiceCall(PetService, "claimPetAdventure", adventureId)
+            task.wait(0.3)
+        end
+    end
+end
+
+function autoStartPetAdventureStep()
+    local data = getData()
+    if not data or not data.inventory then return end
+    autoClaimPetAdventuresStep()
+
+    local slots = 1
+    local upgrades = type(data.petAdventureUpgrades) == "table" and data.petAdventureUpgrades or {}
+    if upgrades.adventureSlots then slots = slots + (tonumber(upgrades.adventureSlots) or 0) end
+    if Util and Util.masteryUtils and type(Util.masteryUtils.getTier) == "function" then
+        local ok, tier = pcall(function() return Util.masteryUtils.getTier(data, "paradoxMastery") end)
+        if ok and tonumber(tier) and tonumber(tier) >= 300 then slots = slots + 1 end
+    end
+
+    local currentCount = 0
+    if type(data.petAdventures2) == "table" then
+        for _ in pairs(data.petAdventures2) do currentCount = currentCount + 1 end
+    end
+    if currentCount >= slots then return end
+
+    local pets = buildPetAdventurePetsTable(data)
+    if next(pets) == nil then return end
+    safeServiceCall(PetService, "startPetAdventure", getUnlockedPetAdventureDuration(data), pets)
+end
+
+function cancelAllPetAdventuresStep()
+    local data = getData()
+    if not data or type(data.petAdventures2) ~= "table" then return end
+    for adventureId in pairs(data.petAdventures2) do
+        safeServiceCall(PetService, "cancelPetAdventure", adventureId)
+        task.wait(0.3)
+    end
+end
+
+function buyPetAdventureUpgradesStep()
+    local data = getData()
+    if not data then return end
+    local upgradesList = safeRequirePath(ReplicatedStorage, { "Shared", "List", "PetAdventureUpgrades" }, "PetAdventureUpgrades") or {}
+    local owned = type(data.petAdventureUpgrades) == "table" and data.petAdventureUpgrades or {}
+    for upgradeKey, def in pairs(upgradesList) do
+        if type(def) == "table" and type(def.upgrades) == "table" then
+            local level = tonumber(owned[upgradeKey]) or 0
+            local nextUpgrade = def.upgrades[level + 1]
+            if nextUpgrade and nextUpgrade.cost then
+                local costAmount = 0
+                pcall(function() costAmount = tonumber(nextUpgrade.cost:getAmount()) or 0 end)
+                if costAmount > 0 then
+                    local costName = ""
+                    pcall(function() costName = tostring(nextUpgrade.cost:getName()) end)
+                    if costName ~= "" and getAnyNumberFromData(data, { costName }) >= costAmount then
+                        safeServiceCall(PetService, "buyPetAdventureUpgrade", upgradeKey)
+                        task.wait(0.3)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Tap Skins / Tap Orbs helpers
+
+function getTapOrbOptions()
+    local options = {}
+    local orbs = safeRequirePath(ReplicatedStorage, { "Shared", "List", "Items", "TapOrbs" }, "Items.TapOrbs") or {}
+    for orbId, def in pairs(orbs) do
+        if type(def) == "table" then
+            table.insert(options, tostring(def.name or orbId) .. " (" .. tostring(orbId) .. ")")
+        end
+    end
+    table.sort(options)
+    return options
+end
+
+function getOwnedTapOrbs(data)
+    local owned = {}
+    if not data or type(data.inventory) ~= "table" then return owned end
+    local orbs = data.inventory.tapOrb or data.inventory.tapOrbs
+    if type(orbs) ~= "table" then return owned end
+    for itemId, rawItem in pairs(orbs) do
+        local amount = 1
+        if type(rawItem) == "table" then
+            amount = tonumber(rawItem.am or rawItem.amount or rawItem.Amount) or 1
+        end
+        if amount > 0 then owned[itemId] = amount end
+    end
+    return owned
+end
+
+function openOwnedTapOrbsStep()
+    local owned = getOwnedTapOrbs(getData())
+    for orbId in pairs(owned) do
+        safeServiceCall(TapSkinService, "openTapOrb", orbId)
+        task.wait(0.3)
+    end
+end
+
+function getTapSkinOptions()
+    local options, map = {}, {}
+    local skins = safeRequirePath(ReplicatedStorage, { "Shared", "List", "Items", "TapSkins" }, "Items.TapSkins") or {}
+    for skinId, def in pairs(skins) do
+        if type(def) == "table" then
+            local display = tostring(def.name or skinId) .. " (" .. tostring(def.rarity or "?") .. ")"
+            table.insert(options, display)
+            map[display] = skinId
+        end
+    end
+    table.sort(options)
+    return options, map
+end
+
+function forgeSelectedTapSkinsStep()
+    local selected = readSelectedDropdownValues(Library.Flags["SelectedTapSkinsToForge"])
+    if #selected == 0 then return end
+    local _, skinMap = getTapSkinOptions()
+    local skins = safeRequirePath(ReplicatedStorage, { "Shared", "List", "Items", "TapSkins" }, "Items.TapSkins") or {}
+    local data = getData()
+    if not data then return end
+    local equippedId = data.equippedTapSkin
+
+    for _, displayName in ipairs(selected) do
+        local skinId = skinMap[displayName]
+        if skinId and skinId ~= equippedId then
+            local def = skins[skinId]
+            local forgePoints = tonumber(def and def.forgePoints) or 0
+            if forgePoints > 0 then
+                local owned = getInventoryItemAmountByName(skinId, "tapSkin")
+                if owned <= 0 then owned = getInventoryItemAmountByName(tostring(def and def.name or ""), "tapSkin") end
+                local amount = math.floor(owned * forgePoints / 10)
+                if amount >= 1 then
+                    local result, err = safeServiceCall(TapSkinService, "forgeTapSkin", skinId, amount)
+                    if serviceCallSucceeded(result, err) then
+                        task.wait(0.5)
+                    end
+                end
+            end
+        end
+    end
+end
+
+function equipBestTapSkinStep()
+    local data = getData()
+    if not data then return end
+    local equippedId = data.equippedTapSkin
+    local skins = safeRequirePath(ReplicatedStorage, { "Shared", "List", "Items", "TapSkins" }, "Items.TapSkins") or {}
+    local bestId, bestScore = nil, 0
+    for skinId, def in pairs(skins) do
+        if skinId ~= equippedId and type(def) == "table" then
+            local score = tonumber(def.multipliers and def.multipliers.clicks) or 0
+            if score > bestScore then
+                local itemId = findInventoryItemByNameMatch(tostring(def.name or skinId))
+                if itemId then bestId, bestScore = itemId, score end
+            end
+        end
+    end
+    if bestId then
+        safeServiceCall(InventoryService, "useItem", bestId, { use = 1 })
+    end
+end
+
+-- Supreme Altar helpers
+
+function sacrificeSupremeAltarPetsStep()
+    local data = getData()
+    if not data or not data.inventory or type(data.inventory.pet) ~= "table" then return 0 end
+    local reserved = buildReservedPetCountsForOtherModes(data, nil)
+    local sacrificed = 0
+
+    for petId in pairs(data.inventory.pet) do
+        if (tonumber(reserved[petId]) or 0) <= 0 then
+            local petObject = getPetObjectFromId(data, petId)
+            if petObject then
+                local special = nil
+                pcall(function() special = petObject.getSpecial and petObject:getSpecial() end)
+                local untradeable = false
+                pcall(function() untradeable = petObject.isUntradeable and petObject:isUntradeable() == true end)
+                if (special == 1 or special == 1.1) and not untradeable then
+                    local result, err = safeServiceCall(SupremeAltarService, "sacrificePet", petId)
+                    if serviceCallSucceeded(result, err) then
+                        sacrificed = sacrificed + 1
+                        task.wait(0.5)
+                        if sacrificed >= 5 then return sacrificed end
+                    end
+                end
+            end
+        end
+    end
+
+    return sacrificed
+end
+
+-- Exclusive egg helpers
+
+function openOwnedExclusiveEggsStep()
+    local data = getData()
+    if not data or type(data.inventory) ~= "table" or type(data.inventory.exclusiveEgg) ~= "table" then return end
+
+    local limit = 0
+    pcall(function()
+        limit = ExclusiveEggController and ExclusiveEggController._playersExclusiveEggs and ExclusiveEggController._playersExclusiveEggs[client] or 0
+    end)
+    if tonumber(limit) > 32 then return end
+
+    local opened = 0
+    for eggItemId, rawItem in pairs(data.inventory.exclusiveEgg) do
+        local amount = 1
+        if type(rawItem) == "table" then
+            amount = tonumber(rawItem.am or rawItem.amount or rawItem.Amount) or 1
+        end
+        if amount > 0 then
+            local amountToOpen = 1
+            if amount >= 8 then amountToOpen = 8 elseif amount >= 3 then amountToOpen = 3 end
+            safeServiceCall(EggService, "openExclusiveEgg", eggItemId, amountToOpen)
+            opened = opened + 1
+            task.wait(0.3)
+            if opened >= 3 then return end
+        end
+    end
+end
+
+-- Paradox Merchant helpers
+
+function getParadoxMerchantOptions()
+    local options, map = {}, {}
+    local merchantList = safeRequirePath(ReplicatedStorage, { "Shared", "List", "ParadoxMerchant" }, "ParadoxMerchant") or {}
+    for i, offer in ipairs(merchantList) do
+        local name = offer.item and offer.item.nm or "Unknown"
+        local amount = offer.item and offer.item.am or 1
+        local price = offer.price or 0
+        local display = (amount > 1 and (amount .. "x " .. name) or name) .. " - " .. tostring(price) .. " compasses"
+        table.insert(options, display)
+        map[display] = { name = name, amount = amount, price = price, index = i }
+    end
+    table.sort(options)
+    return options, map
+end
+
+function getParadoxMerchantSeed(userId, slot)
+    local serverTime = getServerTimeNowSafe()
+    local hours = math.floor(serverTime / 3600) - 495000
+    return hours * math.floor((userId or 0) * 0.5) + (tonumber(slot) or 1)
+end
+
+function autoBuyParadoxMerchantStep()
+    local selected = readSelectedDropdownValues(Library.Flags["SelectedParadoxMerchantItems"])
+    if #selected == 0 then return end
+    local _, itemMap = getParadoxMerchantOptions()
+    local merchantList = safeRequirePath(ReplicatedStorage, { "Shared", "List", "ParadoxMerchant" }, "ParadoxMerchant") or {}
+    local data = getData()
+    if not data then return end
+    local bought = type(data.paradoxMerchantBought) == "table" and data.paradoxMerchantBought or {}
+    local userId = client and client.UserId or 0
+    for slot = 1, 4 do
+        local seed = getParadoxMerchantSeed(userId, slot)
+        local itemData = merchantList[Functions.getRandom and Functions.getRandom(merchantList, seed) or 1]
+        if itemData and itemData.item then
+            local merchantName = itemData.item.nm or ""
+            local merchantAmount = itemData.item.am or 1
+            for _, displayName in ipairs(selected) do
+                local selectedItem = itemMap[displayName]
+                if selectedItem and merchantName == selectedItem.name and merchantAmount == selectedItem.amount then
+                local key = tostring(seed)
+                if not bought[key] then
+                    local result, err = safeServiceCall(RewardService, "buyParadoxMerchant", slot)
+                    if serviceCallSucceeded(result, err) then
+                        task.wait(0.5)
+                    end
+                end
+                end
+            end
+        end
+    end
+end
+
+
 -- Sections / UI
 
 
@@ -9749,6 +10248,16 @@ createIntervalToggle(Main, {
     end,
 })
 
+Main:createToggle({
+    Name = "VersusAI Pathing",
+    Description = "Allows route-based pathing for farming features when available.",
+    flagName = "UseVersusAI",
+    Flag = false,
+    Callback = function(enabled)
+        print("VersusAI Pathing:", enabled and "allowed" or "disabled")
+    end,
+})
+
 Main:createLabel({ Name = "Rebirth", Special = true })
 createIntervalToggle(Main, {
     Name = "Auto Rebirth (Best)",
@@ -10474,6 +10983,131 @@ closestEggLabel = Eggs:createLabel({
     Special = true,
 })
 startClosestEggLabelUpdater()
+
+Eggs:createLabel({
+    Name = "Pet Adventures",
+    Special = true,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Claim Pet Adventures",
+    flagName = "AutoClaimPetAdventures",
+    tag = "RCU_AutoClaimPetAdventures",
+    delay = 10,
+    Step = autoClaimPetAdventuresStep,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Start Pet Adventures (best pets)",
+    flagName = "AutoStartPetAdventures",
+    tag = "RCU_AutoStartPetAdventures",
+    delay = 30,
+    Step = autoStartPetAdventureStep,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Buy Pet Adventure Upgrades (compasses)",
+    flagName = "AutoBuyPetAdventureUpgrades",
+    tag = "RCU_AutoBuyPetAdventureUpgrades",
+    delay = 15,
+    Step = buyPetAdventureUpgradesStep,
+})
+
+Eggs:createButton({
+    Name = "Cancel All Pet Adventures",
+    Warning = function() return "Cancels every running Pet Adventure. Rewards are lost." end,
+    WarnIf = function() return true end,
+    Callback = cancelAllPetAdventuresStep,
+})
+
+Eggs:createLabel({
+    Name = "Tap Skins & Orbs",
+    Special = true,
+})
+
+tapOrbDropdown = Eggs:createDropdown({
+    Name = "Tap Orbs to Open",
+    flagName = "SelectedTapOrbs",
+    List = getTapOrbOptions(),
+    Flag = {},
+    multi = true,
+    Callback = function() end,
+})
+
+Eggs:createButton({
+    Name = "Refresh Tap Orbs",
+    Callback = function()
+        tapOrbDropdown:updateList(getTapOrbOptions())
+    end,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Open Tap Orbs",
+    flagName = "AutoOpenTapOrbs",
+    tag = "RCU_AutoOpenTapOrbs",
+    delay = 6,
+    Step = openOwnedTapOrbsStep,
+})
+
+tapSkinForgeDropdown = Eggs:createDropdown({
+    Name = "Tap Skins to Forge",
+    flagName = "SelectedTapSkinsToForge",
+    List = getTapSkinOptions(),
+    Flag = {},
+    multi = true,
+    Callback = function() end,
+})
+
+Eggs:createButton({
+    Name = "Refresh Tap Skins",
+    Callback = function()
+        tapSkinForgeDropdown:updateList(getTapSkinOptions())
+    end,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Forge Selected Tap Skins",
+    flagName = "AutoForgeTapSkins",
+    tag = "RCU_AutoForgeTapSkins",
+    delay = 15,
+    Step = forgeSelectedTapSkinsStep,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Equip Best Tap Skin",
+    flagName = "AutoEquipBestTapSkin",
+    tag = "RCU_AutoEquipBestTapSkin",
+    delay = 60,
+    Step = equipBestTapSkinStep,
+})
+
+Eggs:createLabel({
+    Name = "Supreme Altar",
+    Special = true,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Sacrifice Special Pets",
+    Warning = function() return "Permanently sacrifices special (non-tradeable-protected) pets to the Supreme Altar for trade tokens. Equipped pets are skipped." end,
+    WarnIf = function() return true end,
+    flagName = "AutoSacrificeSpecialPets",
+    tag = "RCU_AutoSacrificeSpecialPets",
+    delay = 20,
+    Step = sacrificeSupremeAltarPetsStep,
+})
+
+Eggs:createLabel({
+    Name = "Exclusive Eggs",
+    Special = true,
+})
+
+createIntervalToggle(Eggs, {
+    Name = "Auto Open Exclusive Eggs",
+    flagName = "AutoOpenExclusiveEggs",
+    tag = "RCU_AutoOpenExclusiveEggs",
+    delay = 15,
+    Step = openOwnedExclusiveEggsStep,
+})
 
 Mining = Setup:CreateSection("⛏️ Mining")
 Mining:createLabel({
@@ -13100,6 +13734,80 @@ do
 end
 
 Events:createLabel({
+    Name = "Quest Machine",
+    Special = true,
+})
+
+createIntervalToggle(Events, {
+    Name = "Auto Claim Quest Machine Rewards",
+    flagName = "AutoClaimQuestMachineRewards",
+    tag = "RCU_AutoClaimQuestMachineRewards",
+    delay = 10,
+    Step = claimQuestMachineRewardsStep,
+})
+
+Events:createLabel({
+    Name = "Clan",
+    Special = true,
+})
+
+clanAchievementDropdown = Events:createDropdown({
+    Name = "Clan Achievements to Claim",
+    flagName = "SelectedClanAchievements",
+    List = getClanAchievementOptions(),
+    Flag = {},
+    multi = true,
+    Callback = function() end,
+})
+
+Events:createButton({
+    Name = "Refresh Clan Achievements",
+    Callback = function()
+        clanAchievementDropdown:updateList(getClanAchievementOptions())
+    end,
+})
+
+createIntervalToggle(Events, {
+    Name = "Auto Claim Clan Achievements",
+    flagName = "AutoClaimClanAchievements",
+    tag = "RCU_AutoClaimClanAchievements",
+    delay = 60,
+    Step = autoClaimClanAchievementsStep,
+})
+
+createIntervalToggle(Events, {
+    Name = "Auto Claim Clan Prestige",
+    flagName = "AutoClaimClanPrestige",
+    tag = "RCU_AutoClaimClanPrestige",
+    delay = 60,
+    Step = autoClaimClanPrestigeStep,
+})
+
+createIntervalToggle(Events, {
+    Name = "Auto Activate Clan Weather",
+    flagName = "AutoActivateClanWeather",
+    tag = "RCU_AutoActivateClanWeather",
+    delay = 3600,
+    Step = activateClanWeatherStep,
+})
+
+createIntervalToggle(Events, {
+    Name = "Auto Spin Clan Boost Wheel",
+    flagName = "AutoSpinClanBoostWheel",
+    tag = "RCU_AutoSpinClanBoostWheel",
+    delay = 3600,
+    Step = autoSpinClanBoostWheelStep,
+})
+
+createIntervalToggle(Events, {
+    Name = "Auto Claim Grow Your Tutel Pet",
+    flagName = "AutoClaimGrowYourTutelPet",
+    tag = "RCU_AutoClaimGrowYourTutelPet",
+    delay = 60,
+    Step = claimGrowYourTutelPetStep,
+})
+
+Events:createLabel({
     Name = "Game's hourly events",
     Special = true,
 })
@@ -14396,4 +15104,35 @@ DevTools:createButton({
         prettyPrint(getData() and getData().farms or {})
     end,
 })
+
+Paradox = Setup:CreateSection("🧭 Paradox")
+
+paradoxMerchantDropdown = Paradox:createDropdown({
+    Name = "Compass Items",
+    flagName = "SelectedParadoxMerchantItems",
+    List = getParadoxMerchantOptions(),
+    Flag = {},
+    multi = true,
+    Callback = function() end,
+})
+
+Paradox:createButton({
+    Name = "Refresh Compass Items",
+    Callback = function()
+        paradoxMerchantDropdown:updateList(getParadoxMerchantOptions())
+    end,
+})
+
+createIntervalToggle(Paradox, {
+    Name = "Auto Buy Compass Items",
+    flagName = "AutoBuyParadoxMerchant",
+    tag = "RCU_AutoBuyParadoxMerchant",
+    delay = 6,
+    Step = autoBuyParadoxMerchantStep,
+})
+
+Paradox:createLabel({
+    Name = "Compasses are collected by Auto Click (no separate toggle needed).",
+})
+
 
