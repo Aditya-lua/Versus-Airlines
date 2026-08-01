@@ -2041,8 +2041,9 @@ do
         local d = getData()
         local invVal = 0
         local count = 0
-        if d and d.Inventory and d.Inventory.HarvestedFruits then
-            for _, finfo in pairs(d.Inventory.HarvestedFruits) do
+        local hf = d and d.Inventory and d.Inventory.HarvestedFruits
+        if hf then
+            for _, finfo in pairs(hf) do
                 if type(finfo) == "table" then
                     local fname = finfo.FruitName or finfo.Seed or finfo.Name or ""
                     local weight = tonumber(finfo.SizeMultiplier or finfo.Weight or finfo.SizeMulti or 1) or 1
@@ -2055,9 +2056,35 @@ do
                 end
             end
         end
+        local now = os.time()
+        if now ~= _lastInvDbg then
+            _lastInvDbg = now
+            local sample = ""
+            if hf then
+                local n = 0
+                for k, v in pairs(hf) do
+                    if n < 2 then
+                        sample = sample .. " " .. tostring(k) .. "="
+                            .. (type(v) == "table" and (tostring(v.FruitName or v.Name or v.Seed or "?") .. "/" .. tostring(v.SizeMultiplier or v.Weight or "?")) or tostring(v))
+                    end
+                    n = n + 1
+                end
+            end
+            DebugLog("invValue", "data=" .. tostring(d ~= nil), "inv=" .. tostring(d and d.Inventory ~= nil),
+                "hf=" .. tostring(type(hf)), "count=" .. tostring(count), "val=" .. tostring(invVal),
+                "FVC=" .. tostring(FruitValueCalc ~= nil), "sellLive=" .. tostring(ValueDB.sellLive ~= nil),
+                "sample[" .. tostring(hf and (function()
+                    local c = 0
+                    for _ in pairs(hf) do
+                        c = c + 1
+                    end
+                    return c
+                end)() or 0) .. "]" .. sample)
+        end
         return invVal, count
     end
     ValueESP = {}
+    local _lastInvDbg = 0
     ValueESP.update = function()
         local onTags = Library.Flags["espFruitValue"] == true
         local onTotal = Library.Flags["espTotalValue"] == true
@@ -2799,10 +2826,23 @@ local function doSprinkler()
         DebugLog("doSprinkler", "exit: no position resolved")
         return
     end
-    -- authoritative signature (from full deobfuscated GAG2):
-    -- Place.PlaceSprinkler:Fire(pos, sprinklerName, plot, 1) - no tool, no equipping
-    netFire("Place.PlaceSprinkler", pos, name, plot, 1)
-    DebugLog("doSprinkler", "fire", name, "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z))
+    -- authoritative signature (from game dump SprinklerController.TryPlace):
+    -- Place.PlaceSprinkler:Fire(position, tool:SprinklerAttr, equippedTool, plotId)
+    -- requires the sprinkler tool to be equipped (server validates via equipped tool)
+    local sTool, sAttr = findToolByAttr("Sprinkler", name)
+    if not sTool then
+        DebugLog("doSprinkler", "exit: no sprinkler tool found", "want=" .. tostring(name))
+        return
+    end
+    sTool = equipTool(sTool)
+    if not sTool then
+        DebugLog("doSprinkler", "exit: sprinkler equip failed", tostring(sAttr))
+        return
+    end
+    sAttr = sTool:GetAttribute("Sprinkler") or sAttr
+    local plotId = tonumber(tostring(plot.Name):match("%d+"))
+    netFire("Place.PlaceSprinkler", pos, sAttr, sTool, plotId or 0)
+    DebugLog("doSprinkler", "fire", sAttr, "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z), "plotId=" .. tostring(plotId))
 end
 
 local function doTrowel()
@@ -2835,12 +2875,11 @@ local function doTrowel()
     for _, pl in ipairs(plants:GetChildren()) do
         local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
         if (not target) or (crop and crop:lower() == target:lower()) then
-            local plantId = pl:GetAttribute("PlantId") or pl:GetAttribute("Id") or pl.Name
-            if plantId then
-                netFire("Trowel.MovePlant", tostring(plantId), pos, 0)
-                moved = moved + 1
-                task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
-            end
+            -- game dump: Trowel.MovePlant:Fire(plantModelName, position, rotationDeg)
+            -- (GetPlantTarget returns model, model.Name - the first arg is the model Name)
+            netFire("Trowel.MovePlant", tostring(pl.Name), pos, 0)
+            moved = moved + 1
+            task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
         end
     end
     DebugLog("doTrowel", "done", "moved=" .. moved)
