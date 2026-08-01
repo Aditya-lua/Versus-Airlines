@@ -450,6 +450,33 @@ local mod = tryRequire(function()
     return require(sm and (sm:FindFirstChild("Networking") or sm:WaitForChild("Networking", 10)) or ReplicatedStorage.SharedModules.Networking)
 end)
 if not mod then
+    -- fallback: scan the gc for the already-loaded Networking table
+    -- (resolver fallback; require can fail when Packet isn't in cache yet)
+    mod = tryRequire(function()
+        local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
+        local pkt = sm and (sm:FindFirstChild("Packet") or sm:WaitForChild("Packet", 5))
+        if pkt then
+            require(pkt)
+        end
+        return require(sm and (sm:FindFirstChild("Networking") or sm:WaitForChild("Networking", 5)) or ReplicatedStorage.SharedModules.Networking)
+    end)
+end
+if not mod and getgc then
+    mod = tryRequire(function()
+        for _, v in pairs(getgc(true)) do
+            if type(v) == "table" then
+                local hasPlant = type(v.Plant) == "table" and type(v.Plant.PlantSeed) ~= "nil"
+                local hasGarden = type(v.Garden) == "table" and type(v.Garden.CollectFruit) ~= "nil"
+                local hasSeedShop = type(v.SeedShop) == "table" and type(v.SeedShop.PurchaseSeed) ~= "nil"
+                if hasPlant and hasGarden and hasSeedShop then
+                    return v
+                end
+            end
+        end
+        return nil
+    end)
+end
+if not mod then
     warn("[GAG2] Networking module unavailable - aborting")
     return
 end
@@ -504,7 +531,7 @@ if FruitValueCalc and SeedData then
     end
 end
 
--- growth-rate data (from the game's Fruits module, AhmadV99/Main decompile):
+-- growth-rate data (from the game's Fruits module):
 -- GrowRate = weight gained per grow tick; value-per-time ranking uses
 -- SeedBaseValue * GrowRate (faster-growing seeds with similar value win).
 -- Missing entries (non-tick crops like Mushroom/Tulip) fall back to 1.0.
@@ -2156,7 +2183,7 @@ local function doHarvest(forceAll)
                 task.wait(0.12)
             end
         end
-        -- fire the real CollectFruit remote for every ripe fruit (reference hub behavior);
+        -- fire the real CollectFruit remote for every ripe fruit
         -- no prompt simulation - the server validates the request itself
         for _, entry in ipairs(targets) do
             local skip = false
@@ -2179,6 +2206,39 @@ local function doHarvest(forceAll)
         end
     end
     return collected
+end
+
+local function findSeedTool(seedName)
+    local bp = client and client:FindFirstChild("Backpack")
+    local scan = function(parent)
+        if not parent then
+            return nil
+        end
+        for _, tool in ipairs(parent:GetChildren()) do
+            if tool:IsA("Tool") then
+                local sn = tool:GetAttribute("SeedTool")
+                if sn and (not seedName or sn == seedName) then
+                    return tool
+                end
+            end
+        end
+        return nil
+    end
+    local tool = scan(bp)
+    if tool then
+        return tool
+    end
+    local char = client and client.Character
+    return scan(char)
+end
+
+local function getEquippedSeedName()
+    local char = client and client.Character
+    local tool = char and char:FindFirstChildWhichIsA("Tool")
+    if tool then
+        return tool:GetAttribute("SeedTool"), tool
+    end
+    return nil, nil
 end
 
 local function doPlant()
@@ -2207,7 +2267,7 @@ local function doPlant()
     end
     local toPlant = {}
     if Library.Flags["smartReplant"] then
-        -- plant only the most profitable seed you own (reference hub behavior)
+        -- plant only the most profitable seed you own
         local best = getBestSeed()
         if best then
             local keep = Library.Flags["seedReserve"] and (tonumber(Library.Flags["reserveCount"]) or 0) or 0
@@ -2296,18 +2356,60 @@ local function doPlant()
     if not Library.Flags["autoPlantAll"] then
         cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 80)
     end
-    table.sort(toPlant, function(a, b) return a < b end)
     local delay = math.max(0.02, tonumber(Library.Flags["plantDelay"]) or 0.05)
     if Library.Flags["autoPlantAll"] then
         delay = math.max(0.01, delay * 0.5)
     end
-    local planted = 0
-    -- y2k hub logic: the server only cares about the remote payload.
-    -- fire PlantSeed(pos, seedName, plot) - no tool lookup, no equipping.
+    -- group toPlant by seed name so we equip each seed tool only once
+    local grouped = {}
+    local order = {}
     for i = 1, cap do
-        netFire("Plant.PlantSeed", free[i], toPlant[i], plot)
-        planted = planted + 1
-        task.wait(jitter(delay, delay * 0.15))
+        local seedName = toPlant[i]
+        if not grouped[seedName] then
+            grouped[seedName] = { seed = seedName, slots = {} }
+            order[#order + 1] = grouped[seedName]
+        end
+        grouped[seedName].slots[#grouped[seedName].slots + 1] = free[i]
+    end
+    local planted = 0
+    for _, group in ipairs(order) do
+        local seedName = group.seed
+        -- find the seed tool (backpack first, then character)
+        local tool = findSeedTool(seedName)
+        if tool then
+            -- equip it; server-side PlantController validates the tool instance
+            local equipped, equippedTool = getEquippedSeedName()
+            if equipped ~= seedName then
+                if equipTool(tool) then
+                    equipped, equippedTool = getEquippedSeedName()
+                end
+            end
+            if equippedTool then
+                for _, pos in ipairs(group.slots) do
+                    if not Library.Flags["autoPlant"] and not Library.Flags["autoPlantAll"] then
+                        break
+                    end
+                    -- verify still equipped before each fire, re-equip if consumed
+                    local curSn, curTool = getEquippedSeedName()
+                    if not curTool then
+                        tool = findSeedTool(seedName)
+                        if not tool then
+                            break
+                        end
+                        if not equipTool(tool) then
+                            break
+                        end
+                        curSn, curTool = getEquippedSeedName()
+                    end
+                    if not curTool then
+                        break
+                    end
+                    netFire("Plant.PlantSeed", pos, seedName, curTool)
+                    planted = planted + 1
+                    task.wait(jitter(delay, delay * 0.15))
+                end
+            end
+        end
     end
     return planted
 end
@@ -2405,7 +2507,7 @@ local function doSteal()
             end
             netFire("Steal.CompleteSteal")
             -- multi-carry: fire CompleteSteal N times so the server registers several fruits
-            -- in the same steal session (reference hub behavior; server counts each completion)
+            -- in the same steal session (server counts each completion)
             local mult = math.max(1, tonumber(Library.Flags["stealMult"]) or 1)
             for _ = 2, mult do
                 netFire("Steal.CompleteSteal")
