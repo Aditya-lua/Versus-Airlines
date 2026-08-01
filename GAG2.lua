@@ -2118,22 +2118,6 @@ local function doHarvest(forceAll)
         targets = filtered
     end
 
-    -- build a fruitId -> HarvestPrompt index so we can trigger the game's own prompt
-    -- (MaxActivationDistance=math.huge = distance-free; the game's handler validates + fires)
-    local promptIndex = {}
-    for _, prompt in ipairs(CollectionService:GetTagged("HarvestPrompt")) do
-        if prompt:IsA("ProximityPrompt") then
-            local cur = prompt.Parent
-            while cur do
-                if cur:IsA("Model") and cur:GetAttribute("FruitId") then
-                    promptIndex[tostring(cur:GetAttribute("FruitId"))] = prompt
-                    break
-                end
-                cur = cur.Parent
-            end
-        end
-    end
-
     if #targets > 0 then
         local plot = myPlot()
         local ref = plot and plot:FindFirstChild("PlotSizeReference")
@@ -2144,6 +2128,8 @@ local function doHarvest(forceAll)
                 task.wait(0.12)
             end
         end
+        -- fire the real CollectFruit remote for every ripe fruit (reference hub behavior);
+        -- no prompt simulation - the server validates the request itself
         for _, entry in ipairs(targets) do
             local skip = false
             if mode == "Filtered" then
@@ -2158,19 +2144,7 @@ local function doHarvest(forceAll)
                 break
             end
             if not skip then
-                local hp = entry.fruitId and promptIndex[tostring(entry.fruitId)]
-                if hp and hp.Enabled then
-                    pcall(function()
-                        local oldDist = hp.MaxActivationDistance
-                        hp.MaxActivationDistance = math.huge
-                        hp:InputHoldBegin()
-                        task.wait(math.max(tonumber(hp.HoldDuration) or 0, 0.05) + 0.03)
-                        hp:InputHoldEnd()
-                        hp.MaxActivationDistance = oldDist
-                    end)
-                else
-                    netFire("Garden.CollectFruit", entry.plantId, entry.fruitId)
-                end
+                netFire("Garden.CollectFruit", entry.plantId, entry.fruitId or "")
                 collected = collected + 1
                 task.wait(jitter(tonumber(Library.Flags["collectDelay"]) or 0.05, 0.02))
             end
