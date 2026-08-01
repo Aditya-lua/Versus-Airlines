@@ -2961,7 +2961,7 @@ local function doCollectDropped()
     if not rootPart then
         return
     end
-    local dropped = Workspace:FindFirstChild("Temporary") or Workspace:FindFirstChild("DroppedItems")
+    local dropped = Workspace:FindFirstChild("DroppedItems") or Workspace:FindFirstChild("Temporary")
     if not dropped then
         return
     end
@@ -3025,7 +3025,7 @@ local function doESP()
     if Library.Flags["espPetEnabled"] then
         local target = firstValue(Library.Flags["espPet"] or {})
         local wilds = Workspace:FindFirstChild("Map")
-        wilds = wilds and wilds:FindFirstChild("WildPetRef")
+        wilds = wilds and (wilds:FindFirstChild("WildPetSpawns") or wilds:FindFirstChild("WildPetRef"))
         if wilds then
             for _, pet in ipairs(wilds:GetChildren()) do
                 local nm = pet:GetAttribute("PetName") or pet:GetAttribute("Type") or pet.Name
@@ -3139,7 +3139,7 @@ local function doPetProtection()
         return
     end
     local wilds = Workspace:FindFirstChild("Map")
-    wilds = wilds and (wilds:FindFirstChild("WildPetRef") or wilds:FindFirstChild("WildPetSpawns"))
+    wilds = wilds and (wilds:FindFirstChild("WildPetSpawns") or wilds:FindFirstChild("WildPetRef"))
     if not wilds then
         return
     end
