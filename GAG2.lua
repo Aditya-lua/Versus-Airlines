@@ -504,6 +504,26 @@ if FruitValueCalc and SeedData then
     end
 end
 
+-- growth-rate data (from the game's Fruits module, AhmadV99/Main decompile):
+-- GrowRate = weight gained per grow tick; value-per-time ranking uses
+-- SeedBaseValue * GrowRate (faster-growing seeds with similar value win).
+-- Missing entries (non-tick crops like Mushroom/Tulip) fall back to 1.0.
+local SEED_GROW_RATE = {
+    Grape = 0.0513, Apple = 0.1167, Strawberry = 0.3, Blueberry = 0.2308,
+    Tomato = 0.2667, Coconut = 0.0333, Cactus = 0.0119, Mango = 0.031,
+    Cherry = 0.0064, Sunflower = 0.0061, Acorn = 0.0058, Beanstalk = 0.06,
+    ["Poison Apple"] = 0.0023, ["Venus Fly Trap"] = 0.0013, ["Thorn Rose"] = 0.5,
+    Pomegranate = 0.0064, Lotus = 0.007, Pineapple = 0.01, ["Poison Ivy"] = 0.0095,
+    ["Ghost Pepper"] = 0.0088, Romanesco = 0.0119, ["Baby Cactus"] = 0.4067,
+    ["Glow Mushroom"] = 0.05, ["Horned Melon"] = 0.0333, Corn = 0.0444,
+    Pinetree = 0.5, ["Moon Bloom OLD"] = 0.03, Banana = 0.0413,
+    ["Dragon Fruit"] = 0.0061, ["Dragon's Breath"] = 0.0078, ["Moon Bloom"] = 0.0047,
+    ["Green Bean"] = 0.06,
+}
+local function growRateFor(seedName)
+    return SEED_GROW_RATE[seedName] or 1.0
+end
+
 -- exact game value engine (cloned from the game's own FruitValueCalc module code)
 local ValueDB = {
     sellFallback = {
@@ -1132,16 +1152,17 @@ local function getBestSeed()
     if not seeds then
         return nil
     end
-    local bestSeedName, bestSeedValue
+    local bestSeedName, bestScore
     for name, count in pairs(seeds) do
         if (count or 0) > 0 then
-            local val = SeedBaseValue[name] or 0
-            if not bestSeedValue or val > bestSeedValue then
-                bestSeedName, bestSeedValue = name, val
+            -- value-per-time: sell value scaled by growth rate so fast crops win
+            local val = (SeedBaseValue[name] or 0) * growRateFor(name)
+            if not bestScore or val > bestScore then
+                bestSeedName, bestScore = name, val
             end
         end
     end
-    return bestSeedName, bestSeedValue
+    return bestSeedName, bestScore
 end
 local function getFruitCount()
     return client:GetAttribute("FruitCount") or 0
@@ -3711,6 +3732,39 @@ Home:createButton({
         else
             notify("Home", "Garden not found", "warning")
         end
+    end,
+})
+Home:createButton({
+    Name = "Dump Packet Names",
+    Description = "Print all real remote packet names + IDs from the game's Packet module to console.",
+    Callback = function()
+        local pk = ReplicatedStorage and ReplicatedStorage:FindFirstChild("SharedModules")
+            and ReplicatedStorage.SharedModules:FindFirstChild("Packet")
+        local ev = pk and pk:FindFirstChild("RemoteEvent")
+        if not (ev and ev.GetAttributes) then
+            notify("Packets", "Packet module / RemoteEvent not found", "warning")
+            return
+        end
+        local attrs = pcall(function()
+            return ev:GetAttributes()
+        end)
+        if not attrs then
+            notify("Packets", "Failed to read packet attributes", "warning")
+            return
+        end
+        local count = 0
+        local lines = {}
+        for name, id in pairs(ev:GetAttributes()) do
+            if type(name) == "string" then
+                count = count + 1
+                lines[#lines + 1] = string.format("[%s] id=%s", name, tostring(id))
+            end
+        end
+        table.sort(lines)
+        for _, line in ipairs(lines) do
+            print("[GAG2] packet " .. line)
+        end
+        notify("Packets", count .. " packet names dumped to console")
     end,
 })
 Home:createDropdown({
