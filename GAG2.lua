@@ -719,7 +719,10 @@ do
     task.defer(connectGD)
 end
 
--- netFire helper (walks Network by dotted path, spawn-safe for yields)
+-- netFire helper (walks Network by dotted path, spawn-safe for yields).
+-- Colon-call style like the working hubs: works whether the leaf is a
+-- plain table with a Fire field or a Roblox Instance (type() gate would
+-- reject Instances since Luau returns "Instance" for them).
 local function netFire(path, ...)
     if not Network then
         return
@@ -728,8 +731,11 @@ local function netFire(path, ...)
     for p in string.gmatch(path, "[^%.]+") do
         node = node and node[p]
     end
-    if type(node) == "table" and type(node.Fire) == "function" then
-        pcall(node.Fire, node, ...)
+    if node ~= nil then
+        local args = { ... }
+        pcall(function()
+            node:Fire(table.unpack(args))
+        end)
     end
 end
 
@@ -742,14 +748,15 @@ local function netCall(path, ...)
     for p in string.gmatch(path, "[^%.]+") do
         node = node and node[p]
     end
-    if type(node) == "table" then
-        if type(node.InvokeServer) == "function" then
-            local ok, res = pcall(node.InvokeServer, node, ...)
-            return ok and res or nil
-        elseif type(node.Fire) == "function" then
-            local ok, res = pcall(node.Fire, node, ...)
-            return ok and res or nil
-        end
+    if node ~= nil then
+        local args = { ... }
+        local ok, res = pcall(function()
+            if node.InvokeServer ~= nil then
+                return node:InvokeServer(table.unpack(args))
+            end
+            return node:Fire(table.unpack(args))
+        end)
+        return ok and res or nil
     end
     return nil
 end
@@ -2204,7 +2211,7 @@ local function doPlant()
         local best = getBestSeed()
         if best then
             local keep = Library.Flags["seedReserve"] and (tonumber(Library.Flags["reserveCount"]) or 0) or 0
-            for _ = 1, math.min(math.max(0, (seeds[best] or 0) - keep), tonumber(Library.Flags["maxPerCycle"]) or 80) do
+            for _ = 1, math.max(0, (seeds[best] or 0) - keep) do
                 toPlant[#toPlant + 1] = best
             end
         end
@@ -2226,12 +2233,12 @@ local function doPlant()
                     end
                 end
                 if match then
-                    for _ = 1, math.min(count or 0, tonumber(Library.Flags["maxPerCycle"]) or 80) do
+                    for _ = 1, count or 0 do
                         toPlant[#toPlant + 1] = name
                     end
                 end
             else
-                for _ = 1, math.min(count or 0, tonumber(Library.Flags["maxPerCycle"]) or 80) do
+                for _ = 1, count or 0 do
                     toPlant[#toPlant + 1] = name
                 end
             end
@@ -2285,9 +2292,15 @@ local function doPlant()
     if #free == 0 then
         return
     end
-    local cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 80)
+    local cap = math.min(#free, #toPlant)
+    if not Library.Flags["autoPlantAll"] then
+        cap = math.min(#free, #toPlant, tonumber(Library.Flags["maxPerCycle"]) or 80)
+    end
     table.sort(toPlant, function(a, b) return a < b end)
     local delay = math.max(0.02, tonumber(Library.Flags["plantDelay"]) or 0.05)
+    if Library.Flags["autoPlantAll"] then
+        delay = math.max(0.01, delay * 0.5)
+    end
     local planted = 0
     -- y2k hub logic: the server only cares about the remote payload.
     -- fire PlantSeed(pos, seedName, plot) - no tool lookup, no equipping.
