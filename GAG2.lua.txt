@@ -657,7 +657,7 @@ local _purchaseCycleRestocks = {}
 local _plantConns = {}
 do
     local function safeConnect(node, cb)
-        if node and type(node) == "table" and type(node.Connect) == "function" then
+        if node ~= nil then
             local ok, conn = pcall(function()
                 return node:Connect(cb)
             end)
