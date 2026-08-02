@@ -1214,27 +1214,6 @@ local function getAllPetSpecies()
     return list
 end
 
--- trowel tool names: tools carrying the "Trowel" attribute (e.g. "Basic Trowel")
-local function getTrowelList()
-    local seen = {}
-    for _, parent in ipairs(getToolParents()) do
-        for _, tool in ipairs(parent:GetChildren()) do
-            if tool:IsA("Tool") then
-                local s = tool:GetAttribute("Trowel")
-                if type(s) == "string" and s ~= "" then
-                    seen[s] = true
-                end
-            end
-        end
-    end
-    local list = {}
-    for k in pairs(seen) do
-        list[#list + 1] = k
-    end
-    table.sort(list)
-    return list
-end
-
 -- sprinkler names from the game's SprinklerData module (SprinklerName field);
 -- falls back to the tool's "Sprinkler" attribute values seen in inventory.
 local function getSprinklerList()
@@ -2130,16 +2109,18 @@ do
             end
         end
         -- fruits live in the player's backpack as Tools (game grid renders from there)
-        local backpackCount = 0
+        local firstFew = {}
+        local firstFewCount = 0
         for _, parent in ipairs(getToolParents()) do
             for _, tool in ipairs(parent:GetChildren()) do
                 if tool:IsA("Tool") then
                     local hasHF = tool:GetAttribute("HarvestedFruit")
                     local hasFN = tool:GetAttribute("FruitName")
+                    local hasFruit = tool:GetAttribute("Fruit")
                     local hasSeed = tool:GetAttribute("Seed")
-                    if hasHF or hasFN or hasSeed then
-                        local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local weight = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or 1) or 1
+                    if hasHF or hasFN or hasFruit or hasSeed then
+                        local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+                        local weight = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or tool:GetAttribute("SizeMulti") or 1) or 1
                         local mname = tool:GetAttribute("Mutation")
                         if type(mname) ~= "string" then
                             mname = nil
@@ -2147,12 +2128,16 @@ do
                         invVal = invVal + ValueEngine.compute(fname, weight, mname)
                         count = count + 1
                         backpackCount = backpackCount + 1
+                        if firstFewCount < 3 then
+                            firstFewCount = firstFewCount + 1
+                            firstFew[#firstFew + 1] = string.format("%s(HF=%s,FN=%s,F=%s,S=%s,Id=%s,W=%s,SM=%s,M=%s)", fname, tostring(hasHF), tostring(hasFN), tostring(hasFruit), tostring(hasSeed), tostring(tool:GetAttribute("Id")), tostring(tool:GetAttribute("Weight")), tostring(tool:GetAttribute("SizeMultiplier")), tostring(mname))
+                        end
                     end
                 end
             end
         end
         if backpackCount > 0 and now ~= _lastInvDbg then
-            DebugLog("invValue", "backpackScan", "found=" .. backpackCount, "totalCount=" .. count, "val=" .. invVal)
+            DebugLog("invValue", "backpackScan", "found=" .. backpackCount, "totalCount=" .. count, "val=" .. invVal, "samples=" .. table.concat(firstFew, ";"))
         end
         local now = os.time()
         if now ~= _lastInvDbg then
@@ -2763,22 +2748,50 @@ local function doSellSelective()
     end
     local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
     if not fruits then
+        -- fallback: scan backpack + character tools for fruit items
+        fruits = {}
+        for _, parent in ipairs(getToolParents()) do
+            for _, tool in ipairs(parent:GetChildren()) do
+                if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
+                    local uid = tool:GetAttribute("Id")
+                    if uid then
+                        local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+                        local wt = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or tool:GetAttribute("SizeMulti") or (ValueDB.baseWeight[cropName] or 1)) or 1
+                        local mutName = tool:GetAttribute("Mutation")
+                        if type(mutName) ~= "string" then mutName = nil end
+                        local entry = {
+                            crop = cropName,
+                            mutation = mutName,
+                            weight = wt,
+                            rarity = tool:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
+                            value = ValueEngine.compute(cropName, wt, mutName),
+                            _tool = tool,
+                            _uid = tostring(uid),
+                        }
+                        fruits[tostring(uid)] = entry
+                    end
+                end
+            end
+        end
+    end
+    if not fruits or next(fruits) == nil then
         return
     end
     for uid, info in pairs(fruits) do
         if type(info) == "table" then
-            local cropName = info.FruitName or info.CropName or info.SeedName or info.Name or ""
-            local wt = tonumber(info.SizeMultiplier or info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
-            local mutName = info.Mutation
+            local cropName = info.crop or info.FruitName or info.CropName or info.SeedName or info.Name or ""
+            local wt = info.weight or tonumber(info.SizeMultiplier or info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
+            local mutName = info.mutation or info.Mutation
             local entry = {
                 crop = cropName,
                 mutation = mutName,
                 weight = wt,
-                rarity = info.Rarity or SeedRarity[cropName] or "Common",
-                value = ValueEngine.compute(cropName, wt, mutName),
+                rarity = info.rarity or info.Rarity or SeedRarity[cropName] or "Common",
+                value = info.value or ValueEngine.compute(cropName, wt, mutName),
             }
             if matchesFilter(entry, "sellFruit", "sellRarity", "sellMutation", "sellThreshMode", "sellThreshold") then
-                netFire("NPCS.SellFruit", tostring(uid))
+                local fruitId = info._uid or tostring(uid)
+                netFire("NPCS.SellFruit", fruitId)
                 task.wait(0.1)
             end
         end
@@ -2817,26 +2830,54 @@ local function doFavorite(setFav, all)
     end
     local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
     if not fruits then
+        -- fallback: scan backpack + character tools for fruit items
+        fruits = {}
+        for _, parent in ipairs(getToolParents()) do
+            for _, tool in ipairs(parent:GetChildren()) do
+                if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
+                    local uid = tool:GetAttribute("Id")
+                    if uid then
+                        local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+                        local wt = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or tool:GetAttribute("SizeMulti") or (ValueDB.baseWeight[cropName] or 1)) or 1
+                        local mutName = tool:GetAttribute("Mutation")
+                        if type(mutName) ~= "string" then mutName = nil end
+                        local entry = {
+                            crop = cropName,
+                            mutation = mutName,
+                            weight = wt,
+                            rarity = tool:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
+                            value = ValueEngine.compute(cropName, wt, mutName),
+                            _tool = tool,
+                            _uid = tostring(uid),
+                        }
+                        fruits[tostring(uid)] = entry
+                    end
+                end
+            end
+        end
+    end
+    if not fruits or next(fruits) == nil then
         return
     end
     for uid, info in pairs(fruits) do
         if type(info) == "table" then
             local match = all == true
             if not match then
-                local cropName = info.FruitName or info.CropName or info.SeedName or info.Name or ""
-                local wt = tonumber(info.SizeMultiplier or info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
-                local mutName = info.Mutation
+                local cropName = info.crop or info.FruitName or info.CropName or info.SeedName or info.Name or ""
+                local wt = info.weight or tonumber(info.SizeMultiplier or info.Weight or info.Size or (ValueDB.baseWeight[cropName] or 1)) or 1
+                local mutName = info.mutation or info.Mutation
                 local entry = {
                     crop = cropName,
                     mutation = mutName,
                     weight = wt,
-                    rarity = info.Rarity or SeedRarity[cropName] or "Common",
-                    value = ValueEngine.compute(cropName, wt, mutName),
+                    rarity = info.rarity or info.Rarity or SeedRarity[cropName] or "Common",
+                    value = info.value or ValueEngine.compute(cropName, wt, mutName),
                 }
                 match = matchesFilter(entry, "favFruit", "favRarity", "favMutation", "favThreshMode", "favThreshold")
             end
             if match then
-                netFire("Backpack.SetFruitFavorite", tostring(uid), setFav)
+                local fruitId = info._uid or tostring(uid)
+                netFire("Backpack.SetFruitFavorite", fruitId, setFav)
                 task.wait(0.05)
             end
         end
@@ -2988,55 +3029,6 @@ placeOneSprinkler = function(plot, name, ownedCount)
     netFire("Place.PlaceSprinkler", pos, sAttr, sTool, plotId or 0)
     DebugLog("doSprinkler", "fire", sAttr, "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z), "plotId=" .. tostring(plotId), "owned=" .. tostring(ownedCount))
     return true
-end
-
-local function doTrowel()
-    local plot = myPlot()
-    if not plot then
-        DebugLog("doTrowel", "exit: no plot")
-        return
-    end
-    nearPlot()
-    local plants = plot:FindFirstChild("Plants")
-    if not plants then
-        DebugLog("doTrowel", "exit: no Plants folder")
-        return
-    end
-    local target = firstValue(Library.Flags["trowelPlant"] or {})
-    local pos = resolveModePosition(firstValue(Library.Flags["trowelPos"] or {}), "savedTrowelPos", plot)
-    if not pos then
-        local ok, ppos = pcall(function()
-            return plants:GetChildren()[1] and plants:GetChildren()[1]:GetPivot().Position
-        end)
-        if ok then
-            pos = ppos
-        end
-    end
-    if not pos then
-        DebugLog("doTrowel", "exit: no position resolved")
-        return
-    end
-    local moved = 0
-    -- server rejects MovePlant unless a trowel tool is equipped (SpeedHub X confirmed)
-    local trowelTool = findToolByAttr("Trowel", firstValue(Library.Flags["trowelSelect"] or {}))
-    if trowelTool then
-        trowelTool = equipTool(trowelTool)
-    end
-    if not trowelTool then
-        DebugLog("doTrowel", "exit: no trowel tool equipped")
-        return
-    end
-    for _, pl in ipairs(plants:GetChildren()) do
-        local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
-        if (not target) or (crop and crop:lower() == target:lower()) then
-            -- game dump: Trowel.MovePlant:Fire(plantModelName, position, rotationDeg)
-            -- (GetPlantTarget returns model, model.Name - the first arg is the model Name)
-            netFire("Trowel.MovePlant", tostring(pl.Name), pos, 0)
-            moved = moved + 1
-            task.wait(tonumber(Library.Flags["trowelDelay"]) or 0.1)
-        end
-    end
-    DebugLog("doTrowel", "done", "moved=" .. moved)
 end
 
 local function doWateringCan()
@@ -3899,11 +3891,6 @@ local PERSISTENT_FLAGS = {
     "sprinklerSpacing",
     "sprinklerDelay",
     "savedSprinklerPos",
-    "autoTrowel",
-    "trowelPlant",
-    "trowelPos",
-    "trowelDelay",
-    "savedTrowelPos",
     "autoShovelTree",
     "shovelTree",
     "shovelTreeRarity",
@@ -4672,50 +4659,6 @@ Automatically:createToggle({
     flagName = "autoSprinklerAll",
     Description = "Place all owned sprinklers at once.",
 })
-
--- Automation Trowel
-Automatically:createLabel({ Name = "Automation Trowel", Special = true })
-
-Automatically:createDropdown({
-    Name = "Select Plant",
-    flagName = "trowelPlant",
-    List = getCropList(),
-    Description = "Which plant type to trowel/dig up.",
-})
-Automatically:createDropdown({
-    Name = "Select Trowel",
-    flagName = "trowelSelect",
-    List = getTrowelList(),
-    Description = "Which trowel tool to equip (server rejects moves without one).",
-})
-Automatically:createDropdown({
-    Name = "Select Position",
-    flagName = "trowelPos",
-    List = { "Saved Position", "Random", "Player Position" },
-    Flag = { "Saved Position" },
-    Description = "Where to use trowel.",
-})
-Automatically:createButton({
-    Name = "Save Position",
-    Description = "Save current position for trowel use.",
-    Callback = function()
-        local rootPart = getHRP()
-        if rootPart then
-            Library.Flags["savedTrowelPos"] = rootPart.Position
-            notify("Trowel", "Position saved")
-        end
-    end,
-})
-Automatically:createInputBox({
-    Name = "Delay To Trowel",
-    flagName = "trowelDelay",
-    Flag = "0",
-    Description = "Delay between trowel uses.",
-})
-createIntervalToggle(
-    Automatically,
-    { Name = "Auto Trowel Plant", flagName = "autoTrowel", tag = "autoTrowel", delay = 3, Step = doTrowel }
-)
 
 -- Automation Shovel
 Automatically:createLabel({ Name = "Automation Shovel", Special = true })
