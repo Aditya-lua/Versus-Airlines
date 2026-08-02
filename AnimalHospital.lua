@@ -1,13 +1,13 @@
 --[[
     Versus Airlines - Animal Hospital Ultra
-    Version: v4.0 (The Ultimate In-Game Autopilot)
     PlaceId: 104522435597696 / Lobby: 78515283254292
+    
     
     Architected by Senior Roblox Software Engineering Assistant
     - Ultra-optimized event-driven caches (PromptCache & MonsterCache)
     - Full Hospital Autopilot (Handles Rooms 1 to 8: X-Ray, Surgery, Heart Monitor, Medical)
-    - V4 Treatment Engine: step-machine locks, TV inv parsing, Room6 colors solver, Room8 surgery loop
-    - V4 Check-In: attribute/voice/tag monster filter, shutter toggle, named-prompt sequence
+    - Treatment Engine: step-machine locks, TV inv parsing, Room6 colors solver, Room8 surgery loop
+    - Check-In: attribute/voice/tag monster filter, shutter toggle, named-prompt sequence
     - Tool-based Tasing (no fake remotes), Coffee sanity, Bed Monster syrup, head banger
     - Ceiling eyes, skinwalker E-escape, CCTV auto-exit, fuses, shop upgrades, teleports
     - Drawing API ESP (boxes/tracers/names) with Highlight fallback
@@ -906,7 +906,7 @@ function connectRemote(name, callback)
 end
 
 -----------------------------------------------------------------
--- V4.0 CORE HELPERS (proven in-game utilities)
+-- CORE HELPERS (proven in-game utilities)
 -----------------------------------------------------------------
 local AHLib = nil
 function getAHLib()
@@ -1508,35 +1508,39 @@ function setupSanityHook()
 				return originalPlayerLostSanity(amount, reason, suppressRemote)
 			end
 		end
+	end
+end
 
-		-- Auto Skip Harlow Intro & cutscenes (block blackscreen)
-		if not Lib.__cutsceneHookInstalled then
-			Lib.__cutsceneHookInstalled = true
-			local originalPlayCutscene = Lib.PlayCutscene
-			Lib.PlayCutscene = function(name, ...)
-				if Library and Library.Flags and Library.Flags["AutoSkipCutscenes"] then
-					if
-						name == "DoctorArrivesFirstTime"
-						or name == "ShopOpensFirstTime"
-						or name == "AmbulanceNotice"
-					then
-						pcall(function()
-							local blackscreen = client:FindFirstChild("PlayerGui") and client.PlayerGui:FindFirstChild("blackscreen")
-							local black = blackscreen and blackscreen:FindFirstChild("black")
-							if black then
-								black.BackgroundTransparency = 1
-								black.ImageTransparency = 1
-							end
-						end)
-						return
-					end
-				end
-				if originalPlayCutscene then
-					return originalPlayCutscene(name, ...)
-				end
+-- Cutscene skip watchdog: hides the blackscreen and resets the camera while a
+-- cutscene is active. NOTE: never read/write unknown Lib fields - Lib's
+-- __index auto-requires modules and crashes on names that don't exist
+-- (that's what killed the old Lib.__cutsceneHookInstalled / Lib.PlayCutscene hook).
+function handleCutsceneSkip()
+	if not Library or not Library.Flags or not Library.Flags["AutoSkipCutscenes"] then
+		return
+	end
+	pcall(function()
+		local cam = Workspace.CurrentCamera
+		if cam and cam:HasTag("InCutscene") then
+			cam.CameraType = Enum.CameraType.Custom
+			local hum = getHumanoid()
+			if hum then
+				cam.CameraSubject = hum
 			end
 		end
-	end
+	end)
+	pcall(function()
+		local gui = client:FindFirstChild("PlayerGui")
+		local blackscreen = gui and gui:FindFirstChild("blackscreen")
+		local black = blackscreen and blackscreen:FindFirstChild("black")
+		if black then
+			black.BackgroundTransparency = 1
+			local text = blackscreen:FindFirstChild("text")
+			if text then
+				text.Visible = false
+			end
+		end
+	end)
 end
 
 -- Mode 2: Server-side NaN Exploit
@@ -1589,7 +1593,7 @@ function extinguishAllFires()
 	end
 	for _, npc in ipairs(CollectionService:GetTagged("NPC")) do
 		if npc:HasTag("OnFire") then
-			-- V4: fire once per FireCharges attribute so multi-charge blazes go out
+			-- Fire once per FireCharges attribute so multi-charge blazes go out
 			local charges = tonumber(npc:GetAttribute("FireCharges")) or 1
 			for i = 1, math.max(1, charges) do
 				fireRemote("ExtinguisherBubbleHitFireNPC", npc)
@@ -1605,7 +1609,7 @@ function extinguishAllFires()
 	end
 end
 
--- V4: auto-tag shop prompts so handleShopUpgrades can find them (the game
+-- Auto-tag shop prompts so handleShopUpgrades can find them (the game
 -- marks them at runtime; tagging here keeps the keyword filter working)
 function setupShopTagHook()
 	local function tagPrompt(pp)
@@ -2593,7 +2597,7 @@ function handleFainted()
 					or m:FindFirstChild("Torso")
 					or m:FindFirstChildWhichIsA("BasePart")
 				if p and distanceTo(p.Position) < 40 then
-					-- V4: pick up the fainted NPC and drop them at the trash can,
+					-- Pick up the fainted NPC and drop them at the trash can,
 					-- or at a bed inside their room if no trash can is available
 					local carryPP = nil
 					for pp in pairs(PromptCache._prompts) do
@@ -2869,7 +2873,7 @@ function infiniteTaseAll()
 end
 
 -----------------------------------------------------------------
--- V4.0 UPGRADED SUBSYSTEMS (proven in-game techniques)
+-- UPGRADED SUBSYSTEMS (proven in-game techniques)
 -----------------------------------------------------------------
 local function findCoffeePrompt()
 	local best, bestDist = nil, math.huge
@@ -3363,7 +3367,7 @@ function instantPP()
 	for pp in pairs(PromptCache._prompts) do
 		if not DANGEROUS_AT[pp.ActionText] then
 			pcall(function()
-				-- V4: cache the original hold duration once and restore it after
+				-- Cache the original hold duration once and restore it after
 				-- each trigger (instant-interact restore pattern)
 				if State.OriginalHoldDurations[pp] == nil then
 					State.OriginalHoldDurations[pp] = pp.HoldDuration
@@ -3391,7 +3395,7 @@ function autoBlowCandles()
 	if not Library or not Library.Flags or not Library.Flags["AutoBlowCandles"] then
 		return false
 	end
-	-- V4: blow out EVERY lit candle, not just the nearest one
+	-- Blow out EVERY lit candle, not just the nearest one
 	local blew = false
 	for pp in pairs(PromptCache._prompts) do
 		if pp.Enabled then
@@ -3571,7 +3575,7 @@ function createEsp(target, color, text)
 	if not target then
 		return
 	end
-	-- V4: Drawing API boxes + tracers + names (lower overhead)
+	-- Drawing API boxes + tracers + names (lower overhead)
 	local drawing = Drawing
 	local part = getInstancePart(target)
 	if part and drawing and drawing.new then
@@ -3693,7 +3697,7 @@ function updateESP()
 	end
 end
 
--- V4: draw ESP boxes/tracers each frame using tracked parts
+-- Draw ESP boxes/tracers each frame using tracked parts
 local espDrawConn = RunService.RenderStepped:Connect(function()
 	if not Library or not Library.Flags or not Library.Flags["ESPEnabled"] then
 		return
@@ -3797,32 +3801,6 @@ function setCameraMode(mode)
 		end
 	end)
 end
-
------------------------------------------------------------------
--- WATERMARK UI
------------------------------------------------------------------
-local function createWatermark()
-	local sg = Instance.new("ScreenGui")
-	sg.Name = "VersusAirlinesWatermark"
-	sg.ResetOnSpawn = false
-	sg.Parent = CoreGui
-
-	local tl = Instance.new("TextLabel")
-	tl.Name = "VersusLabel"
-	tl.Size = UDim2.new(0, 180, 0, 28)
-	tl.Position = UDim2.new(1, -190, 1, -38)
-	tl.BackgroundTransparency = 0.45
-	tl.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-	tl.TextColor3 = Color3.fromRGB(255, 255, 255)
-	tl.TextStrokeTransparency = 0.8
-	tl.Text = "Versus Airlines Ultra v4.0"
-	tl.Font = Enum.Font.GothamBold
-	tl.TextSize = 14
-	tl.Parent = sg
-
-	GlobalJanitor:Add(sg)
-end
-createWatermark()
 
 -----------------------------------------------------------------
 -- UI DESIGN & CONFIGURATION
@@ -4004,7 +3982,7 @@ taserSection:createToggle({
 	Flag = false,
 })
 
-local teleportSection = ui:CreateSection("Teleports (V4)")
+local teleportSection = ui:CreateSection("Teleports")
 teleportSection:createDropdown({
 	Name = "Destination",
 	flagName = "TeleportDestination",
@@ -4019,7 +3997,7 @@ teleportSection:createButton({
 	end,
 })
 
-local monsterSection = ui:CreateSection("Monster Defense (V4)")
+local monsterSection = ui:CreateSection("Monster Defense")
 monsterSection:createToggle({
 	Name = "Bed Monster Syrup",
 	flagName = "BedMonsterSyrup",
@@ -4222,13 +4200,13 @@ visualSection:createToggle({
 
 local serverSection = ui:CreateSection("Server Utilities")
 serverSection:createButton({
-	Name = "Save Config (V4)",
+	Name = "Save Config",
 	Callback = function()
 		saveFlags()
 	end,
 })
 serverSection:createButton({
-	Name = "Load Config (V4)",
+	Name = "Load Config",
 	Callback = function()
 		loadFlags()
 	end,
@@ -4402,6 +4380,8 @@ interval("banger", "AutoHeadBanger", 3, handleHeadBanger)
 
 interval("heartbeat", "AutoHeartbeat", 2, handleHeartbeatFallback)
 
+interval("cutscene", "AutoSkipCutscenes", 0.5, handleCutsceneSkip)
+
 -- Sanity clamp: the game's 50s "Job Stress" drain calls the captured
 -- LocalLoseSanity closure directly, bypassing the Lib hook. Force the local
 -- attribute back to 100 so Silent mode actually keeps sanity full.
@@ -4435,5 +4415,5 @@ local charConn = client.CharacterAdded:Connect(function()
 end)
 GlobalJanitor:Add(charConn)
 
-notify("Versus Airlines Ultra", "In-Game Autopilot v3.0 LOADED - " .. PLACE)
-print("[Versus Airlines v3.0] Ultra Farm Active. All game loops secured.")
+notify("Versus Airlines Ultra", "In-Game Autopilot LOADED - " .. PLACE)
+print("[Versus Airlines Ultra] Autopilot active. All game loops secured.")
