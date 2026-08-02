@@ -213,6 +213,8 @@ local State = {
 	IsTreatingRoom = false,
 	IsDrinkingCoffee = false,
 	RoomAppliedMeds = {},
+	LastMedApply = {},
+	RoomUnlockAt = {},
 	ItemCache = {},
 	OriginalHoldDurations = setmetatable({}, { __mode = "k" }),
 	InstantPPHooked = setmetatable({}, { __mode = "k" }),
@@ -709,10 +711,21 @@ function interval(tag, flag, delayTime, callback)
 	end
 	delayTime = math.max(tonumber(delayTime) or 1, 0.05)
 
+	local flagsList = type(flag) == "table" and flag or { flag }
 	local last = 0
 	local running = false
 	local conn = RunService.Heartbeat:Connect(function()
-		if not Library or not Library.Flags or not Library.Flags[flag] then
+		if not Library or not Library.Flags then
+			return
+		end
+		local anyOn = false
+		for _, f in ipairs(flagsList) do
+			if Library.Flags[f] then
+				anyOn = true
+				break
+			end
+		end
+		if not anyOn then
 			return
 		end
 		local now = tick()
@@ -1430,7 +1443,6 @@ function getRequiredMeds(room)
 	for _, med in ipairs(needed) do
 		if not applied[med] or applied[med] <= 0 then
 			table.insert(result, med)
-			applied[med] = (applied[med] or 0) + 1
 		end
 	end
 	return result
@@ -2203,7 +2215,7 @@ function unlockTreatment()
 	State.ActiveRoom = nil
 	State.TreatLock = false
 	if room then
-		State.RoomAppliedMeds[room.Name] = nil
+		State.RoomUnlockAt[room.Name] = tick()
 	end
 	State.ColorsSequence = {}
 	State.ColorsSeen = {}
@@ -2389,6 +2401,7 @@ function handleSurgery(room)
 		print("[Treatment] Surgery timed out, retrying fresh...")
 		State.SurgeryDeadline = tick() + 30
 		State.RoomAppliedMeds[room.Name] = nil
+		State.LastMedApply[room.Name] = tick()
 	end
 
 	local required = nil
@@ -2407,6 +2420,10 @@ function handleSurgery(room)
 	end
 	if not required then
 		return fireRoomSteps(room)
+	end
+	local lastApply = State.LastMedApply[room.Name]
+	if lastApply and tick() - lastApply < 4 then
+		return true
 	end
 
 	local tool = findToolInInventory(required)
@@ -2430,6 +2447,9 @@ function handleSurgery(room)
 	task.wait(0.3)
 	if fireModelPrompt(bedPP:FindFirstAncestorWhichIsA("Model"), bedPP.ActionText) then
 		State.SessionHealed = State.SessionHealed + 1
+		State.LastMedApply[room.Name] = tick()
+		State.RoomAppliedMeds[room.Name] = State.RoomAppliedMeds[room.Name] or {}
+		State.RoomAppliedMeds[room.Name][required] = (State.RoomAppliedMeds[room.Name][required] or 0) + 1
 	end
 	return true
 end
@@ -2443,6 +2463,7 @@ function continueRoomTreatment(room)
 
 	if isRecovering(room) then
 		print("[Treatment] Patient in " .. room.Name .. " is recovering, moving on.")
+		State.RoomAppliedMeds[room.Name] = nil
 		unlockTreatment()
 		return false
 	end
@@ -2460,6 +2481,12 @@ function continueRoomTreatment(room)
 
 	if #requiredMeds > 0 then
 		local cure = requiredMeds[1]
+		-- Wait for the game's report check / Healing header to register before
+		-- applying again: re-firing too fast re-doses the patient and kills them.
+		local lastApply = State.LastMedApply[room.Name]
+		if lastApply and tick() - lastApply < 4 then
+			return true
+		end
 		-- Free inventory space first (trash unneeded items)
 		if getToolCount() >= getCarryCapacity() then
 			trashUnneededItems(cure)
@@ -2478,6 +2505,9 @@ function continueRoomTreatment(room)
 				task.wait(0.3)
 				if fireModelPrompt(bedPP:FindFirstAncestorWhichIsA("Model"), bedPP.ActionText) then
 					State.SessionHealed = State.SessionHealed + 1
+					State.LastMedApply[room.Name] = tick()
+					State.RoomAppliedMeds[room.Name] = State.RoomAppliedMeds[room.Name] or {}
+					State.RoomAppliedMeds[room.Name][cure] = (State.RoomAppliedMeds[room.Name][cure] or 0) + 1
 					return true
 				end
 			end
@@ -2523,9 +2553,12 @@ function handleRoomTreatment()
 	end)
 
 	for _, c in ipairs(candidates) do
-		if continueRoomTreatment(c.Room) then
-			lockTreatment(c.Room)
-			return true
+		local un = State.RoomUnlockAt[c.Room]
+		if not (un and tick() - un < 4) then
+			if continueRoomTreatment(c.Room) then
+				lockTreatment(c.Room)
+				return true
+			end
 		end
 	end
 	return false
@@ -3422,6 +3455,64 @@ function autoOpenSafes()
 	end
 end
 
+function skipDialogue()
+	if not Library or not Library.Flags or not Library.Flags["AutoSkipDialogue"] then
+		return
+	end
+	if isDialogueOpen() then
+		fireRemote("RE/SetDoctorDialogueSkipped")
+	end
+end
+
+function autoRescueEaten()
+	if not Library or not Library.Flags or not Library.Flags["AutoRescueEaten"] then
+		return
+	end
+	local target = nil
+	for _, m in ipairs(MonsterCache:GetMonsters()) do
+		if not m:IsA("Model") then
+			break
+		end
+		local isEating = false
+		for _, pp in ipairs(m:GetDescendants()) do
+			if pp:IsA("ProximityPrompt") and pp.Enabled then
+				local at = (pp.ActionText or ""):lower()
+				if at:find("eat") or at:find("feed") then
+					isEating = true
+					break
+				end
+			end
+		end
+		if isEating then
+			target = m
+			break
+		end
+	end
+	if not target then
+		return
+	end
+	local syrup = findToolInInventory("Maple Syrup")
+	if not syrup then
+		if not fetchToolFromShelf("Maple Syrup") then
+			return
+		end
+		syrup = findToolInInventory("Maple Syrup")
+	end
+	if not syrup then
+		return
+	end
+	if useToolByName(syrup.Name) then
+		safeMoveToModel(target)
+		task.wait(0.3)
+		local tool = getChar() and getChar():FindFirstChild("Maple Syrup")
+		if tool then
+			pcall(function()
+				tool:Activate()
+			end)
+		end
+	end
+end
+
 -----------------------------------------------------------------
 -- MOVEMENT SYSTEMS
 -----------------------------------------------------------------
@@ -3814,32 +3905,32 @@ farmSection:createToggle({
 farmSection:createToggle({
 	Name = "Auto Check-In",
 	flagName = "AutoCheckIn",
-	Flag = true,
+	Flag = false,
 })
 farmSection:createToggle({
 	Name = "Auto Reject Skinwalkers",
 	flagName = "AutoRejectSkinwalkers",
-	Flag = true,
+	Flag = false,
 })
 farmSection:createToggle({
 	Name = "Visitor Flow",
 	flagName = "VisitorFlow",
-	Flag = true,
+	Flag = false,
 })
 farmSection:createToggle({
 	Name = "Room Treatment (Rooms 1-8)",
 	flagName = "RoomTreatment",
-	Flag = true,
+	Flag = false,
 })
 farmSection:createToggle({
 	Name = "Emergency Rooms (Ambulance)",
 	flagName = "EmergencyRooms",
-	Flag = true,
+	Flag = false,
 })
 farmSection:createToggle({
 	Name = "Auto Shift",
 	flagName = "AutoShift",
-	Flag = true,
+	Flag = false,
 })
 farmSection:createToggle({
 	Name = "Fire Strat (XP Grind)",
@@ -3891,12 +3982,12 @@ local emergencySection = ui:CreateSection("Emergency & Interaction")
 emergencySection:createToggle({
 	Name = "Auto Blow Candles",
 	flagName = "AutoBlowCandles",
-	Flag = true,
+	Flag = false,
 })
 emergencySection:createToggle({
 	Name = "Auto Open Safes",
 	flagName = "AutoOpenSafes",
-	Flag = true,
+	Flag = false,
 })
 emergencySection:createToggle({
 	Name = "Fix Cams (Repair CCTV)",
@@ -3911,12 +4002,12 @@ emergencySection:createToggle({
 emergencySection:createToggle({
 	Name = "Avoid Eye Mass",
 	flagName = "AvoidEyeMass",
-	Flag = true,
+	Flag = false,
 })
 emergencySection:createToggle({
 	Name = "Avoid Monsters (Safety)",
 	flagName = "AvoidMonsters",
-	Flag = true,
+	Flag = false,
 })
 emergencySection:createToggle({
 	Name = "Help Liz (Gift Claim)",
@@ -3928,22 +4019,32 @@ emergencySection:createToggle({
 	flagName = "StalkerHandler",
 	Flag = false,
 })
+emergencySection:createToggle({
+	Name = "Auto Skip Dialogue",
+	flagName = "AutoSkipDialogue",
+	Flag = false,
+})
+emergencySection:createToggle({
+	Name = "Save Eaten Patients (Syrup)",
+	flagName = "AutoRescueEaten",
+	Flag = false,
+})
 
 local combatSection = ui:CreateSection("Combat Suite")
 combatSection:createToggle({
 	Name = "Auto Clean Slime",
 	flagName = "AutoCleanSlime",
-	Flag = true,
+	Flag = false,
 })
 combatSection:createToggle({
 	Name = "Auto Extinguish Fires",
 	flagName = "AutoExtinguishFires",
-	Flag = true,
+	Flag = false,
 })
 combatSection:createToggle({
 	Name = "Auto Fight Anomalies/Ghosts",
 	flagName = "AutoFightAnomalies",
-	Flag = true,
+	Flag = false,
 })
 combatSection:createToggle({
 	Name = "Zombie Aura",
@@ -4001,7 +4102,7 @@ local monsterSection = ui:CreateSection("Monster Defense")
 monsterSection:createToggle({
 	Name = "Bed Monster Syrup",
 	flagName = "BedMonsterSyrup",
-	Flag = true,
+	Flag = false,
 })
 monsterSection:createToggle({
 	Name = "Head Banger (Give Coffee)",
@@ -4016,7 +4117,7 @@ monsterSection:createToggle({
 monsterSection:createToggle({
 	Name = "Skinwalker Escape (Press E)",
 	flagName = "SkinwalkerEscape",
-	Flag = true,
+	Flag = false,
 })
 monsterSection:createToggle({
 	Name = "CCTV Auto Exit",
@@ -4070,12 +4171,12 @@ itemsSection:createDropdown({
 itemsSection:createToggle({
 	Name = "Auto Trash (Full)",
 	flagName = "AutoTrash",
-	Flag = true,
+	Flag = false,
 })
 itemsSection:createToggle({
 	Name = "Instant Proximity Prompts",
 	flagName = "InstantPP",
-	Flag = true,
+	Flag = false,
 })
 
 local survivalSection = ui:CreateSection("Survival Kit")
@@ -4089,17 +4190,17 @@ survivalSection:createDropdown({
 survivalSection:createToggle({
 	Name = "Auto Drink Coffee (Low Sanity)",
 	flagName = "AutoDrinkCoffee",
-	Flag = true,
+	Flag = false,
 })
 survivalSection:createToggle({
 	Name = "Auto Skip Cutscenes",
 	flagName = "AutoSkipCutscenes",
-	Flag = true,
+	Flag = false,
 })
 survivalSection:createToggle({
 	Name = "Anti-Jumpscare popups",
 	flagName = "AntiJumpscare",
-	Flag = true,
+	Flag = false,
 })
 survivalSection:createToggle({
 	Name = "Auto Revive Teammates",
@@ -4175,7 +4276,7 @@ visualSection:createToggle({
 visualSection:createToggle({
 	Name = "ESP Show Labels",
 	flagName = "ESPShowNames",
-	Flag = true,
+	Flag = false,
 })
 visualSection:createToggle({
 	Name = "ESP Players",
@@ -4253,7 +4354,7 @@ debugSection:createToggle({
 debugSection:createToggle({
 	Name = "Auto Heartbeat Minigame",
 	flagName = "AutoHeartbeat",
-	Flag = true,
+	Flag = false,
 })
 debugSection:createButton({
 	Name = "Print Session Statistics",
@@ -4302,67 +4403,75 @@ task.spawn(function()
 	end
 end)
 
--- Main high-performance in-game loop
-interval("autofarm", "AutoFarm", 0.75, function()
-	-- 1. Follow Core Game Directive (Priority 1)
-	if followObjective() then
-		return
-	end
-
-	-- 3. New Patient Check-In & Registration (Priority 2)
-	if Library and Library.Flags then
-		if Library and Library.Flags and Library.Flags["AutoCheckIn"] and scanIdentity() then
+-- Main high-performance in-game loop.
+-- Runs when ANY of its flags is enabled, so each toggle works independently.
+interval(
+	"autofarm",
+	{ "AutoFarm", "AutoCheckIn", "VisitorFlow", "RoomTreatment", "EmergencyRooms", "AutoShift", "CarryFainted", "PutOutFire", "AvoidEyeMass", "FixCams", "TakeDNA", "HelpLiz", "AutoBuyItems", "AutoTrash", "AutoTaseCritical", "InfiniteTaseAll", "CoinFarm", "InfiniteLives", "AutoRevive", "InstantPP", "AutoBlowCandles", "AutoOpenSafes", "AutoCleanSlime", "AutoExtinguishFires", "AutoFightAnomalies", "ZombieAura", "AutoShopUpgrades", "AutoSkipDialogue", "AutoRescueEaten" },
+	0.75,
+	function()
+		-- 1. Follow Core Game Directive (Priority 1)
+		if Library.Flags["AutoFarm"] and followObjective() then
 			return
 		end
-		if Library and Library.Flags and Library.Flags["VisitorFlow"] and handleVisitorFlow() then
-			return
+
+		-- 3. New Patient Check-In & Registration (Priority 2)
+		if Library and Library.Flags then
+			if Library and Library.Flags and Library.Flags["AutoCheckIn"] and scanIdentity() then
+				return
+			end
+			if Library and Library.Flags and Library.Flags["VisitorFlow"] and handleVisitorFlow() then
+				return
+			end
 		end
-	end
 
-	-- 4. Admitted Patient Treatment (Priority 3)
-	if Library and Library.Flags and Library.Flags["RoomTreatment"] then
-		if handleRoomTreatment() then
-			return
+		-- 4. Admitted Patient Treatment (Priority 3)
+		if Library and Library.Flags and Library.Flags["RoomTreatment"] then
+			if handleRoomTreatment() then
+				return
+			end
 		end
-	end
 
-	-- 5. Emergency & Ambulance Rooms (Priority 4)
-	if Library and Library.Flags and Library.Flags["EmergencyRooms"] then
-		if handleEmergency() then
-			return
+		-- 5. Emergency & Ambulance Rooms (Priority 4)
+		if Library and Library.Flags and Library.Flags["EmergencyRooms"] then
+			if handleEmergency() then
+				return
+			end
 		end
+
+		-- 6. General QoL Subsystems & Exploits (Priority 5)
+		startShift()
+		handleFainted()
+		handlePeopleOnFire()
+		handleEyeMass()
+		handleFixCams()
+		handleFuses()
+		handleShopUpgrades()
+		handleTakeDNA()
+		helpLiz()
+		autoBuyItems()
+		handleInventory()
+		autoTaseCritical()
+		infiniteTaseAll()
+		coinFarm()
+		infiniteLives()
+		autoRevive()
+		instantPP()
+
+		-- Emergency & Combat subsystems
+		autoBlowCandles()
+		autoOpenSafes()
+		cleanAllSlime()
+		extinguishAllFires()
+		autoFightAnomaliesAndGhosts()
+		zombieAura()
+		skipDialogue()
+		autoRescueEaten()
 	end
+)
 
-	-- 6. General QoL Subsystems & Exploits (Priority 5)
-	startShift()
-	handleFainted()
-	handlePeopleOnFire()
-	handleEyeMass()
-	handleFixCams()
-	handleFuses()
-	handleShopUpgrades()
-	handleTakeDNA()
-	helpLiz()
-	autoBuyItems()
-	handleInventory()
-	autoTaseCritical()
-	infiniteTaseAll()
-	coinFarm()
-	infiniteLives()
-	autoRevive()
-	instantPP()
-
-	-- Emergency & Combat subsystems
-	autoBlowCandles()
-	autoOpenSafes()
-	cleanAllSlime()
-	extinguishAllFires()
-	autoFightAnomaliesAndGhosts()
-	zombieAura()
-end)
-
--- Safety loop: always on (flag-gated inside), independent of AutoFarm
-interval("safety", "AvoidMonsters", 0.5, function()
+-- Safety loop: runs when ANY monster-defense toggle is enabled
+interval("safety", { "AvoidMonsters", "StalkerHandler", "BedMonsterSyrup", "CeilingEyes", "SkinwalkerEscape", "CCTVExit", "AutoTaseMonsters", "AutoHeadBanger" }, 0.5, function()
 	fleeMonsters()
 	stalkerHandler()
 	handleBedMonster()
