@@ -504,19 +504,7 @@ function getTreatmentOrIllness(roomModel)
 		return nil
 	end
 
-	-- Try Monitor (Illnesses)
-	local monitor = minigame:FindFirstChild("Monitor", true)
-	if monitor then
-		local screen = monitor:FindFirstChild("Screen", true)
-		local ui = screen and screen:FindFirstChild("UI", true)
-		local report = ui and ui:FindFirstChild("Report", true)
-		local illnesses = report and report:FindFirstChild("illnesses", true)
-		if illnesses and illnesses.Text ~= "" then
-			return illnesses.Text
-		end
-	end
-
-	-- Try TV (Treatment)
+	-- Try TV first: its "treatment" label already contains exact CURE names
 	local tv = minigame:FindFirstChild("TV", true)
 	if tv then
 		local screen = tv:FindFirstChild("Screen", true)
@@ -525,6 +513,18 @@ function getTreatmentOrIllness(roomModel)
 		local treatment = report and report:FindFirstChild("treatment", true)
 		if treatment and treatment.Text ~= "" then
 			return treatment.Text
+		end
+	end
+
+	-- Fallback: Monitor shows the illness names (screen spelling, comma-separated)
+	local monitor = minigame:FindFirstChild("Monitor", true)
+	if monitor then
+		local screen = monitor:FindFirstChild("Screen", true)
+		local ui = screen and screen:FindFirstChild("UI", true)
+		local report = ui and ui:FindFirstChild("Report", true)
+		local illnesses = report and report:FindFirstChild("illnesses", true)
+		if illnesses and illnesses.Text ~= "" then
+			return illnesses.Text
 		end
 	end
 
@@ -865,9 +865,10 @@ function autoFightAnomaliesAndGhosts()
 		return
 	end
 	for _, m in ipairs(MonsterCache:GetMonsters()) do
-		if m:HasTag("GhostAnomaly") or m.Name:lower():find("ghost") then
-			fireRemote("ExtinguisherBubbleHitGhost", m)
-			fireRemote("ScannerKillGhost", m)
+		if m:HasTag("GhostAnomaly") or m.Name:lower():find("ghost") or m.Name:lower():find("hider") then
+			-- Reveal invisible ghosts with the extinguisher (verified remote), then
+			-- taser is handled separately by the taser toggles.
+			fireRemote("ExtinguisherBubbleHit", m)
 			State.SessionKilled = State.SessionKilled + 1
 		end
 	end
@@ -943,7 +944,12 @@ function fireModelPrompt(model, expectAT)
 
 	safeMoveToModel(model, function()
 		if pp.ActionText == "Apply Treatment" then
-			equipMedicine()
+			-- Only equip a fallback medicine if the character is holding NOTHING.
+			-- NEVER override a cure that the caller already equipped!
+			local equippedTool = getChar() and getChar():FindFirstChildOfClass("Tool")
+			if not equippedTool then
+				equipMedicine()
+			end
 		end
 
 		pcall(function()
@@ -1210,10 +1216,10 @@ function handleVisitorFlow()
 	end
 
 	local order = {
-		"Stamp Forms",
-		"Stamp the form",
 		"Take Photo",
 		"Take UV Photo",
+		"Stamp Forms",
+		"Stamp the form",
 		"Register",
 		"Print Badge",
 		"Take Badge",
@@ -1235,16 +1241,29 @@ end
 local SYNONYMS = {
 	["head_ache"] = "Head Ache",
 	["headache"] = "Head Ache",
+	["headaches"] = "Head Ache",
 	["head ache"] = "Head Ache",
 	["stomachache"] = "Stomach Ache",
 	["stomach_ache"] = "Stomach Ache",
 	["stomach ache"] = "Stomach Ache",
+	["stomach aches"] = "Stomach Ache",
+	["stomach-ache"] = "Stomach Ache",
 	["dry_eyes"] = "Dried Eyes",
 	["dry eyes"] = "Dried Eyes",
+	["dry eye"] = "Dried Eyes",
 	["dried eyes"] = "Dried Eyes",
+	["dried eye"] = "Dried Eyes",
 	["low_sugar"] = "Low Sugar",
 	["low sugar"] = "Low Sugar",
+	["low blood sugar"] = "Low Sugar",
+	["dehydrated"] = "Dehydration",
+	["dehydration"] = "Dehydration",
 	["canadian"] = "Canadian",
+	["fever"] = "Fever",
+	["bleeding"] = "Bleeding",
+	["bruises"] = "Bruises",
+	["rash"] = "Rash",
+	["flu"] = "Flu",
 }
 
 local KNOWN_CURES = {
@@ -1306,8 +1325,11 @@ end
 local function getCureForIllness(illnessName)
 	local data = getIllnessData(illnessName)
 	if data then
-		if type(data) == "table" and data.Cure then
-			return tostring(data.Cure)
+		if type(data) == "table" then
+			local cure = data.HealedWith or data.Cure
+			if cure then
+				return tostring(cure)
+			end
 		elseif type(data) == "string" then
 			return data
 		end
@@ -1346,6 +1368,13 @@ function handleRoomTreatment()
 		"Prepare Patient",
 		"Analyze Sample",
 		"Process Results",
+		"Begin X-Ray",
+		"Turn On",
+		"Set Up",
+		"Begin",
+		"Collect",
+		"Print Badge",
+		"Inspect",
 		"Apply Treatment",
 		"Ask to Leave",
 		"Complete Analysis",
@@ -1380,36 +1409,28 @@ function handleRoomTreatment()
 			local allowedCures = getCuresForIllnessString(rawString)
 
 			if #allowedCures > 0 then
-				local equipped = nil
+				-- Apply EVERY required cure (multi-illness patients need several)
 				for _, cure in ipairs(allowedCures) do
-					equipped = equipTool(cure)
+					local equipped = equipTool(cure)
+					if not equipped then
+						if buyTool(cure) then
+							task.wait(0.4)
+							equipped = equipTool(cure)
+						end
+					end
+
+					-- CRITICAL SAFETY CHECK: Only apply treatment if the correct cure is physically equipped!
 					if equipped then
-						break
-					end
-				end
-
-				if not equipped then
-					local targetCure = allowedCures[1]
-					if buyTool(targetCure) then
-						task.wait(0.4)
-						equipped = equipTool(targetCure)
-					end
-				end
-
-				-- CRITICAL SAFETY CHECK: Only apply treatment if the correct cure is physically equipped!
-				if equipped then
-					if fireModelPrompt(c.Model, c.Text) then
-						State.SessionHealed = State.SessionHealed + 1
-						return true
+						if fireModelPrompt(c.Model, c.Text) then
+							State.SessionHealed = State.SessionHealed + 1
+							return true
+						end
 					end
 				end
 			else
-				local fallbackTool = equipMedicine()
-				if fallbackTool then
-					if fireModelPrompt(c.Model, c.Text) then
-						return true
-					end
-				end
+				-- No screen data / unknown cure: NEVER guess with random medicine.
+				-- Wait for the report to appear instead of killing the patient.
+				print("[Treatment] No cure info for '" .. tostring(rawString) .. "' - waiting for report...")
 			end
 			return true -- Block further lower-priority actions on this tick while treating
 		else
@@ -1462,7 +1483,8 @@ function startShift()
 			local model = pp:FindFirstAncestorWhichIsA("Model")
 			if model then
 				local name = model.Name
-				if name:find("StartShift") or name:find("ShiftButton") or name:find("Computer") then
+				-- NOTE: "Computer" is the check-in register; never fire it here.
+				if (name:find("StartShift") or name:find("ShiftButton")) and not name:find("CheckIn") then
 					fireModelPrompt(model)
 					return
 				end
@@ -1536,10 +1558,24 @@ function handleEyeMass()
 					local dist = (root.Position - pivot.Position).Magnitude
 					if dist < 40 then
 						equipTool("Eye Drops")
-						if dist > 10 then
-							safeMoveToModel(model)
+						-- Room-aware: apply Eye Drops to the patient BED inside the
+						-- room where the eyemass is, not to the eyemass itself.
+						local room = model:FindFirstAncestorWhichIsA("Model")
+						local bedTarget = nil
+						for pp2 in pairs(PromptCache._prompts) do
+							if pp2.Enabled and pp2.ActionText == "Apply Treatment" then
+								local m2 = pp2:FindFirstAncestorWhichIsA("Model")
+								if m2 and m2:IsDescendantOf(room) and not isPatientOwned(m2) then
+									bedTarget = m2
+									break
+								end
+							end
 						end
-						fireModelPrompt(model, "Apply Treatment")
+						local target = bedTarget or model
+						if dist > 10 then
+							safeMoveToModel(target)
+						end
+						fireModelPrompt(target, "Apply Treatment")
 						return
 					end
 				end
@@ -1583,7 +1619,7 @@ function handleFixCams()
 	for pp in pairs(PromptCache._prompts) do
 		if pp.Enabled then
 			local model = pp:FindFirstAncestorWhichIsA("Model")
-			if model and model.Name:lower():find("camera") then
+			if model and (model.Name:lower():find("camera") or model.Name:lower():find("cam")) then
 				fireModelPrompt(model)
 				task.wait(2)
 				return
@@ -1761,10 +1797,19 @@ function instantPP()
 	if not Library or not Library.Flags or not Library.Flags["InstantPP"] then
 		return
 	end
+	-- Never auto-trigger dangerous prompts: skipping HoldDuration=0 means the
+	-- player must hold them manually (e.g. "Jumpscare All", "Buy Gun").
+	local DANGEROUS_AT = {
+		["Jumpscare All"] = true,
+		["Buy Gun"] = true,
+		["Vote to End the Game"] = true,
+	}
 	for pp in pairs(PromptCache._prompts) do
-		pcall(function()
-			pp.HoldDuration = 0
-		end)
+		if not DANGEROUS_AT[pp.ActionText] then
+			pcall(function()
+				pp.HoldDuration = 0
+			end)
+		end
 	end
 end
 
@@ -1853,7 +1898,7 @@ function toggleFly(enabled)
 				dir = dir - cam.CFrame.RightVector
 			end
 			if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-				dir = dir - cam.CFrame.RightVector
+				dir = dir + cam.CFrame.RightVector
 			end
 			if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
 				dir = dir + Vector3.new(0, 1, 0)
@@ -2508,11 +2553,7 @@ end)
 
 -- Main high-performance in-game loop
 interval("autofarm", "AutoFarm", 0.75, function()
-	-- 1. Critical Safety & Environmental Hazards (Always active)
-	fleeMonsters()
-	stalkerHandler()
-
-	-- 2. Follow Core Game Directive (Priority 1)
+	-- 1. Follow Core Game Directive (Priority 1)
 	if followObjective() then
 		return
 	end
@@ -2565,6 +2606,25 @@ interval("autofarm", "AutoFarm", 0.75, function()
 	extinguishAllFires()
 	autoFightAnomaliesAndGhosts()
 	zombieAura()
+end)
+
+-- Safety loop: always on (flag-gated inside), independent of AutoFarm
+interval("safety", "AvoidMonsters", 0.5, function()
+	fleeMonsters()
+	stalkerHandler()
+end)
+
+-- Sanity clamp: the game's 50s "Job Stress" drain calls the captured
+-- LocalLoseSanity closure directly, bypassing the Lib hook. Force the local
+-- attribute back to 100 so Silent mode actually keeps sanity full.
+interval("sanityclamp", "SanityMode", 1, function()
+	if Library and Library.Flags and Library.Flags["SanityMode"] == "Silent Local Hook" then
+		pcall(function()
+			if client:GetAttribute("Sanity") ~= 100 then
+				client:SetAttribute("Sanity", 100)
+			end
+		end)
+	end
 end)
 
 interval("movement", "WalkSpeed", 0.1, applyMovement)
