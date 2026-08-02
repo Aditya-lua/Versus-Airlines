@@ -451,10 +451,16 @@ local function DebugLog(...)
     local parts = { ... }
     local line = os.time() .. " " .. table.concat(parts, " | ")
     print("[GAG2DBG] " .. line)
-    DebugLogBuf[#DebugLogBuf + 1] = line
-    if #DebugLogBuf > 2000 then
-        table.remove(DebugLogBuf, 1)
+    local buf = DebugLogBuf
+    if #buf >= 2000 then
+        local out = {}
+        for i = 1001, #buf do
+            out[#out + 1] = buf[i]
+        end
+        DebugLogBuf = out
+        buf = out
     end
+    buf[#buf + 1] = line
 end
 -- auto-writer: flush the log to a file every few seconds so it can be
 -- inspected live from outside the game (Delta writefile).
@@ -2089,10 +2095,12 @@ do
         end)
         return ok and _vInvTotal ~= nil
     end
+    local _lastInvDbg = 0
     local function computeInvValue()
         local d = getData()
         local invVal = 0
         local count = 0
+        local now = os.time()
         local hf = d and d.Inventory and d.Inventory.HarvestedFruits
         if hf then
             for _, finfo in pairs(hf) do
@@ -2109,6 +2117,7 @@ do
             end
         end
         -- fruits live in the player's backpack as Tools (game grid renders from there)
+        local backpackCount = 0
         local firstFew = {}
         local firstFewCount = 0
         for _, parent in ipairs(getToolParents()) do
@@ -2120,7 +2129,8 @@ do
                     local hasSeed = tool:GetAttribute("Seed")
                     if hasHF or hasFN or hasFruit or hasSeed then
                         local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local weight = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or tool:GetAttribute("SizeMulti") or 1) or 1
+                        local rawW = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[fname] or 1)
+                        local weight = rawW and rawW > 0 and rawW or 1
                         local mname = tool:GetAttribute("Mutation")
                         if type(mname) ~= "string" then
                             mname = nil
@@ -2130,7 +2140,7 @@ do
                         backpackCount = backpackCount + 1
                         if firstFewCount < 3 then
                             firstFewCount = firstFewCount + 1
-                            firstFew[#firstFew + 1] = string.format("%s(HF=%s,FN=%s,F=%s,S=%s,Id=%s,W=%s,SM=%s,M=%s)", fname, tostring(hasHF), tostring(hasFN), tostring(hasFruit), tostring(hasSeed), tostring(tool:GetAttribute("Id")), tostring(tool:GetAttribute("Weight")), tostring(tool:GetAttribute("SizeMultiplier")), tostring(mname))
+                            firstFew[#firstFew + 1] = string.format("%s(HF=%s,FN=%s,F=%s,S=%s,Id=%s,W=%s,SM=%s,M=%s)", fname, tostring(hasHF), tostring(hasFN), tostring(hasFruit), tostring(hasSeed), tostring(tool:GetAttribute("Id")), tostring(rawW), tostring(tool:GetAttribute("SizeMultiplier")), tostring(mname))
                         end
                     end
                 end
@@ -2139,7 +2149,6 @@ do
         if backpackCount > 0 and now ~= _lastInvDbg then
             DebugLog("invValue", "backpackScan", "found=" .. backpackCount, "totalCount=" .. count, "val=" .. invVal, "samples=" .. table.concat(firstFew, ";"))
         end
-        local now = os.time()
         if now ~= _lastInvDbg then
             _lastInvDbg = now
             local sample = ""
@@ -2175,7 +2184,6 @@ do
         return invVal, count
     end
     ValueESP = {}
-    local _lastInvDbg = 0
     ValueESP.update = function()
         local onTags = Library.Flags["espFruitValue"] == true
         local onTotal = Library.Flags["espTotalValue"] == true
@@ -2756,7 +2764,10 @@ local function doSellSelective()
                     local uid = tool:GetAttribute("Id")
                     if uid then
                         local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local wt = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or tool:GetAttribute("SizeMulti") or (ValueDB.baseWeight[cropName] or 1)) or 1
+                        local wt = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[cropName] or 1)
+                        if not wt or wt <= 0 then
+                            wt = 1
+                        end
                         local mutName = tool:GetAttribute("Mutation")
                         if type(mutName) ~= "string" then mutName = nil end
                         local entry = {
@@ -2838,7 +2849,10 @@ local function doFavorite(setFav, all)
                     local uid = tool:GetAttribute("Id")
                     if uid then
                         local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local wt = tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("Weight") or tool:GetAttribute("SizeMulti") or (ValueDB.baseWeight[cropName] or 1)) or 1
+                        local wt = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[cropName] or 1)
+                        if not wt or wt <= 0 then
+                            wt = 1
+                        end
                         local mutName = tool:GetAttribute("Mutation")
                         if type(mutName) ~= "string" then mutName = nil end
                         local entry = {
@@ -2887,7 +2901,8 @@ end
 local placeOneSprinkler
 local function doSprinkler()
     local playerData = getData()
-    if not (playerData and playerData.Inventory and playerData.Inventory.Sprinklers) then
+    local invSprinklers = playerData and playerData.Inventory and playerData.Inventory.Sprinklers
+    if not invSprinklers then
         DebugLog("doSprinkler", "exit: no Inventory.Sprinklers data", "invKeys=" .. (playerData and playerData.Inventory and type(playerData.Inventory) == "table" and (function()
             local ks = {}
             for k in pairs(playerData.Inventory) do
@@ -2896,7 +2911,6 @@ local function doSprinkler()
             table.sort(ks)
             return table.concat(ks, ",")
         end)() or "nil"))
-        return
     end
     local plot = myPlot()
     if not plot then
@@ -2914,10 +2928,28 @@ local function doSprinkler()
     end
     local name = firstValue(Library.Flags["sprinklerSelect"] or {})
     if not name or name == "" then
-        for sname, sval in pairs(playerData.Inventory.Sprinklers) do
-            if type(sname) == "string" then
-                name = sname
-                break
+        if invSprinklers then
+            for sname, sval in pairs(invSprinklers) do
+                if type(sname) == "string" then
+                    name = sname
+                    break
+                end
+            end
+        end
+        if not name then
+            for _, parent in ipairs(getToolParents()) do
+                for _, tool in ipairs(parent:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local s = tool:GetAttribute("Sprinkler")
+                        if type(s) == "string" and s ~= "" then
+                            name = s
+                            break
+                        end
+                    end
+                end
+                if name then
+                    break
+                end
             end
         end
     end
@@ -2925,13 +2957,29 @@ local function doSprinkler()
         DebugLog("doSprinkler", "exit: no sprinkler name found")
         return
     end
-    placeOneSprinkler(plot, name, playerData.Inventory.Sprinklers[name])
+    placeOneSprinkler(plot, name, invSprinklers and invSprinklers[name] or 1)
 end
 
 local function doSprinklerAll()
     local playerData = getData()
-    if not (playerData and playerData.Inventory and playerData.Inventory.Sprinklers) then
-        return
+    local sprinklers = playerData and playerData.Inventory and playerData.Inventory.Sprinklers
+    if not sprinklers then
+        -- fallback: scan backpack + character tools with "Sprinkler" attribute
+        sprinklers = {}
+        for _, parent in ipairs(getToolParents()) do
+            for _, tool in ipairs(parent:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local s = tool:GetAttribute("Sprinkler")
+                    if type(s) == "string" and s ~= "" then
+                        sprinklers[s] = (sprinklers[s] or 0) + 1
+                    end
+                end
+            end
+        end
+        if not next(sprinklers) then
+            DebugLog("doSprinklerAll", "exit: no sprinklers owned")
+            return
+        end
     end
     local plot = myPlot()
     if not plot then
@@ -2947,7 +2995,7 @@ local function doSprinklerAll()
         return
     end
     local placed = 0
-    for sname, sval in pairs(playerData.Inventory.Sprinklers) do
+    for sname, sval in pairs(sprinklers) do
         if type(sname) == "string" and placeOneSprinkler(plot, sname, sval) then
             placed = placed + 1
             task.wait(tonumber(Library.Flags["sprinklerDelay"]) or 0)
@@ -5750,9 +5798,12 @@ track(RunService.Heartbeat:Connect(function()
             doSellAll()
         end
     end
-    -- sell on full
-    if Library.Flags["sellOnFull"] and isInventoryFull() then
-        doSellAll()
+    -- sell on full (rate-limited to avoid spamming SellAll every frame)
+    if Library.Flags["sellOnFull"] and now - _lastSell >= 5 then
+        if isInventoryFull() then
+            _lastSell = now
+            doSellAll()
+        end
     end
     -- daily deal (rate-limited to ~1/s to avoid spam)
     if Library.Flags["dailyDeal"] and now - _lastDailyDeal >= 1 then
@@ -5960,6 +6011,22 @@ task.spawn(function()
                     end
                 end
             end
+            if invVal <= 0 then
+                for _, parent in ipairs(getToolParents()) do
+                    for _, tool in ipairs(parent:GetChildren()) do
+                        if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
+                            local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+                            local rawW = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[fname] or 1)
+                            local weight = rawW and rawW > 0 and rawW or 1
+                            local mname = tool:GetAttribute("Mutation")
+                            if type(mname) ~= "string" then
+                                mname = nil
+                            end
+                            invVal = invVal + ValueEngine.compute(fname, weight, mname)
+                        end
+                    end
+                end
+            end
             local invValStr = invVal > 0 and (" ($" .. fmtCash(math.floor(invVal)) .. ")") or ""
             ul("statBalance", "Balance: " .. fmtCash(bal))
             ul("statPerMin", "Per Minute: " .. fmtCash(perMin))
@@ -6162,7 +6229,6 @@ end
 -- ensure programmatically-set flags exist so loadSettings can populate them
 Library.Flags["savedPlantPos"] = Library.Flags["savedPlantPos"] or false
 Library.Flags["savedSprinklerPos"] = Library.Flags["savedSprinklerPos"] or false
-Library.Flags["savedTrowelPos"] = Library.Flags["savedTrowelPos"] or false
 
 loadSettings()
 
