@@ -1,6 +1,6 @@
 --[[
     Versus Airlines - Animal Hospital Ultra
-    Version: v4.0 (Sun Hub Upgrade - The Ultimate In-Game Autopilot)
+    Version: v4.0 (The Ultimate In-Game Autopilot)
     PlaceId: 104522435597696 / Lobby: 78515283254292
     
     Architected by Senior Roblox Software Engineering Assistant
@@ -215,13 +215,14 @@ local State = {
 	RoomAppliedMeds = {},
 	ItemCache = {},
 	OriginalHoldDurations = setmetatable({}, { __mode = "k" }),
+	InstantPPHooked = setmetatable({}, { __mode = "k" }),
 	ESPBoxes = {},
 	ESPTracked = {},
 	CameraYaw = 0,
 	ConfigLoaded = false,
 }
 
--- Illness token -> cure medicine (Sun Hub verified gameplay mapping; used as
+-- Illness token -> cure medicine (verified gameplay mapping; used as
 -- fallback when the game's IllnessesAndCures module has no entry)
 local SUN_CURE_MAP = {
 	["Fever"] = "Thermo",
@@ -254,7 +255,7 @@ local SURGERY_TOOL_MAP = {
 	["organ"] = "Organ",
 }
 
--- Monster detection attributes / voices (Sun Hub verified)
+-- Monster detection attributes / voices (verified via live gameplay)
 local MONSTER_ATTRIBUTES = {
 	"PhotoEffect", "PhotoEffect2", "CameraEffect", "CameraEffect2",
 	"InspectEffect", "InspectEffect2", "Cursed", "IsMonster", "Skinwalker",
@@ -514,7 +515,7 @@ function isSkinwalker(npc)
 	if not npc or not npc:IsA("Model") then
 		return false
 	end
-	-- Sun Hub verified attribute filter (PhotoEffect "Static" is NOT a monster)
+	-- Verified attribute filter (PhotoEffect "Static" is NOT a monster)
 	for _, attr in ipairs(MONSTER_ATTRIBUTES) do
 		local v = npc:GetAttribute(attr)
 		if v ~= nil and v ~= "Static" then
@@ -905,7 +906,7 @@ function connectRemote(name, callback)
 end
 
 -----------------------------------------------------------------
--- V4.0 CORE HELPERS (Sun Hub proven utilities)
+-- V4.0 CORE HELPERS (proven in-game utilities)
 -----------------------------------------------------------------
 local AHLib = nil
 function getAHLib()
@@ -1490,7 +1491,7 @@ function setupSanityHook()
 	if ok and Lib then
 		originalPlayerLostSanity = Lib.PlayerLostSanity
 		Lib.PlayerLostSanity = function(amount, reason, suppressRemote)
-			-- Block Cursed Photo sanity drain entirely (Sun Hub verified)
+			-- Block Cursed Photo sanity drain entirely
 			if Library and Library.Flags and Library.Flags["AutoSkipCutscenes"] and reason == "Cursed Photo" then
 				return
 			end
@@ -1588,13 +1589,41 @@ function extinguishAllFires()
 	end
 	for _, npc in ipairs(CollectionService:GetTagged("NPC")) do
 		if npc:HasTag("OnFire") then
-			fireRemote("ExtinguisherBubbleHitFireNPC", npc)
+			-- V4: fire once per FireCharges attribute so multi-charge blazes go out
+			local charges = tonumber(npc:GetAttribute("FireCharges")) or 1
+			for i = 1, math.max(1, charges) do
+				fireRemote("ExtinguisherBubbleHitFireNPC", npc)
+			end
 		end
 	end
 	local char = getChar()
 	if char and char:HasTag("OnFire") then
-		fireRemote("ExtinguisherBubbleHitFireNPC", char)
+		local charges = tonumber(char:GetAttribute("FireCharges")) or 1
+		for i = 1, math.max(1, charges) do
+			fireRemote("ExtinguisherBubbleHitFireNPC", char)
+		end
 	end
+end
+
+-- V4: auto-tag shop prompts so handleShopUpgrades can find them (the game
+-- marks them at runtime; tagging here keeps the keyword filter working)
+function setupShopTagHook()
+	local function tagPrompt(pp)
+		if not pp:IsA("ProximityPrompt") then
+			return
+		end
+		local model = pp:FindFirstAncestorWhichIsA("Model")
+		if model then
+			local n = model.Name:lower()
+			if n:find("shop") or n:find("cabinet") or n:find("shopitem") then
+				pp:SetAttribute("ShopItemPP", true)
+			end
+		end
+	end
+	for _, pp in ipairs(Workspace:GetDescendants()) do
+		tagPrompt(pp)
+	end
+	Workspace.DescendantAdded:Connect(tagPrompt)
 end
 
 function autoFightAnomaliesAndGhosts()
@@ -1948,7 +1977,7 @@ function scanIdentity()
 		return false
 	end
 
-	-- Don't fire prompts while the check-in dialogue is open (Sun Hub verified)
+	-- Don't fire prompts while the check-in dialogue is open
 	if isDialogueOpen() then
 		return true
 	end
@@ -2427,7 +2456,7 @@ function continueRoomTreatment(room)
 
 	if #requiredMeds > 0 then
 		local cure = requiredMeds[1]
-		-- Free inventory space first (Sun Hub proven: trash unneeded items)
+		-- Free inventory space first (trash unneeded items)
 		if getToolCount() >= getCarryCapacity() then
 			trashUnneededItems(cure)
 			task.wait(0.3)
@@ -2557,20 +2586,51 @@ function handleFainted()
 		return
 	end
 
-	for _, tag in ipairs({ "Downed", "DeadPlayer" }) do
+	for _, tag in ipairs({ "Downed", "DeadPlayer", "Fainted" }) do
 		for _, m in ipairs(CollectionService:GetTagged(tag)) do
 			if m:IsA("Model") then
 				local p = m:FindFirstChild("HumanoidRootPart")
 					or m:FindFirstChild("Torso")
 					or m:FindFirstChildWhichIsA("BasePart")
 				if p and distanceTo(p.Position) < 40 then
-					root.CFrame = p.CFrame + Vector3.new(0, 5, 0)
-					task.wait(0.2)
-					local hum = getHumanoid()
-					if hum then
-						pcall(function()
-							hum:MoveTo(root.Position + Vector3.new(40, 0, 0))
-						end)
+					-- V4: pick up the fainted NPC and drop them at the trash can,
+					-- or at a bed inside their room if no trash can is available
+					local carryPP = nil
+					for pp in pairs(PromptCache._prompts) do
+						if pp.Enabled then
+							local at = pp.ActionText or ""
+							if at:find("Pick Up") or at:find("Carry") then
+								local pm = pp:FindFirstAncestorWhichIsA("Model")
+								if pm and (pm == m or pm:IsDescendantOf(m)) then
+									carryPP = pp
+									break
+								end
+							end
+						end
+					end
+					if not carryPP then
+						return
+					end
+					tweenToPosition(p.Position)
+					task.wait(0.3)
+					firePromptChecked(carryPP)
+					task.wait(0.6)
+					local trashPP = findTrashCan()
+					if trashPP then
+						local trashPart = getPromptPart(trashPP)
+						if trashPart then
+							tweenToPosition(trashPart.Position)
+						end
+						task.wait(0.4)
+						updateMaxActivationDistance(trashPP, true)
+					else
+						local room = m:FindFirstAncestorWhichIsA("Model")
+						local bedPP = findRoomBedPP(room)
+						if bedPP then
+							safeMoveToModel(bedPP:FindFirstAncestorWhichIsA("Model"))
+							task.wait(0.3)
+							fireModelPrompt(bedPP:FindFirstAncestorWhichIsA("Model"), bedPP.ActionText)
+						end
 					end
 					return
 				end
@@ -2809,7 +2869,7 @@ function infiniteTaseAll()
 end
 
 -----------------------------------------------------------------
--- V4.0 UPGRADED SUBSYSTEMS (Sun Hub proven techniques)
+-- V4.0 UPGRADED SUBSYSTEMS (proven in-game techniques)
 -----------------------------------------------------------------
 local function findCoffeePrompt()
 	local best, bestDist = nil, math.huge
@@ -3303,6 +3363,21 @@ function instantPP()
 	for pp in pairs(PromptCache._prompts) do
 		if not DANGEROUS_AT[pp.ActionText] then
 			pcall(function()
+				-- V4: cache the original hold duration once and restore it after
+				-- each trigger (instant-interact restore pattern)
+				if State.OriginalHoldDurations[pp] == nil then
+					State.OriginalHoldDurations[pp] = pp.HoldDuration
+				end
+				if not State.InstantPPHooked[pp] then
+					State.InstantPPHooked[pp] = true
+					local conn = pp.Triggered:Connect(function()
+						task.wait(0.2)
+						pcall(function()
+							pp.HoldDuration = State.OriginalHoldDurations[pp] or 0.5
+						end)
+					end)
+					GlobalJanitor:Add(conn)
+				end
 				pp.HoldDuration = 0
 			end)
 		end
@@ -3314,12 +3389,23 @@ end
 -----------------------------------------------------------------
 function autoBlowCandles()
 	if not Library or not Library.Flags or not Library.Flags["AutoBlowCandles"] then
-		return
+		return false
 	end
-	local m = PromptCache:GetNearestPrompt("Blow out")
-	if m then
-		fireModelPrompt(m, "Blow out")
+	-- V4: blow out EVERY lit candle, not just the nearest one
+	local blew = false
+	for pp in pairs(PromptCache._prompts) do
+		if pp.Enabled then
+			local at = pp.ActionText or ""
+			if at:find("Blow out") then
+				local model = pp:FindFirstAncestorWhichIsA("Model")
+				if model then
+					fireModelPrompt(model, "Blow out")
+					blew = true
+				end
+			end
+		end
 	end
+	return blew
 end
 
 function autoOpenSafes()
@@ -3485,7 +3571,7 @@ function createEsp(target, color, text)
 	if not target then
 		return
 	end
-	-- V4: Drawing API boxes + tracers + names (Sun Hub proven, lower overhead)
+	-- V4: Drawing API boxes + tracers + names (lower overhead)
 	local drawing = Drawing
 	local part = getInstancePart(target)
 	if part and drawing and drawing.new then
@@ -4225,6 +4311,7 @@ PromptCache:Start()
 MonsterCache:Start()
 setupSanityHook()
 setupJumpscareBypass()
+setupShopTagHook()
 hookServerEvents()
 if not State.ConfigLoaded then
 	loadFlags()
