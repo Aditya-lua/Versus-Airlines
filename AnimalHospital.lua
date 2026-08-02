@@ -1,15 +1,17 @@
 --[[
     Versus Airlines - Animal Hospital Ultra
-    Version: v3.0 (The Ultimate In-Game Autopilot)
+    Version: v4.0 (Sun Hub Upgrade - The Ultimate In-Game Autopilot)
     PlaceId: 104522435597696 / Lobby: 78515283254292
     
     Architected by Senior Roblox Software Engineering Assistant
     - Ultra-optimized event-driven caches (PromptCache & MonsterCache)
     - Full Hospital Autopilot (Handles Rooms 1 to 8: X-Ray, Surgery, Heart Monitor, Medical)
-    - Auto Reject Skinwalkers (Detection via custom meshes & attributes, shutter auto-shut)
-    - Combat Suite & Extinguisher Exploit (Instantly cleans slime and fires from range)
-    - Silent Anti-Jumpscare Hook
-    - Dual-Mode Infinite Sanity (Silent local intercept vs Server-side NaN freeze)
+    - V4 Treatment Engine: step-machine locks, TV inv parsing, Room6 colors solver, Room8 surgery loop
+    - V4 Check-In: attribute/voice/tag monster filter, shutter toggle, named-prompt sequence
+    - Tool-based Tasing (no fake remotes), Coffee sanity, Bed Monster syrup, head banger
+    - Ceiling eyes, skinwalker E-escape, CCTV auto-exit, fuses, shop upgrades, teleports
+    - Drawing API ESP (boxes/tracers/names) with Highlight fallback
+    - Silent Anti-Jumpscare Hook, Dual-Mode Infinite Sanity, cutscene skip
 ]]
 --
 
@@ -206,6 +208,81 @@ local State = {
 	SessionHealed = 0,
 	SessionRejected = 0,
 	SessionKilled = 0,
+	TreatLock = false,
+	ActiveRoom = nil,
+	IsTreatingRoom = false,
+	IsDrinkingCoffee = false,
+	RoomAppliedMeds = {},
+	ItemCache = {},
+	OriginalHoldDurations = setmetatable({}, { __mode = "k" }),
+	ESPBoxes = {},
+	ESPTracked = {},
+	CameraYaw = 0,
+	ConfigLoaded = false,
+}
+
+-- Illness token -> cure medicine (Sun Hub verified gameplay mapping; used as
+-- fallback when the game's IllnessesAndCures module has no entry)
+local SUN_CURE_MAP = {
+	["Fever"] = "Thermo",
+	["Headache"] = "Medicine",
+	["Dried Eyes"] = "Eye Drops",
+	["Dehydration"] = "IV Drops",
+	["Bruises"] = "Medkit",
+	["Rashes"] = "Ointment",
+	["Bleeding"] = "Bandages",
+	["Stomach Ache"] = "Herbs",
+	["Low sugar"] = "Maple Syrup",
+	["Canadian"] = "Maple Syrup",
+	["Flu"] = "Cough Syrup",
+}
+
+-- Full inventory medicine tool list (used to detect "non-medicine" tools that
+-- can be trashed to free inventory space)
+local MEDICINE_TOOLS = {
+	"Maple Syrup", "Herbs", "Ointment", "Pills", "Bandages", "Antibiotics",
+	"IV Drops", "Organ", "Transplant", "Scalpel", "Scissors", "Medicine",
+	"Medkit", "Ice Pack", "Splint", "Inhaler", "Cough Syrup", "Eye Drops",
+}
+
+-- Room 8 surgery: PP ActionText keyword -> required tool
+local SURGERY_TOOL_MAP = {
+	["scissors"] = "Scissors",
+	["transplant"] = "Transplant",
+	["scalpel"] = "Scalpel",
+	["antibiotics"] = "Antibiotics",
+	["organ"] = "Organ",
+}
+
+-- Monster detection attributes / voices (Sun Hub verified)
+local MONSTER_ATTRIBUTES = {
+	"PhotoEffect", "PhotoEffect2", "CameraEffect", "CameraEffect2",
+	"InspectEffect", "InspectEffect2", "Cursed", "IsMonster", "Skinwalker",
+}
+local MONSTER_VOICES = { "Distorted", "LowDistorted", "Monster" }
+
+-- Shop upgrade keyword categories (ObjectText/Parent.Name match)
+local SHOP_CATEGORIES = {
+	["BuyCapacity"] = { "backpack", "capacity", "pocket" },
+	["BuyDNASpeed"] = { "dna", "synth", "analyzer" },
+	["BuyGiveInventory"] = { "technique", "formula", "inventory" },
+	["BuyCheckIn"] = { "check", "window", "bell" },
+	["BuyConsumables"] = { "chocolate", "coffee" },
+}
+
+-- Teleport destinations
+local TELEPORT_DESTINATIONS = {
+	"Check-In Counter",
+	"Coffee Machine (Sanity)",
+	"Supplies Shop",
+	"Medical Room 1",
+	"Medical Room 2",
+	"Medical Room 3",
+	"Medical Room 4",
+	"Medical Room 5",
+	"Medical Room 6",
+	"Medical Room 7",
+	"Medical Room 8 (Surgery)",
 }
 
 -----------------------------------------------------------------
@@ -437,7 +514,15 @@ function isSkinwalker(npc)
 	if not npc or not npc:IsA("Model") then
 		return false
 	end
-	if npc:GetAttribute("CameraEffect") or npc:GetAttribute("PhotoEffect") or npc:GetAttribute("DisguiseReveal") then
+	-- Sun Hub verified attribute filter (PhotoEffect "Static" is NOT a monster)
+	for _, attr in ipairs(MONSTER_ATTRIBUTES) do
+		local v = npc:GetAttribute(attr)
+		if v ~= nil and v ~= "Static" then
+			return true
+		end
+	end
+	local voice = npc:GetAttribute("Voice")
+	if voice and MONSTER_VOICES[voice] then
 		return true
 	end
 	-- Scan hidden anatomy subparts (specific to skinwalkers)
@@ -446,10 +531,64 @@ function isSkinwalker(npc)
 			return true
 		end
 	end
-	if npc.Name:lower():find("skinwalker") then
+	if npc.Name:lower():find("skinwalker") or npc.Name:lower() == "barney" then
 		return true
 	end
+	for _, tag in ipairs({ "Skinwalker", "Anomaly", "Monster", "Enemy" }) do
+		if CollectionService:HasTag(npc, tag) then
+			return true
+		end
+	end
 	return false
+end
+
+function getShutterPP()
+	local shutterModel = Workspace:FindFirstChild("ShutterButton", true) or Workspace:FindFirstChild("Shutters", true)
+	if not shutterModel then
+		return nil
+	end
+	return shutterModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+end
+
+function fireShutter(actionTextLower)
+	local shutterPP = getShutterPP()
+	if not shutterPP or not shutterPP.Enabled then
+		return false
+	end
+	local at = (shutterPP.ActionText or ""):lower()
+	-- ActionText reflects the CURRENT state (e.g. "Locked" = shutters closed).
+	-- Pressing the button TOGGLES, so:
+	--   close (lock):   fire only when NOT already locked
+	--   open  (unlock): fire only when currently locked
+	local matches = false
+	if actionTextLower == "open" then
+		matches = at:find("lock")
+	else
+		matches = not (at:find("lock"))
+	end
+	if not matches then
+		return false
+	end
+	local shutterModel = shutterPP:FindFirstAncestorWhichIsA("Model")
+	if not shutterModel then
+		return false
+	end
+	safeMoveToModel(shutterModel, function()
+		pcall(function()
+			shutterPP.HoldDuration = 0
+			shutterPP.MaxActivationDistance = 25
+			if fireproximityprompt then
+				fireproximityprompt(shutterPP, 1)
+			elseif firesignal then
+				firesignal(shutterPP.Triggered, client)
+			else
+				shutterPP:InputHoldBegin()
+				task.wait(0.1)
+				shutterPP:InputHoldEnd()
+			end
+		end)
+	end)
+	return true
 end
 
 function checkAndRejectSkinwalker()
@@ -463,33 +602,24 @@ function checkAndRejectSkinwalker()
 			local model = pp:FindFirstAncestorWhichIsA("Model")
 			if model and isSkinwalker(model) then
 				print("[Ultra Control] Detected Skinwalker at front desk!")
-
-				local shutterModel = Workspace:FindFirstChild("ShutterButton", true)
-					or Workspace:FindFirstChild("Shutters", true)
-				if shutterModel then
-					local shutterPP = shutterModel:FindFirstChildWhichIsA("ProximityPrompt", true)
-					if shutterPP and shutterPP.Enabled then
-						safeMoveToModel(shutterModel, function()
-							pcall(function()
-								shutterPP.HoldDuration = 0
-								if fireproximityprompt then
-									fireproximityprompt(shutterPP, 1)
-								else
-									shutterPP:InputHoldBegin()
-									task.wait(0.1)
-									shutterPP:InputHoldEnd()
-								end
-								State.SessionRejected = State.SessionRejected + 1
-								notify("Anti-Skinwalker", "Rejected Disguised Skinwalker!")
-							end)
-						end)
-						return true
-					end
+				if fireShutter("close") then
+					State.SessionRejected = State.SessionRejected + 1
+					notify("Anti-Skinwalker", "Rejected Disguised Skinwalker!")
+					return true
 				end
 			end
 		end
 	end
 	return false
+end
+
+function findVisitorAtCheckIn()
+	for _, npc in ipairs(Workspace:FindFirstChild("NPCs") and Workspace.NPCs:GetChildren() or {}) do
+		if CollectionService:HasTag(npc, "VisitorAtCheckIn") then
+			return npc
+		end
+	end
+	return nil
 end
 
 -----------------------------------------------------------------
@@ -775,6 +905,580 @@ function connectRemote(name, callback)
 end
 
 -----------------------------------------------------------------
+-- V4.0 CORE HELPERS (Sun Hub proven utilities)
+-----------------------------------------------------------------
+local AHLib = nil
+function getAHLib()
+	if AHLib then
+		return AHLib
+	end
+	pcall(function()
+		AHLib = require(ReplicatedStorage:WaitForChild("Lib", 5))
+	end)
+	return AHLib
+end
+
+function getInventoryTools()
+	local tools = {}
+	local backpack = client:FindFirstChild("Backpack")
+	local char = getChar()
+	if backpack then
+		for _, v in ipairs(backpack:GetChildren()) do
+			if v:IsA("Tool") then
+				table.insert(tools, v)
+			end
+		end
+	end
+	if char then
+		for _, v in ipairs(char:GetChildren()) do
+			if v:IsA("Tool") then
+				table.insert(tools, v)
+			end
+		end
+	end
+	return tools
+end
+
+function findToolInInventory(name)
+	for _, tool in ipairs(getInventoryTools()) do
+		if tool.Name == name or tool.Name:find(name, 1, true) or name:find(tool.Name, 1, true) then
+			return tool
+		end
+	end
+	return nil
+end
+
+function useToolByName(name)
+	local tool = findToolInInventory(name)
+	if not tool then
+		return nil
+	end
+	local hum = getHumanoid()
+	if hum and tool.Parent ~= getChar() then
+		pcall(function()
+			hum:EquipTool(tool)
+		end)
+		task.wait(0.15)
+	end
+	if tool.Parent == getChar() then
+		return tool
+	end
+	return tool
+end
+
+function getCarryCapacity()
+	return 3 + (client:GetAttribute("BonusCarryItems") or 0)
+end
+
+function getInstancePart(model)
+	if not model then
+		return nil
+	end
+	if model:IsA("BasePart") then
+		return model
+	end
+	if model.PrimaryPart then
+		return model.PrimaryPart
+	end
+	return model:FindFirstChildWhichIsA("BasePart")
+end
+
+function findTrashCan()
+	local root = getRoot()
+	local best, bestDist = nil, math.huge
+	local function check(obj)
+		if not obj:IsA("ProximityPrompt") or not obj.Enabled then
+			return
+		end
+		local model = obj:FindFirstAncestorWhichIsA("Model")
+		local mName = model and model.Name or ""
+		local at = obj.ActionText or ""
+		if mName == "Trash" or at == "Trash Item" or at:lower():find("trash") then
+			local part = getInstancePart(model) or obj.Parent
+			if part and root and part:IsA("BasePart") then
+				local d = (root.Position - part.Position).Magnitude
+				if d < bestDist then
+					bestDist = d
+					best = obj
+				end
+			end
+		end
+	end
+	for _, obj in ipairs(Workspace:GetDescendants()) do
+		check(obj)
+	end
+	return best
+end
+
+function findItemShelf(item)
+	if State.ItemCache[item] then
+		local cached = State.ItemCache[item]
+		if cached.Parent then
+			return cached
+		end
+		State.ItemCache[item] = nil
+	end
+	local root = getRoot()
+	local best, bestDist = nil, math.huge
+	local function consider(candidate)
+		if not candidate or not candidate.Parent then
+			return
+		end
+		local pp = candidate:FindFirstChild("PP") or candidate:FindFirstChildWhichIsA("ProximityPrompt", true)
+		local part = getInstancePart(candidate)
+		if pp and part then
+			local d = root and (root.Position - part.Position).Magnitude or 0
+			if d < bestDist then
+				bestDist = d
+				best = candidate
+			end
+		end
+	end
+	for _, child in ipairs(Workspace:GetChildren()) do
+		if child:IsA("Model") then
+			local items = child:FindFirstChild("Items")
+			if items then
+				consider(items:FindFirstChild(item))
+			end
+		end
+	end
+	local rooms = Workspace:FindFirstChild("Rooms")
+	local room8 = rooms and rooms:FindFirstChild("Emergency") and rooms.Emergency:FindFirstChild("Room8")
+	local medicine = room8 and room8:FindFirstChild("Minigame") and room8.Minigame:FindFirstChild("Medicine")
+	if medicine then
+		for _, child in ipairs(medicine:GetChildren()) do
+			local found = child:FindFirstChild(item)
+			if found then
+				consider(found)
+			end
+		end
+	end
+	for _, desc in ipairs(Workspace:GetDescendants()) do
+		if desc.Name == item and (desc:FindFirstChild("PP") or desc:FindFirstChildWhichIsA("ProximityPrompt", true)) then
+			consider(desc)
+		end
+	end
+	if best then
+		State.ItemCache[item] = best
+	end
+	return best
+end
+
+function findBedMonster()
+	local rooms = Workspace:FindFirstChild("Rooms")
+	if not rooms then
+		return nil
+	end
+	for _, room in ipairs(rooms:GetChildren()) do
+		for _, child in ipairs(room:GetChildren()) do
+			if child:IsA("Model") then
+				local n = child.Name:lower()
+				if (n:find("bed monster") or n:find("bedmonster") or n == "monster") and getInstancePart(child) then
+					return child
+				end
+			end
+		end
+		local minigame = room:FindFirstChild("Minigame")
+		local bed = minigame and minigame:FindFirstChild("Bed")
+		if bed then
+			for _, child in ipairs(bed:GetChildren()) do
+				if child:IsA("Model") then
+					local n = child.Name:lower()
+					if (n:find("bed monster") or n:find("bedmonster") or n:find("monster")) and getInstancePart(child) then
+						return child
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local tweenNoclipActive = false
+local tweenNoclipConn = nil
+local function enableTweenNoclip()
+	if tweenNoclipConn then
+		return
+	end
+	tweenNoclipActive = true
+	tweenNoclipConn = RunService.Stepped:Connect(function()
+		if not tweenNoclipActive then
+			if tweenNoclipConn then
+				tweenNoclipConn:Disconnect()
+				tweenNoclipConn = nil
+			end
+			return
+		end
+		local char = getChar()
+		if char then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					part.CanCollide = false
+				end
+			end
+		end
+	end)
+end
+
+function tweenToPosition(targetPos)
+	local root = getRoot()
+	if not root or not targetPos then
+		return
+	end
+	local goal = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
+	local dist = (root.Position - goal).Magnitude
+	if dist < 4 then
+		return
+	end
+	clearActiveTweens()
+	enableTweenNoclip()
+	local duration = dist / 35
+	local tween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Linear), { CFrame = CFrame.new(goal) })
+	table.insert(State.ActiveTweens, tween)
+	local conn
+	conn = tween.Completed:Connect(function()
+		if conn then
+			conn:Disconnect()
+		end
+		tweenNoclipActive = false
+	end)
+	tween:Play()
+	tween.Completed:Wait()
+end
+
+local maxActivationThrottle = {}
+function updateMaxActivationDistance(pp, force)
+	if not pp then
+		return
+	end
+	local key = pp:GetFullName()
+	local now = tick()
+	if not force and maxActivationThrottle[key] and (now - maxActivationThrottle[key]) < 2.5 then
+		return
+	end
+	maxActivationThrottle[key] = now
+	if pp.MaxActivationDistance < 25 then
+		pp.MaxActivationDistance = 25
+	end
+	if fireproximityprompt then
+		fireproximityprompt(pp, 1)
+	elseif firesignal then
+		firesignal(pp.Triggered, client)
+	else
+		pp:InputHoldBegin()
+		task.wait(0.1)
+		pp:InputHoldEnd()
+	end
+end
+
+function firePromptChecked(pp)
+	if not pp or not pp.Enabled then
+		return
+	end
+	pcall(function()
+		pp.HoldDuration = 0
+		if pp.MaxActivationDistance < 25 then
+			pp.MaxActivationDistance = 25
+		end
+	end)
+	updateMaxActivationDistance(pp, true)
+end
+
+function isDialogueOpen()
+	local gui = client:FindFirstChild("PlayerGui")
+	if not gui then
+		return false
+	end
+	local dialogue = gui:FindFirstChild("Dialogue")
+	if not dialogue or not dialogue.Enabled then
+		return false
+	end
+	local frame = dialogue:FindFirstChild("Frame")
+	if not frame or not frame.Visible then
+		return false
+	end
+	local textframe = frame:FindFirstChild("textframe")
+	return textframe and textframe.Text ~= ""
+end
+
+function isMonsterVisitor(npc)
+	if not npc or not npc:IsA("Model") then
+		return false
+	end
+	for _, attr in ipairs(MONSTER_ATTRIBUTES) do
+		local v = npc:GetAttribute(attr)
+		if v ~= nil and v ~= "Static" then
+			return true
+		end
+	end
+	local voice = npc:GetAttribute("Voice")
+	if voice and MONSTER_VOICES[voice] then
+		return true
+	end
+	local n = npc.Name:lower()
+	if n == "barney" or n:find("skinwalker") then
+		return true
+	end
+	for _, tag in ipairs({ "Skinwalker", "Anomaly", "Monster", "Enemy" }) do
+		if CollectionService:HasTag(npc, tag) then
+			return true
+		end
+	end
+	return false
+end
+
+function getRoomByNumber(num)
+	local rooms = Workspace:FindFirstChild("Rooms")
+	if not rooms then
+		return nil
+	end
+	local name = "Room" .. tostring(num)
+	local room = rooms.Medical and rooms.Medical:FindFirstChild(name)
+	if room then
+		return room
+	end
+	return rooms.Emergency and rooms.Emergency:FindFirstChild(name)
+end
+
+function getPromptPart(pp)
+	if not pp then
+		return nil
+	end
+	local cur = pp.Parent
+	while cur do
+		if cur:IsA("BasePart") then
+			return cur
+		end
+		if cur:IsA("Model") then
+			local part = getInstancePart(cur)
+			if part then
+				return part
+			end
+		end
+		cur = cur.Parent
+	end
+	return nil
+end
+
+function getIllnessText(room)
+	if not room then
+		return nil
+	end
+	local minigame = room:FindFirstChild("Minigame", true)
+	if not minigame then
+		return nil
+	end
+	local function readLabel(rootPart)
+		local screen = rootPart and rootPart:FindFirstChild("Screen", true)
+		local ui = screen and screen:FindFirstChild("UI", true)
+		local report = ui and ui:FindFirstChild("Report", true)
+		return report and report:FindFirstChild("illnesses", true)
+	end
+	local monitor = minigame:FindFirstChild("Monitor", true)
+	local mLabel = readLabel(monitor)
+	if mLabel and mLabel.Text ~= "" and mLabel.Text ~= "REGISTERING" then
+		return mLabel.Text
+	end
+	local xray = minigame:FindFirstChild("xrayMonitor", true)
+	local xLabel = readLabel(xray)
+	if xLabel and xLabel.Text ~= "" then
+		return xLabel.Text
+	end
+	return nil
+end
+
+function isRecovering(room)
+	if not room then
+		return false
+	end
+	local minigame = room:FindFirstChild("Minigame", true)
+	if not minigame then
+		return false
+	end
+	local tv = minigame:FindFirstChild("TV", true)
+	if tv then
+		local screen = tv:FindFirstChild("Screen", true)
+		local ui = screen and screen:FindFirstChild("UI", true)
+		local healing = ui and ui:FindFirstChild("Healing", true)
+		local header = healing and healing:FindFirstChild("header", true)
+		if header and header.Text:lower():find("recover") then
+			return true
+		end
+	end
+	local illnesses = getIllnessText(room)
+	if illnesses and illnesses:lower():find("recovering") then
+		return true
+	end
+	return false
+end
+
+function isInvReportVisible(room)
+	if not room then
+		return false
+	end
+	local minigame = room:FindFirstChild("Minigame", true)
+	local tv = minigame and minigame:FindFirstChild("TV", true)
+	if not tv then
+		return false
+	end
+	local screen = tv:FindFirstChild("Screen", true)
+	local ui = screen and screen:FindFirstChild("UI", true)
+	local report = ui and ui:FindFirstChild("Report", true)
+	local inv = report and report:FindFirstChild("inv", true)
+	if not inv then
+		return false
+	end
+	for _, child in ipairs(inv:GetChildren()) do
+		if child:IsA("Frame") and child.Name ~= "Template" then
+			return true
+		end
+	end
+	return false
+end
+
+function getIllnessData(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local data = ReplicatedStorage:FindFirstChild("Data")
+	local module = data and data:FindFirstChild("IllnessesAndCures")
+	if not module then
+		return nil
+	end
+	local ok, tableData = pcall(require, module)
+	if ok and tableData then
+		if tableData.GetIllnessByName then
+			local ok2, entry = pcall(tableData.GetIllnessByName, tableData, name)
+			if ok2 and entry then
+				return entry
+			end
+		end
+		for _, entry in pairs(tableData) do
+			if type(entry) == "table" and (entry.Name == name or (entry.IllnessName and entry.IllnessName == name)) then
+				return entry
+			end
+		end
+	end
+	return nil
+end
+
+function getRequiredMeds(room)
+	if not room then
+		return {}
+	end
+	local minigame = room:FindFirstChild("Minigame", true)
+	if not minigame then
+		return {}
+	end
+	local roomName = room.Name
+	State.RoomAppliedMeds[roomName] = State.RoomAppliedMeds[roomName] or {}
+
+	local needed = {}
+	if isInvReportVisible(room) then
+		local tv = minigame:FindFirstChild("TV", true)
+		local report = tv and tv:FindFirstChild("Screen", true)
+			and tv.Screen:FindFirstChild("UI", true)
+			and tv.Screen.UI:FindFirstChild("Report", true)
+		local inv = report and report:FindFirstChild("inv", true)
+		if inv then
+			local nameCounts = {}
+			local nameChecked = {}
+			for _, row in ipairs(inv:GetChildren()) do
+				if row:IsA("Frame") and row.Name ~= "Template" then
+					local nameLabel = row:FindFirstChild("name", true)
+					local check = row:FindFirstChild("check", true)
+					local name = (nameLabel and nameLabel.Text ~= "" and nameLabel.Text) or row.Name
+					if name then
+						nameCounts[name] = (nameCounts[name] or 0) + 1
+						if check and check.Visible then
+							nameChecked[name] = (nameChecked[name] or 0) + 1
+						end
+					end
+				end
+			end
+			for name, total in pairs(nameCounts) do
+				local done = nameChecked[name] or 0
+				for i = 1, total - done do
+					table.insert(needed, name)
+				end
+			end
+		end
+	else
+		local text = getIllnessText(room)
+		if text then
+			for _, token in ipairs(string.split(text:gsub("\n", ","), ",")) do
+				local clean = token:gsub("^%s*%-*%s*(.-)%s*$", "%1")
+				if clean ~= "" and clean ~= "RACE: Human" then
+					local cure = SUN_CURE_MAP[clean]
+					if not cure then
+						local data = getIllnessData(clean)
+						if data then
+							cure = data.HealedWith or data.Cure
+						end
+					end
+					if cure then
+						table.insert(needed, cure)
+					end
+				end
+			end
+		end
+	end
+
+	local applied = State.RoomAppliedMeds[roomName]
+	local result = {}
+	for _, med in ipairs(needed) do
+		if not applied[med] or applied[med] <= 0 then
+			table.insert(result, med)
+			applied[med] = (applied[med] or 0) + 1
+		end
+	end
+	return result
+end
+
+function trashUnneededItems(keepName)
+	local trashPP = findTrashCan()
+	if not trashPP then
+		print("[Inventory] Failed to find active trash can to discard " .. tostring(keepName) .. "...")
+		return false
+	end
+	local keepList = { "Taser", "X-Taser", "Gun", "Fire Extinguisher", "Coffee" }
+	local discardable = {}
+	for _, tool in ipairs(getInventoryTools()) do
+		local keep = false
+		for _, k in ipairs(keepList) do
+			if tool.Name:find(k, 1, true) or k:find(tool.Name, 1, true) then
+				keep = true
+				break
+			end
+		end
+		if not keep and keepName and (tool.Name:find(keepName, 1, true) or keepName:find(tool.Name, 1, true)) then
+			keep = true
+		end
+		if not keep then
+			table.insert(discardable, tool)
+		end
+	end
+	if #discardable == 0 then
+		return false
+	end
+	print("[Inventory] Discarding " .. #discardable .. " unneeded items...")
+	for _, tool in ipairs(discardable) do
+		pcall(function()
+			useToolByName(tool.Name)
+			task.wait(0.1)
+			local trashPart = getPromptPart(trashPP)
+			if trashPart then
+				tweenToPosition(trashPart.Position)
+			end
+			task.wait(0.3)
+			updateMaxActivationDistance(trashPP, true)
+			task.wait(0.5)
+		end)
+	end
+	return true
+end
+
+-----------------------------------------------------------------
 -- DUAL-MODE INFINITE SANITY & BYPASS SYSTEMS
 -----------------------------------------------------------------
 local originalPlayerLostSanity = nil
@@ -786,6 +1490,11 @@ function setupSanityHook()
 	if ok and Lib then
 		originalPlayerLostSanity = Lib.PlayerLostSanity
 		Lib.PlayerLostSanity = function(amount, reason, suppressRemote)
+			-- Block Cursed Photo sanity drain entirely (Sun Hub verified)
+			if Library and Library.Flags and Library.Flags["AutoSkipCutscenes"] and reason == "Cursed Photo" then
+				return
+			end
+
 			-- Mode 1: Silent Hook
 			if Library and Library.Flags and Library.Flags["SanityMode"] == "Silent Local Hook" then
 				pcall(function()
@@ -796,6 +1505,34 @@ function setupSanityHook()
 
 			if originalPlayerLostSanity then
 				return originalPlayerLostSanity(amount, reason, suppressRemote)
+			end
+		end
+
+		-- Auto Skip Harlow Intro & cutscenes (block blackscreen)
+		if not Lib.__cutsceneHookInstalled then
+			Lib.__cutsceneHookInstalled = true
+			local originalPlayCutscene = Lib.PlayCutscene
+			Lib.PlayCutscene = function(name, ...)
+				if Library and Library.Flags and Library.Flags["AutoSkipCutscenes"] then
+					if
+						name == "DoctorArrivesFirstTime"
+						or name == "ShopOpensFirstTime"
+						or name == "AmbulanceNotice"
+					then
+						pcall(function()
+							local blackscreen = client:FindFirstChild("PlayerGui") and client.PlayerGui:FindFirstChild("blackscreen")
+							local black = blackscreen and blackscreen:FindFirstChild("black")
+							if black then
+								black.BackgroundTransparency = 1
+								black.ImageTransparency = 1
+							end
+						end)
+						return
+					end
+				end
+				if originalPlayCutscene then
+					return originalPlayCutscene(name, ...)
+				end
 			end
 		end
 	end
@@ -1196,6 +1933,45 @@ function scanIdentity()
 		return true
 	end
 
+	local visitor = findVisitorAtCheckIn()
+	if visitor and isMonsterVisitor(visitor) then
+		print("[Check-In] Monster detected at check-in, closing shutters!")
+		if fireShutter("close") then
+			State.SessionRejected = State.SessionRejected + 1
+			notify("Anti-Skinwalker", "Rejected Disguised Skinwalker!")
+		end
+		return true
+	end
+
+	local root = getRoot()
+	if not root then
+		return false
+	end
+
+	-- Don't fire prompts while the check-in dialogue is open (Sun Hub verified)
+	if isDialogueOpen() then
+		return true
+	end
+
+	-- Named-prompt check-in sequence: Form -> Camera -> Printer -> Badge -> Computer
+	local sequence = { "Stamp Forms", "Take Photo", "Print Badge", "Take Badge", "Register", "Take" }
+	for _, at in ipairs(sequence) do
+		local model = PromptCache:GetNearestPrompt(at)
+		if model then
+			local pp = model:FindFirstChildWhichIsA("ProximityPrompt", true)
+			if pp and pp.Enabled and pp.ActionText:find(at, 1, true) then
+				local part = getPromptPart(pp)
+				if part and root and (part.Position - root.Position).Magnitude < 15 then
+					if fireModelPrompt(model, at) then
+						State.CheckedInPatients = State.CheckedInPatients + 1
+						return true
+					end
+				end
+			end
+		end
+	end
+
+	-- Fallback: classic Scan Identity flow
 	local model = PromptCache:GetNearestPrompt("Scan Identity")
 	if model then
 		if fireModelPrompt(model, "Scan Identity") then
@@ -1359,85 +2135,364 @@ local function getCuresForIllnessString(illnessString)
 	return allowedCures
 end
 
+local TREATMENT_ATs = {
+	"Prepare Patient",
+	"Analyze Sample",
+	"Process Results",
+	"Begin X-Ray",
+	"Turn On",
+	"Set Up",
+	"Begin",
+	"Collect",
+	"Print Badge",
+	"Inspect",
+	"Apply Treatment",
+	"Ask to Leave",
+	"Complete Analysis",
+	"Take Sample",
+	"Collect Results",
+	"Treat",
+	"Give Medicine",
+}
+
+local SURGERY_KEYWORDS = { "scissors", "transplant", "scalpel", "antibiotics", "organ", "perform", "surgery" }
+local COLORS_BASE_COLOR = Color3.new(27 / 255, 42 / 255, 53 / 255)
+
+function lockTreatment(room)
+	State.IsTreatingRoom = true
+	State.ActiveRoom = room
+	State.TreatLock = true
+end
+
+function unlockTreatment()
+	local room = State.ActiveRoom
+	State.IsTreatingRoom = false
+	State.ActiveRoom = nil
+	State.TreatLock = false
+	if room then
+		State.RoomAppliedMeds[room.Name] = nil
+	end
+	State.ColorsSequence = {}
+	State.ColorsSeen = {}
+	State.ColorsLastFlash = 0
+	State.ColorsAttempts = 0
+	State.SurgeryDeadline = 0
+end
+
+function findRoomBedPP(room)
+	if not room then
+		return nil
+	end
+	local minigame = room:FindFirstChild("Minigame", true)
+	for pp in pairs(PromptCache._prompts) do
+		if pp.Enabled then
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model and not isPatientOwned(model) and model:IsDescendantOf(room) then
+				local at = pp.ActionText or ""
+				if at:find("Apply Treatment") or at:find("Prepare Patient") then
+					return pp
+				end
+			end
+		end
+	end
+	return nil
+end
+
+function isColorsGameActive(room)
+	local minigame = room and room:FindFirstChild("Minigame", true)
+	if not minigame then
+		return nil
+	end
+	for _, child in ipairs(minigame:GetChildren()) do
+		if child:IsA("Model") and child.Name:lower():find("color") then
+			for _, m in ipairs(child:GetChildren()) do
+				if m:FindFirstChild("Button", true) then
+					return child
+				end
+			end
+		end
+	end
+	return nil
+end
+
+function solveColorsMinigame(room)
+	local colors = isColorsGameActive(room)
+	if not colors then
+		State.ColorsSequence = {}
+		State.ColorsSeen = {}
+		return false
+	end
+	local root = getRoot()
+	if not root then
+		return false
+	end
+
+	local flashed = {}
+	for _, buttonModel in ipairs(colors:GetChildren()) do
+		local button = buttonModel:FindFirstChild("Button", true)
+		if button and button:IsA("BasePart") and button:FindFirstChildWhichIsA("ClickDetector") then
+			local c = button.Color
+			local dx = c.R - COLORS_BASE_COLOR.R
+			local dy = c.G - COLORS_BASE_COLOR.G
+			local dz = c.B - COLORS_BASE_COLOR.B
+			if dx * dx + dy * dy + dz * dz > 0.01 then
+				table.insert(flashed, button)
+			end
+		end
+	end
+
+	local now = tick()
+	if #flashed > 0 then
+		State.ColorsSeen = State.ColorsSeen or {}
+		for _, b in ipairs(flashed) do
+			local key = tostring(b.Position)
+			if not State.ColorsSeen[key] then
+				State.ColorsSeen[key] = true
+				table.insert(State.ColorsSequence, b)
+				State.ColorsLastFlash = now
+			end
+		end
+		return false
+	end
+
+	if #State.ColorsSequence == 0 then
+		return false
+	end
+	if now - (State.ColorsLastFlash or now) < 3 then
+		return false
+	end
+
+	if (State.ColorsAttempts or 0) >= 3 then
+		State.ColorsSequence = {}
+		State.ColorsSeen = {}
+		return false
+	end
+	State.ColorsAttempts = (State.ColorsAttempts or 0) + 1
+	print("[Treatment] Replaying " .. #State.ColorsSequence .. " flashed colors...")
+	for i, button in ipairs(State.ColorsSequence) do
+		local cd = button:FindFirstChildWhichIsA("ClickDetector")
+		if cd and button:IsA("BasePart") then
+			local dir = (root.Position - button.Position).Unit or Vector3.new(1, 0, 0)
+			root.CFrame = CFrame.new(button.Position + dir * 5 + Vector3.new(0, 3, 0))
+			task.wait(0.3)
+			pcall(function()
+				cd.MouseClick:Fire()
+			end)
+			if i < #State.ColorsSequence then
+				task.wait(2.5)
+			end
+		end
+	end
+	State.ColorsSequence = {}
+	State.ColorsSeen = {}
+	return true
+end
+
+function isSurgeryRoom(room)
+	if not room then
+		return false
+	end
+	if room.Name:lower():find("room8") or room.Name == "Room8" then
+		return true
+	end
+	if isInvReportVisible(room) then
+		return true
+	end
+	local text = getIllnessText(room)
+	if text then
+		for _, kw in ipairs(SURGERY_KEYWORDS) do
+			if text:lower():find(kw, 1, true) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+function fetchToolFromShelf(toolName)
+	local shelf = findItemShelf(toolName)
+	if not shelf then
+		return false
+	end
+	local pp = shelf:FindFirstChild("PP") or shelf:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if not pp then
+		return false
+	end
+	local part = getInstancePart(shelf)
+	if not part then
+		return false
+	end
+	print("[Treatment] Fetching " .. toolName .. " from shelf...")
+	tweenToPosition(part.Position)
+	task.wait(0.5)
+	updateMaxActivationDistance(pp, true)
+	task.wait(0.6)
+	return findToolInInventory(toolName) ~= nil
+end
+
+function fireRoomSteps(room)
+	for _, at in ipairs(TREATMENT_ATs) do
+		if at ~= "Apply Treatment" then
+			for pp in pairs(PromptCache:GetPromptsByActionText(at)) do
+				if pp.Enabled then
+					local model = pp:FindFirstAncestorWhichIsA("Model")
+					if model and not isPatientOwned(model) and model:IsDescendantOf(room) then
+						if fireModelPrompt(model, at) then
+							return true
+						end
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+function handleSurgery(room)
+	if State.SurgeryDeadline == 0 then
+		State.SurgeryDeadline = tick() + 30
+	end
+	if tick() > State.SurgeryDeadline then
+		print("[Treatment] Surgery timed out, retrying fresh...")
+		State.SurgeryDeadline = tick() + 30
+		State.RoomAppliedMeds[room.Name] = nil
+	end
+
+	local required = nil
+	if isInvReportVisible(room) then
+		local meds = getRequiredMeds(room)
+		required = meds and meds[1]
+	end
+	if not required then
+		local text = getIllnessText(room) or ""
+		for kw, tool in pairs(SURGERY_TOOL_MAP) do
+			if text:lower():find(kw:lower(), 1, true) then
+				required = tool
+				break
+			end
+		end
+	end
+	if not required then
+		return fireRoomSteps(room)
+	end
+
+	local tool = findToolInInventory(required)
+	if not tool then
+		if not fetchToolFromShelf(required) then
+			return true
+		end
+		tool = findToolInInventory(required)
+	end
+	if not tool then
+		return true
+	end
+	local bedPP = findRoomBedPP(room)
+	if not bedPP then
+		return true
+	end
+	if not useToolByName(tool.Name) then
+		return true
+	end
+	safeMoveToModel(bedPP:FindFirstAncestorWhichIsA("Model"))
+	task.wait(0.3)
+	if fireModelPrompt(bedPP:FindFirstAncestorWhichIsA("Model"), bedPP.ActionText) then
+		State.SessionHealed = State.SessionHealed + 1
+	end
+	return true
+end
+
+function continueRoomTreatment(room)
+	if not room then
+		unlockTreatment()
+		return false
+	end
+	State.ActiveRoom = room
+
+	if isRecovering(room) then
+		print("[Treatment] Patient in " .. room.Name .. " is recovering, moving on.")
+		unlockTreatment()
+		return false
+	end
+
+	if solveColorsMinigame(room) then
+		return true
+	end
+
+	if isSurgeryRoom(room) then
+		return handleSurgery(room)
+	end
+
+	local bedPP = findRoomBedPP(room)
+	local requiredMeds = getRequiredMeds(room)
+
+	if #requiredMeds > 0 then
+		local cure = requiredMeds[1]
+		-- Free inventory space first (Sun Hub proven: trash unneeded items)
+		if getToolCount() >= getCarryCapacity() then
+			trashUnneededItems(cure)
+			task.wait(0.3)
+		end
+		local tool = findToolInInventory(cure)
+		if not tool then
+			if not fetchToolFromShelf(cure) then
+				return true
+			end
+			tool = findToolInInventory(cure)
+		end
+		if tool and bedPP then
+			if useToolByName(tool.Name) then
+				safeMoveToModel(bedPP:FindFirstAncestorWhichIsA("Model"))
+				task.wait(0.3)
+				if fireModelPrompt(bedPP:FindFirstAncestorWhichIsA("Model"), bedPP.ActionText) then
+					State.SessionHealed = State.SessionHealed + 1
+					return true
+				end
+			end
+		end
+		return true
+	end
+
+	local progress = fireRoomSteps(room)
+	if not progress then
+		-- Nothing actionable left in this room: release the step lock
+		unlockTreatment()
+	end
+	return progress
+end
+
 function handleRoomTreatment()
 	if not Library or not Library.Flags or not Library.Flags["RoomTreatment"] then
 		return false
 	end
 
-	local treatmentATs = {
-		"Prepare Patient",
-		"Analyze Sample",
-		"Process Results",
-		"Begin X-Ray",
-		"Turn On",
-		"Set Up",
-		"Begin",
-		"Collect",
-		"Print Badge",
-		"Inspect",
-		"Apply Treatment",
-		"Ask to Leave",
-		"Complete Analysis",
-		"Take Sample",
-		"Collect Results",
-		"Treat",
-		"Give Medicine",
-	}
+	if State.IsTreatingRoom then
+		return continueRoomTreatment(State.ActiveRoom)
+	end
 
 	local candidates = {}
-	for _, at in ipairs(treatmentATs) do
-		local list = PromptCache:GetPromptsByActionText(at)
-		for pp in pairs(list) do
+	local seen = {}
+	for _, at in ipairs(TREATMENT_ATs) do
+		for pp in pairs(PromptCache:GetPromptsByActionText(at)) do
 			if pp.Enabled then
 				local model = pp:FindFirstAncestorWhichIsA("Model")
 				if model and not isPatientOwned(model) then
-					table.insert(candidates, { Model = model, Text = at, PP = pp })
+					local room = model:FindFirstAncestorWhichIsA("Model")
+					if room and not seen[room] then
+						seen[room] = true
+						table.insert(candidates, { Room = room, Dist = distanceTo(room:GetPivot().Position) })
+					end
 				end
 			end
 		end
 	end
-
 	table.sort(candidates, function(a, b)
-		return distanceTo(a.Model:GetPivot().Position) < distanceTo(b.Model:GetPivot().Position)
+		return a.Dist < b.Dist
 	end)
 
-	local c = candidates[1]
-	if c then
-		if c.Text == "Apply Treatment" then
-			local room = c.Model:FindFirstAncestorWhichIsA("Model")
-			local rawString = getTreatmentOrIllness(room)
-			local allowedCures = getCuresForIllnessString(rawString)
-
-			if #allowedCures > 0 then
-				-- Apply EVERY required cure (multi-illness patients need several)
-				for _, cure in ipairs(allowedCures) do
-					local equipped = equipTool(cure)
-					if not equipped then
-						if buyTool(cure) then
-							task.wait(0.4)
-							equipped = equipTool(cure)
-						end
-					end
-
-					-- CRITICAL SAFETY CHECK: Only apply treatment if the correct cure is physically equipped!
-					if equipped then
-						if fireModelPrompt(c.Model, c.Text) then
-							State.SessionHealed = State.SessionHealed + 1
-							return true
-						end
-					end
-				end
-			else
-				-- No screen data / unknown cure: NEVER guess with random medicine.
-				-- Wait for the report to appear instead of killing the patient.
-				print("[Treatment] No cure info for '" .. tostring(rawString) .. "' - waiting for report...")
-			end
-			return true -- Block further lower-priority actions on this tick while treating
-		else
-			-- For non-medication prompts, trigger immediately
-			if fireModelPrompt(c.Model, c.Text) then
-				return true
-			end
+	for _, c in ipairs(candidates) do
+		if continueRoomTreatment(c.Room) then
+			lockTreatment(c.Room)
+			return true
 		end
 	end
 	return false
@@ -1717,7 +2772,8 @@ function autoTaseCritical()
 				if hum and hum.Health > 0 then
 					local p = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso")
 					if p and distanceTo(p.Position) < 30 then
-						fireRemote("RE/TaserFired", p.Position, m)
+						-- Tool-based tase (no fake remote; TaserFired does not exist)
+						toolTaseTarget(m)
 						task.wait(0.3)
 					end
 				end
@@ -1742,12 +2798,452 @@ function infiniteTaseAll()
 			if p and distanceTo(p.Position) < 50 then
 				local hum = m:FindFirstChildOfClass("Humanoid")
 				if hum and hum.Health > 0 then
-					fireRemote("RE/TaserFired", p.Position, m)
+					pcall(function()
+						toolTaseTarget(m)
+					end)
 					task.wait(0.1)
 				end
 			end
 		end
 	end
+end
+
+-----------------------------------------------------------------
+-- V4.0 UPGRADED SUBSYSTEMS (Sun Hub proven techniques)
+-----------------------------------------------------------------
+local function findCoffeePrompt()
+	local best, bestDist = nil, math.huge
+	local root = getRoot()
+	for _, pp in ipairs(Workspace:GetDescendants()) do
+		if pp:IsA("ProximityPrompt") and pp.Enabled then
+			local at = pp.ActionText or ""
+			if at:find("Coffee") or at:find("coffee") then
+				local part = getPromptPart(pp)
+				if part and root then
+					local d = (part.Position - root.Position).Magnitude
+					if d < bestDist then
+						bestDist = d
+						best = pp
+					end
+				end
+			end
+		end
+	end
+	return best, bestDist
+end
+
+local function activateTool(tool)
+	if not tool then
+		return
+	end
+	pcall(function()
+		tool:Activate()
+	end)
+end
+
+function toolTaseTarget(target)
+	if not target then
+		return false
+	end
+	local taser = findToolInInventory("Taser") or findToolInInventory("X-Taser")
+	if not taser then
+		if not fetchToolFromShelf("Taser") and not fetchToolFromShelf("X-Taser") then
+			return false
+		end
+		taser = findToolInInventory("Taser") or findToolInInventory("X-Taser")
+	end
+	if not taser then
+		return false
+	end
+	local root = getRoot()
+	local p = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Torso") or getInstancePart(target)
+	if not p then
+		return false
+	end
+	if root and (p.Position - root.Position).Magnitude > 25 then
+		tweenToPosition(p.Position)
+	end
+	useToolByName(taser.Name)
+	task.wait(0.2)
+	activateTool(taser)
+	return true
+end
+
+function handleTaseMonsters()
+	if not Library or not Library.Flags or not Library.Flags["AutoTaseMonsters"] then
+		return
+	end
+	local root = getRoot()
+	if not root then
+		return
+	end
+	for _, m in ipairs(MonsterCache:GetMonsters()) do
+		local p = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso") or getInstancePart(m)
+		if p and (p.Position - root.Position).Magnitude <= 25 then
+			if not m:GetAttribute("IsPatient") then
+				if m:GetAttribute("Skinwalker") or m:GetAttribute("IsMonster") or m:GetAttribute("Monster") then
+					if toolTaseTarget(m) then
+						task.wait(0.3)
+					end
+					return
+				end
+			end
+		end
+	end
+end
+
+function drinkCoffeeIfNeeded()
+	if not Library or not Library.Flags or not Library.Flags["AutoDrinkCoffee"] then
+		return
+	end
+	if State.IsDrinkingCoffee then
+		return
+	end
+	local sanity = client:GetAttribute("Sanity")
+	if sanity == nil or sanity >= 50 then
+		return
+	end
+	local pp = findCoffeePrompt()
+	if not pp then
+		return
+	end
+	State.IsDrinkingCoffee = true
+	print("[Sanity] Sanity low (" .. tostring(sanity) .. "), grabbing coffee...")
+	local ok = fetchToolFromShelf("Coffee")
+	if not ok then
+		local part = getPromptPart(pp)
+		if part then
+			tweenToPosition(part.Position)
+		end
+		task.wait(0.3)
+		updateMaxActivationDistance(pp, true)
+		task.wait(0.5)
+	end
+	local coffee = useToolByName("Coffee")
+	if coffee then
+		activateTool(coffee)
+		task.wait(0.2)
+		activateTool(coffee)
+		task.wait(0.2)
+		activateTool(coffee)
+	end
+	State.IsDrinkingCoffee = false
+end
+
+function handleBedMonster()
+	if not Library or not Library.Flags or not Library.Flags["BedMonsterSyrup"] then
+		return
+	end
+	local monster = findBedMonster()
+	if not monster then
+		return
+	end
+	local root = getRoot()
+	local p = getInstancePart(monster)
+	if not p or not root or (p.Position - root.Position).Magnitude > 30 then
+		return
+	end
+	local syrup = findToolInInventory("Maple Syrup")
+	if not syrup then
+		fetchToolFromShelf("Maple Syrup")
+		syrup = findToolInInventory("Maple Syrup")
+	end
+	if not syrup then
+		return
+	end
+	useToolByName("Maple Syrup")
+	task.wait(0.2)
+	local room = monster:FindFirstAncestorWhichIsA("Model")
+	local bedPP = findRoomBedPP(room)
+	if bedPP then
+		safeMoveToModel(bedPP:FindFirstAncestorWhichIsA("Model"))
+		task.wait(0.3)
+		fireModelPrompt(bedPP:FindFirstAncestorWhichIsA("Model"), bedPP.ActionText)
+	else
+		activateTool(syrup)
+	end
+end
+
+function handleHeadBanger()
+	if not Library or not Library.Flags or not Library.Flags["AutoHeadBanger"] then
+		return
+	end
+	local root = getRoot()
+	if not root then
+		return
+	end
+	for _, npc in ipairs(Workspace:FindFirstChild("NPCs") and Workspace.NPCs:GetChildren() or {}) do
+		local n = npc.Name:lower()
+		if n:find("banger") or n:find("head") then
+			local p = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("Torso")
+			if p and (p.Position - root.Position).Magnitude <= 30 then
+				if not findToolInInventory("Coffee") then
+					fetchToolFromShelf("Coffee")
+				end
+				if useToolByName("Coffee") then
+					for pp in pairs(PromptCache._prompts) do
+						if pp.Enabled then
+							local m = pp:FindFirstAncestorWhichIsA("Model")
+							if m == npc or m:IsDescendantOf(npc) then
+								fireModelPrompt(m, pp.ActionText)
+								return
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end
+
+function handleCeilingEyes()
+	if not Library or not Library.Flags or not Library.Flags["CeilingEyes"] then
+		return
+	end
+	local gui = client:FindFirstChild("PlayerGui")
+	if not gui then
+		return
+	end
+	local warning = false
+	for _, desc in ipairs(gui:GetDescendants()) do
+		if desc:IsA("TextLabel") and desc.Text:lower():find("don't look up") then
+			warning = true
+			break
+		end
+	end
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	if warning then
+		State.CameraYaw = State.CameraYaw or 0
+		pcall(function()
+			cam.CFrame = cam.CFrame * CFrame.Angles(1.2, 0, 0)
+		end)
+	else
+		State.CameraYaw = nil
+	end
+end
+
+function handleSkinwalkerEscape()
+	if not Library or not Library.Flags or not Library.Flags["SkinwalkerEscape"] then
+		return
+	end
+	local gui = client:FindFirstChild("PlayerGui")
+	if not gui then
+		return
+	end
+	local escaped = false
+	for _, desc in ipairs(gui:GetDescendants()) do
+		if desc:IsA("TextLabel") then
+			local t = desc.Text:lower()
+			if t:find("grab") or t:find("struggle") then
+				escaped = true
+				break
+			end
+		end
+	end
+	if escaped then
+		pcall(function()
+			keypress(69)
+			task.wait(0.1)
+			keyrelease(69)
+		end)
+		pcall(function()
+			SendKeyEvent = SendKeyEvent or (game:GetService("VirtualInputManager") and function(key)
+				game:GetService("VirtualInputManager"):SendKeyEvent(true, key, false, game)
+				task.wait(0.05)
+				game:GetService("VirtualInputManager"):SendKeyEvent(false, key, false, game)
+			end)
+			if SendKeyEvent then
+				SendKeyEvent(Enum.KeyCode.E)
+			end
+		end)
+	end
+end
+
+function handleCCTVExit()
+	if not Library or not Library.Flags or not Library.Flags["CCTVExit"] then
+		return
+	end
+	local gui = client:FindFirstChild("PlayerGui")
+	if not gui then
+		return
+	end
+	local camsys = gui:FindFirstChild("CameraSystem")
+	if not camsys or not camsys.Enabled then
+		return
+	end
+	local lost = false
+	for _, desc in ipairs(camsys:GetDescendants()) do
+		if desc:IsA("TextLabel") then
+			local t = desc.Text:lower()
+			if t:find("lost") or t:find("signal") or t:find("error") then
+				lost = true
+				break
+			end
+		end
+	end
+	if lost then
+		pcall(function()
+			local btn = camsys:FindFirstChild("BackButton", true)
+				or camsys:FindFirstChild("Exit", true)
+				or camsys:FindFirstChild("Close", true)
+			if btn then
+				firesignal(btn.MouseButton1Click)
+			end
+		end)
+	end
+end
+
+function handleFuses()
+	if not Library or not Library.Flags or not Library.Flags["AutoFuses"] then
+		return
+	end
+	for pp in pairs(PromptCache._prompts) do
+		if pp.Enabled then
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			if model then
+				local n = model.Name:lower()
+				if n:find("fuse") then
+					fireModelPrompt(model, pp.ActionText)
+					task.wait(1.5)
+					return
+				end
+			end
+		end
+	end
+end
+
+function handleShopUpgrades()
+	if not Library or not Library.Flags or not Library.Flags["AutoShopUpgrades"] then
+		return
+	end
+	local category = Library.Flags["ShopUpgradeCategory"] or "BuyCapacity"
+	local keywords = SHOP_CATEGORIES[category]
+	if not keywords then
+		return
+	end
+	local root = getRoot()
+	for pp in pairs(PromptCache._prompts) do
+		if pp.Enabled and pp:GetAttribute("ShopItemPP") then
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			local match = (model and (model:GetAttribute("ObjectText") or model.Name)) or ""
+			match = match:lower()
+			for _, kw in ipairs(keywords) do
+				if match:find(kw, 1, true) then
+					local part = getPromptPart(pp)
+					if part and root and (part.Position - root.Position).Magnitude < 15 then
+						updateMaxActivationDistance(pp, true)
+						return
+					end
+				end
+			end
+		end
+	end
+end
+
+function handleHeartbeatFallback()
+	if not Library or not Library.Flags or not Library.Flags["AutoHeartbeat"] then
+		return
+	end
+	if not CollectionService:HasTag(client, "InMinigame") then
+		return
+	end
+	local lib = getAHLib()
+	if lib and lib.HeartMinigameComplete then
+		pcall(function()
+			lib.HeartMinigameComplete(true)
+		end)
+	else
+		fireRemote("RE/HeartbeatMinigameComplete", nil, true)
+	end
+end
+
+local CONFIG_NAME = "VersusAirlinesUltra.json"
+
+function saveFlags()
+	local ok = pcall(function()
+		local out = {}
+		for k, v in pairs(Library.Flags) do
+			if type(v) == "boolean" or type(v) == "number" or type(v) == "string" then
+				out[k] = v
+			end
+		end
+		writefile(CONFIG_NAME, HttpService:JSONEncode(out))
+	end)
+	if ok then
+		notify("Config", "Saved to " .. CONFIG_NAME)
+	else
+		notify("Config", "writefile not supported on this executor")
+	end
+end
+
+function loadFlags()
+	local ok, data = pcall(function()
+		return readfile(CONFIG_NAME)
+	end)
+	if not ok or not data then
+		return
+	end
+	local ok2, tbl = pcall(function()
+		return HttpService:JSONDecode(data)
+	end)
+	if not ok2 or type(tbl) ~= "table" then
+		return
+	end
+	for k, v in pairs(tbl) do
+		if Library.Flags[k] ~= nil then
+			Library.Flags[k] = v
+		end
+	end
+	State.ConfigLoaded = true
+	notify("Config", "Loaded settings from " .. CONFIG_NAME)
+end
+
+function tryTeleport(name)
+	local root = getRoot()
+	if not root then
+		return false
+	end
+	local pos = nil
+	if name:find("Coffee") then
+		local pp = findCoffeePrompt()
+		local part = pp and getPromptPart(pp)
+		if part then
+			pos = part.Position + Vector3.new(0, 3, 0)
+		end
+	elseif name:find("Check%-In") or name:find("Counter") then
+		local model = PromptCache:GetNearestPrompt("Stamp Forms")
+			or PromptCache:GetNearestPrompt("Take Photo")
+			or PromptCache:GetNearestPrompt("Scan Identity")
+		if model then
+			pos = model:GetPivot().Position
+		end
+	elseif name:find("Shop") then
+		local model = PromptCache:GetNearestPrompt("Buy")
+		if model then
+			pos = model:GetPivot().Position
+		end
+	else
+		local roomNum = name:match("(%d)")
+		if roomNum then
+			local room = getRoomByNumber(tonumber(roomNum))
+			local minigame = room and room:FindFirstChild("Minigame", true)
+			local bed = minigame and minigame:FindFirstChild("Bed")
+			local part = getInstancePart(bed)
+			if part then
+				pos = part.Position + Vector3.new(0, 3, 0)
+			end
+		end
+	end
+	if not pos then
+		notify("Teleport", "Destination not found: " .. name)
+		return false
+	end
+	tweenToPosition(pos)
+	notify("Teleport", "Moved to " .. name)
+	return true
 end
 
 function coinFarm()
@@ -1974,16 +3470,62 @@ GlobalJanitor:Add(infiniteJumpConn)
 function clearESP()
 	for _, obj in ipairs(State.ESPObjects) do
 		pcall(function()
-			obj:Destroy()
+			if obj.Remove then
+				obj:Remove()
+			else
+				obj:Destroy()
+			end
 		end)
 	end
 	table.clear(State.ESPObjects)
+	table.clear(State.ESPTracked)
 end
 
 function createEsp(target, color, text)
 	if not target then
 		return
 	end
+	-- V4: Drawing API boxes + tracers + names (Sun Hub proven, lower overhead)
+	local drawing = Drawing
+	local part = getInstancePart(target)
+	if part and drawing and drawing.new then
+		local box = drawing.new("Square")
+		box.Visible = false
+		box.Color = color
+		box.Thickness = 1.5
+		box.Filled = false
+		box.Transparency = 0.2
+		table.insert(State.ESPObjects, box)
+
+		local line = drawing.new("Line")
+		line.Visible = false
+		line.Color = color
+		line.Thickness = 1
+		line.Transparency = 0.4
+		table.insert(State.ESPObjects, line)
+
+		local nameText = nil
+		if text and Library.Flags["ESPShowNames"] then
+			nameText = drawing.new("Text")
+			nameText.Visible = false
+			nameText.Color = color
+			nameText.Center = true
+			nameText.Size = 14
+			nameText.Outline = true
+			nameText.Text = text
+			table.insert(State.ESPObjects, nameText)
+		end
+
+		table.insert(State.ESPTracked, {
+			Part = part,
+			Box = box,
+			Line = line,
+			Text = nameText,
+		})
+		return
+	end
+
+	-- Fallback: Highlight (works on all executors)
 	local ok, hl = pcall(function()
 		local h = Instance.new("Highlight")
 		h.FillColor = color
@@ -2065,6 +3607,61 @@ function updateESP()
 	end
 end
 
+-- V4: draw ESP boxes/tracers each frame using tracked parts
+local espDrawConn = RunService.RenderStepped:Connect(function()
+	if not Library or not Library.Flags or not Library.Flags["ESPEnabled"] then
+		return
+	end
+	if #State.ESPTracked == 0 then
+		return
+	end
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local root = getRoot()
+	for _, entry in ipairs(State.ESPTracked) do
+		local p = entry.Part
+		if p and p.Parent then
+			local spos = cam:WorldToScreenPoint(p.Position)
+			if spos.Z < 0 then
+				if entry.Box then
+					entry.Box.Visible = false
+				end
+				if entry.Text then
+					entry.Text.Visible = false
+				end
+			else
+				local scale = 0.12 * (math.max(1, spos.Z))
+				local boxSize = Vector2.new(scale * 1.6, scale * 4.4)
+				if entry.Box then
+					entry.Box.Position = Vector2.new(spos.X, spos.Y - boxSize.Y / 2)
+					entry.Box.Size = boxSize
+					entry.Box.Visible = true
+				end
+				if entry.Text then
+					entry.Text.Position = Vector2.new(spos.X, spos.Y - boxSize.Y / 2 - 16)
+					entry.Text.Visible = true
+				end
+				if entry.Line and root then
+					local rootScreen = cam:WorldToScreenPoint(root.Position)
+					entry.Line.From = Vector2.new(rootScreen.X, rootScreen.Y)
+					entry.Line.To = Vector2.new(spos.X, spos.Y)
+					entry.Line.Visible = rootScreen.Z > 0
+				end
+			end
+		else
+			if entry.Box then
+				entry.Box.Visible = false
+			end
+			if entry.Text then
+				entry.Text.Visible = false
+			end
+		end
+	end
+end)
+GlobalJanitor:Add(espDrawConn)
+
 -----------------------------------------------------------------
 -- SERVER ACTIONS
 -----------------------------------------------------------------
@@ -2132,7 +3729,7 @@ local function createWatermark()
 	tl.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 	tl.TextColor3 = Color3.fromRGB(255, 255, 255)
 	tl.TextStrokeTransparency = 0.8
-	tl.Text = "Versus Airlines v3.0"
+	tl.Text = "Versus Airlines Ultra v4.0"
 	tl.Font = Enum.Font.GothamBold
 	tl.TextSize = 14
 	tl.Parent = sg
@@ -2315,6 +3912,70 @@ taserSection:createToggle({
 	flagName = "InfiniteTaseAll",
 	Flag = false,
 })
+taserSection:createToggle({
+	Name = "Auto Tase Monsters (Tool)",
+	flagName = "AutoTaseMonsters",
+	Flag = false,
+})
+
+local teleportSection = ui:CreateSection("Teleports (V4)")
+teleportSection:createDropdown({
+	Name = "Destination",
+	flagName = "TeleportDestination",
+	Flag = "Medical Room 1",
+	List = TELEPORT_DESTINATIONS,
+	multi = false,
+})
+teleportSection:createButton({
+	Name = "Teleport Now",
+	Callback = function()
+		tryTeleport(Library.Flags["TeleportDestination"] or "Medical Room 1")
+	end,
+})
+
+local monsterSection = ui:CreateSection("Monster Defense (V4)")
+monsterSection:createToggle({
+	Name = "Bed Monster Syrup",
+	flagName = "BedMonsterSyrup",
+	Flag = true,
+})
+monsterSection:createToggle({
+	Name = "Head Banger (Give Coffee)",
+	flagName = "AutoHeadBanger",
+	Flag = false,
+})
+monsterSection:createToggle({
+	Name = "Ceiling Eyes (Look Down)",
+	flagName = "CeilingEyes",
+	Flag = false,
+})
+monsterSection:createToggle({
+	Name = "Skinwalker Escape (Press E)",
+	flagName = "SkinwalkerEscape",
+	Flag = true,
+})
+monsterSection:createToggle({
+	Name = "CCTV Auto Exit",
+	flagName = "CCTVExit",
+	Flag = false,
+})
+monsterSection:createToggle({
+	Name = "Auto Fix Fuses",
+	flagName = "AutoFuses",
+	Flag = false,
+})
+monsterSection:createToggle({
+	Name = "Auto Shop Upgrades",
+	flagName = "AutoShopUpgrades",
+	Flag = false,
+})
+monsterSection:createDropdown({
+	Name = "Shop Upgrade Category",
+	flagName = "ShopUpgradeCategory",
+	Flag = "BuyCapacity",
+	List = { "BuyCapacity", "BuyDNASpeed", "BuyGiveInventory", "BuyCheckIn", "BuyConsumables" },
+	multi = false,
+})
 
 local itemsSection = ui:CreateSection("Items & Cabinet")
 itemsSection:createToggle({
@@ -2360,6 +4021,16 @@ survivalSection:createDropdown({
 	Flag = "Silent Local Hook",
 	List = { "Silent Local Hook", "Server NaN Exploit", "Disabled" },
 	multi = false,
+})
+survivalSection:createToggle({
+	Name = "Auto Drink Coffee (Low Sanity)",
+	flagName = "AutoDrinkCoffee",
+	Flag = true,
+})
+survivalSection:createToggle({
+	Name = "Auto Skip Cutscenes",
+	flagName = "AutoSkipCutscenes",
+	Flag = true,
 })
 survivalSection:createToggle({
 	Name = "Anti-Jumpscare popups",
@@ -2465,6 +4136,18 @@ visualSection:createToggle({
 
 local serverSection = ui:CreateSection("Server Utilities")
 serverSection:createButton({
+	Name = "Save Config (V4)",
+	Callback = function()
+		saveFlags()
+	end,
+})
+serverSection:createButton({
+	Name = "Load Config (V4)",
+	Callback = function()
+		loadFlags()
+	end,
+})
+serverSection:createButton({
 	Name = "Rejoin Server",
 	Callback = function()
 		rejoinServer()
@@ -2543,6 +4226,9 @@ MonsterCache:Start()
 setupSanityHook()
 setupJumpscareBypass()
 hookServerEvents()
+if not State.ConfigLoaded then
+	loadFlags()
+end
 
 -- Continuous 50-second NaN freeze trigger (Active Server exploit mode)
 task.spawn(function()
@@ -2588,6 +4274,8 @@ interval("autofarm", "AutoFarm", 0.75, function()
 	handlePeopleOnFire()
 	handleEyeMass()
 	handleFixCams()
+	handleFuses()
+	handleShopUpgrades()
 	handleTakeDNA()
 	helpLiz()
 	autoBuyItems()
@@ -2612,7 +4300,20 @@ end)
 interval("safety", "AvoidMonsters", 0.5, function()
 	fleeMonsters()
 	stalkerHandler()
+	handleBedMonster()
+	handleCeilingEyes()
+	handleSkinwalkerEscape()
+	handleCCTVExit()
+	handleTaseMonsters()
 end)
+
+interval("coffee", "AutoDrinkCoffee", 2, drinkCoffeeIfNeeded)
+
+interval("fuses", "AutoFuses", 4, handleFuses)
+
+interval("banger", "AutoHeadBanger", 3, handleHeadBanger)
+
+interval("heartbeat", "AutoHeartbeat", 2, handleHeartbeatFallback)
 
 -- Sanity clamp: the game's 50s "Job Stress" drain calls the captured
 -- LocalLoseSanity closure directly, bypassing the Lib hook. Force the local
