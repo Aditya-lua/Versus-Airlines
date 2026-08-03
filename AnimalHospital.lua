@@ -62,6 +62,10 @@ local WORKFLOW_AT = {
 	["Apply Treatment"] = true,
 	["Stamp Forms"] = true,
 	["Stamp the form"] = true,
+	["Talk"] = true,
+	["Finish the check-in"] = true,
+	["Give Medicine"] = true,
+	["Treat"] = true,
 	["Security Cams"] = true,
 	["Talk"] = true,
 	["Ask to Leave"] = true,
@@ -1962,6 +1966,14 @@ function followObjective()
 			end
 		end
 	end
+
+	-- No explicit objective match: fire the nearest safe workflow prompt
+	-- so the autopilot never stalls on unknown / renamed objectives.
+	local fallbackModel, fallbackPP = PromptCache:GetNearestWorkflowPrompt()
+	if fallbackModel and not isPatientOwned(fallbackModel) then
+		return fireModelPrompt(fallbackModel, fallbackPP and fallbackPP.ActionText or nil)
+	end
+
 	return false
 end
 
@@ -4054,6 +4066,16 @@ emergencySection:createToggle({
 emergencySection:createToggle({
 	Name = "Save Eaten Patients (Syrup)",
 	flagName = "AutoRescueEaten",
+	Flag = false,
+})
+emergencySection:createToggle({
+	Name = "Put Out Fires (People)",
+	flagName = "PutOutFire",
+	Flag = false,
+})
+emergencySection:createToggle({
+	Name = "Take DNA Samples",
+	flagName = "TakeDNA",
 	Flag = false,
 })
 
