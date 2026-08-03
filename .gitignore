@@ -1,0 +1,52 @@
+# Versus-Airlines :: .gitignore
+# Generated for slice 2 (B1, B7). Covers the artifact from script.sh
+# (output.txt), the upstream GAG2 .rbxmx extraction set we don't want
+# to re-commit, and standard Python/IDE noise.
+
+# ----- script.sh artifact (B1) -----
+output.txt
+
+# ----- upstream dumps we don't want to track twice -----
+# The UltimateBloxFruits*.lua dumps are reference material, not part
+# of Versus-Airlines itself. They're already in the initial commit;
+# uncomment the lines below to stop tracking future changes.
+# UltimateBloxFruits.lua
+# UltimateBloxFruits_Fluent.lua
+# UltimateBloxFruits_NS.lua
+# UltimateBloxFruits_Rayfield.lua
+# GAG2.lua.txt
+# Grow a Garden 2.lua.txt
+# AnimalHospital.lua
+# AxeRNG.lua.txt
+
+# ----- GAG2 extraction artifacts -----
+97598239454123_Grow_a_Garden_2/
+www.gag2.gg.har*/
+*.zip
+*.har
+
+# ----- Python (for verify_slice1.py, docs/verify.py) -----
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# ----- editor / OS noise -----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ----- Luau / executor artifacts -----
+# (we don't typically generate any locally; placeholder)
+*.bak
+*.tmp
+
+# ----- Python venvs (we use them in /tmp/refs_venv during research) -----
+/tmp/refs/
+/tmp/refs_venv/
