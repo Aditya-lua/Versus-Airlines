@@ -1423,7 +1423,7 @@ function getRequiredMeds(room)
 			for _, token in ipairs(string.split(text:gsub("\n", ","), ",")) do
 				local clean = token:gsub("^%s*%-*%s*(.-)%s*$", "%1")
 				if clean ~= "" and clean ~= "RACE: Human" then
-					local cure = SUN_CURE_MAP[clean]
+					local cure = SUN_CURE_MAP[clean:lower()] or SUN_CURE_MAP[clean]
 					if not cure then
 						local data = getIllnessData(clean)
 						if data then
@@ -4416,24 +4416,22 @@ interval(
 		end
 
 		-- 3. New Patient Check-In & Registration (Priority 2)
-		if Library and Library.Flags then
-			if Library and Library.Flags and Library.Flags["AutoCheckIn"] and scanIdentity() then
-				return
-			end
-			if Library and Library.Flags and Library.Flags["VisitorFlow"] and handleVisitorFlow() then
-				return
-			end
+		if Library.Flags["AutoCheckIn"] and scanIdentity() then
+			return
+		end
+		if Library.Flags["VisitorFlow"] and handleVisitorFlow() then
+			return
 		end
 
 		-- 4. Admitted Patient Treatment (Priority 3)
-		if Library and Library.Flags and Library.Flags["RoomTreatment"] then
+		if Library.Flags["RoomTreatment"] then
 			if handleRoomTreatment() then
 				return
 			end
 		end
 
 		-- 5. Emergency & Ambulance Rooms (Priority 4)
-		if Library and Library.Flags and Library.Flags["EmergencyRooms"] then
+		if Library.Flags["EmergencyRooms"] then
 			if handleEmergency() then
 				return
 			end
@@ -4471,7 +4469,7 @@ interval(
 )
 
 -- Safety loop: runs when ANY monster-defense toggle is enabled
-interval("safety", { "AvoidMonsters", "StalkerHandler", "BedMonsterSyrup", "CeilingEyes", "SkinwalkerEscape", "CCTVExit", "AutoTaseMonsters", "AutoHeadBanger" }, 0.5, function()
+interval("safety", { "AvoidMonsters", "StalkerHandler", "BedMonsterSyrup", "CeilingEyes", "SkinwalkerEscape", "CCTVExit", "AutoTaseMonsters" }, 0.5, function()
 	fleeMonsters()
 	stalkerHandler()
 	handleBedMonster()
@@ -4495,7 +4493,7 @@ interval("cutscene", "AutoSkipCutscenes", 0.5, handleCutsceneSkip)
 -- LocalLoseSanity closure directly, bypassing the Lib hook. Force the local
 -- attribute back to 100 so Silent mode actually keeps sanity full.
 interval("sanityclamp", "SanityMode", 1, function()
-	if Library and Library.Flags and Library.Flags["SanityMode"] == "Silent Local Hook" then
+	if Library.Flags["SanityMode"] == "Silent Local Hook" then
 		pcall(function()
 			if client:GetAttribute("Sanity") ~= 100 then
 				client:SetAttribute("Sanity", 100)
@@ -4507,10 +4505,8 @@ end)
 interval("movement", "WalkSpeed", 0.1, applyMovement)
 interval("esp", "ESPEnabled", 1.8, updateESP)
 interval("camera", "CameraMode", 0.5, function()
-	if Library and Library.Flags then
-		local mode = Library.Flags["CameraMode"]
-		setCameraMode(mode)
-	end
+	local mode = Library.Flags["CameraMode"]
+	setCameraMode(mode)
 end)
 
 local charConn = client.CharacterAdded:Connect(function()
