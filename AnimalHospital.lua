@@ -219,6 +219,12 @@ local State = {
 	RoomAppliedMeds = {},
 	LastMedApply = {},
 	RoomUnlockAt = {},
+	RecordingData = {},
+	RecordingActive = false,
+	RecordingShiftNum = 0,
+	RecordingRemotes = {},
+	RecordingObjectives = {},
+	RecordingDialogues = {},
 	ItemCache = {},
 	OriginalHoldDurations = setmetatable({}, { __mode = "k" }),
 	InstantPPHooked = setmetatable({}, { __mode = "k" }),
@@ -1887,6 +1893,7 @@ function hookServerEvents()
 		if type(text) == "string" and text ~= "" then
 			State.CurrentObjective = text
 			State.CurrentTarget = target
+			recordEvent("objectives", { text = text, target = target and target.Name or nil })
 		else
 			State.CurrentObjective = nil
 			State.CurrentTarget = nil
@@ -3499,6 +3506,7 @@ function skipDialogue()
 		return
 	end
 	if isDialogueOpen() then
+		recordEvent("dialogues", { text = "dialogue open (skipped)" })
 		fireRemote("RE/SetDoctorDialogueSkipped")
 	end
 end
@@ -4405,6 +4413,21 @@ debugSection:createToggle({
 	flagName = "AutoHeartbeat",
 	Flag = false,
 })
+debugSection:createToggle({
+	Name = "Record Game Data (Learning)",
+	flagName = "RecordGameData",
+	Flag = false,
+	Callback = function(val)
+		if val then
+			State.RecordingData = {}
+			State.RecordingActive = true
+			notify("Recorder", "Recording started - play a few shifts then turn off")
+		else
+			State.RecordingActive = false
+			flushRecording()
+		end
+	end,
+})
 debugSection:createButton({
 	Name = "Print Session Statistics",
 	Callback = function()
@@ -4430,6 +4453,156 @@ debugSection:createButton({
 		notify("Objective", "Text: " .. obj .. " | Target: " .. tname)
 	end,
 })
+
+-----------------------------------------------------------------
+-- GAME DATA RECORDER (Learning Mode)
+-- Turn on "Record Game Data", play a shift, turn it off.
+-- Dumps all prompts, NPC attrs/tags, room layouts, remote
+-- events, objectives and dialogue texts to a JSON file so the
+-- script can be auto-improved against live game data.
+-----------------------------------------------------------------
+local function recordEvent(kind, data)
+	if not State.RecordingActive then
+		return
+	end
+	local rec = State.RecordingData
+	rec[kind] = rec[kind] or {}
+	table.insert(rec[kind], data)
+end
+
+local function recordScanSnapshot()
+	if not State.RecordingActive then
+		return
+	end
+	local rec = State.RecordingData
+	rec.scans = rec.scans or {}
+	local snap = {}
+	-- All ProximityPrompts with model name + ActionText
+	snap.prompts = {}
+	for pp in pairs(PromptCache._prompts or {}) do
+		if pp.Enabled then
+			local model = pp:FindFirstAncestorWhichIsA("Model")
+			local mName = model and model.Name or "?"
+			pcall(function()
+				table.insert(snap.prompts, {
+					at = pp.ActionText or "",
+					model = mName,
+					objText = pp.ObjectText or "",
+				})
+			end)
+		end
+	end
+	-- All NPCs with attributes and tags
+	snap.npcs = {}
+	local npcsFolder = Workspace:FindFirstChild("NPCs")
+	if npcsFolder then
+		for _, m in ipairs(npcsFolder:GetChildren()) do
+			if m:IsA("Model") then
+				local entry = { name = m.Name, attrs = {}, tags = {} }
+				local attrs = {
+					"IsPatient","DesignatedRoom","IsCured","Voice",
+					"PhotoEffect","CameraEffect","InspectEffect",
+					"Cursed","IsMonster","Skinwalker","PhotoEffect2",
+					"CameraEffect2","InspectEffect2","FireCharges",
+				}
+				for _, a in ipairs(attrs) do
+					local v = m:GetAttribute(a)
+					if v ~= nil then
+						entry.attrs[a] = v
+					end
+				end
+				local tags = {
+					"VisitorAtCheckIn","ShopItemPP","Skinwalker",
+					"Anomaly","Monster","Enemy","OnFire","Zombie","Grime",
+					"Downed","DeadPlayer","Fainted","GhostAnomaly",
+				}
+				for _, t in ipairs(tags) do
+					if CollectionService:HasTag(m, t) then
+						table.insert(entry.tags, t)
+					end
+				end
+				table.insert(snap.npcs, entry)
+			end
+		end
+	end
+	-- Room structure
+	snap.rooms = {}
+	local roomsFolder = Workspace:FindFirstChild("Rooms")
+	if roomsFolder then
+		local cats = { "Medical", "Emergency" }
+		for _, cat in ipairs(cats) do
+			local folder = roomsFolder:FindFirstChild(cat)
+			if folder then
+				for _, r in ipairs(folder:GetChildren()) do
+					if r:IsA("Model") then
+						local entry = { name = r.Name, category = cat, children = {} }
+						local mini = r:FindFirstChild("Minigame", true)
+						if mini then
+							for _, c in ipairs(mini:GetChildren()) do
+								table.insert(entry.children, c.Name)
+							end
+						end
+						table.insert(snap.rooms, entry)
+					end
+				end
+			end
+		end
+	end
+	-- Misc objects
+	snap.misc = {}
+	local miscFolder = Workspace:FindFirstChild("Misc")
+	if miscFolder then
+		for _, c in ipairs(miscFolder:GetChildren()) do
+			table.insert(snap.misc, { name = c.Name, class = c.ClassName })
+		end
+		for _, c in ipairs(miscFolder:GetDescendants()) do
+			if c:IsA("ProximityPrompt") then
+				table.insert(snap.misc, { name = c.ActionText or "", parent = c.Parent and c.Parent.Name or "?", kind = "prompt" })
+			end
+		end
+	end
+	-- Remote event names (list what the game actually has)
+	snap.remotes = {}
+	local reFolder = ReplicatedStorage.Util and ReplicatedStorage.Util:FindFirstChild("RE")
+	if reFolder then
+		for _, r in ipairs(reFolder:GetChildren()) do
+			if r:IsA("RemoteEvent") then
+				table.insert(snap.remotes, r.Name)
+			end
+		end
+	end
+	table.insert(rec.scans, snap)
+end
+
+local function flushRecording()
+	if not State.RecordingData or not next(State.RecordingData) then
+		return
+	end
+	local ok, encoded = pcall(function()
+		return HttpService:JSONEncode(State.RecordingData)
+	end)
+	if ok and encoded then
+		local fname = string.format("VersusAirlines_GameData_%d.json", game.PlaceId)
+		pcall(function()
+			writefile(fname, encoded)
+		end)
+		notify("Recorder", "Saved: " .. fname .. " (" .. #encoded .. " bytes)\nUse readfile to retrieve it")
+	end
+	State.RecordingData = {}
+end
+
+-- Hook recording into connectRemote (intercepts every game→client event)
+local _originalConnectRemote = connectRemote
+connectRemote = function(name, callback)
+	-- Transparent recording wrapper: log every remote the game fires
+	_originalConnectRemote(name, function(...)
+		if State.RecordingActive then
+			local args = { ... }
+			recordEvent("remotes", { name = name, args = args })
+		end
+		callback(...)
+	end)
+end
 
 -----------------------------------------------------------------
 -- RUNTIME SCHEDULER & ENGINE LOOPS
@@ -4531,6 +4704,22 @@ end)
 interval("coffee", "AutoDrinkCoffee", 2, drinkCoffeeIfNeeded)
 
 interval("fuses", "AutoFuses", 4, handleFuses)
+
+interval("recorder", "RecordGameData", 10, function()
+	recordScanSnapshot()
+	-- Periodic save every 30s so data survives crashes
+	if State.RecordingActive and (tick() - (State._lastRecorderFlush or 0)) > 30 then
+		State._lastRecorderFlush = tick()
+		pcall(function()
+			local ok2, enc2 = pcall(function()
+				return HttpService:JSONEncode(State.RecordingData)
+			end)
+			if ok2 and enc2 then
+				writefile(string.format("VersusAirlines_GameData_%d.json", game.PlaceId), enc2)
+			end
+		end)
+	end
+end)
 
 interval("banger", "AutoHeadBanger", 3, handleHeadBanger)
 
