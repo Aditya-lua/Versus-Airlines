@@ -4461,7 +4461,7 @@ debugSection:createButton({
 -- events, objectives and dialogue texts to a JSON file so the
 -- script can be auto-improved against live game data.
 -----------------------------------------------------------------
-local function recordEvent(kind, data)
+function recordEvent(kind, data)
 	if not State.RecordingActive then
 		return
 	end
@@ -4470,7 +4470,7 @@ local function recordEvent(kind, data)
 	table.insert(rec[kind], data)
 end
 
-local function recordScanSnapshot()
+function recordScanSnapshot()
 	if not State.RecordingActive then
 		return
 	end
@@ -4574,7 +4574,7 @@ local function recordScanSnapshot()
 	table.insert(rec.scans, snap)
 end
 
-local function flushRecording()
+function flushRecording()
 	if not State.RecordingData or not next(State.RecordingData) then
 		return
 	end
