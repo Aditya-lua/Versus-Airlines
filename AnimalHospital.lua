@@ -1982,10 +1982,21 @@ function followObjective()
 	end
 
 	-- No explicit objective match: fire the nearest safe workflow prompt
-	-- so the autopilot never stalls on unknown / renamed objectives.
-	local fallbackModel, fallbackPP = PromptCache:GetNearestWorkflowPrompt()
-	if fallbackModel and not isPatientOwned(fallbackModel) then
-		return fireModelPrompt(fallbackModel, fallbackPP and fallbackPP.ActionText or nil)
+	-- only when no visitor is waiting AND no room needs treatment, so the
+	-- fallback doesn't starve check-in or treatment on the next tick.
+	local hasVisitor = findVisitorAtCheckIn()
+	local hasRoomWork = false
+	for _, at in ipairs(TREATMENT_ATs) do
+		if PromptCache:GetNearestPrompt(at) then
+			hasRoomWork = true
+			break
+		end
+	end
+	if not hasVisitor and not hasRoomWork then
+		local fallbackModel, fallbackPP = PromptCache:GetNearestWorkflowPrompt()
+		if fallbackModel and not isPatientOwned(fallbackModel) then
+			return fireModelPrompt(fallbackModel, fallbackPP and fallbackPP.ActionText or nil)
+		end
 	end
 
 	return false
@@ -4635,20 +4646,24 @@ interval(
 	function()
 		-- 1. Follow Core Game Directive (Priority 1)
 		if Library.Flags["AutoFarm"] and followObjective() then
+			State._lastAction = tick()
 			return
 		end
 
 		-- 3. New Patient Check-In & Registration (Priority 2)
 		if Library.Flags["AutoCheckIn"] and scanIdentity() then
+			State._lastAction = tick()
 			return
 		end
 		if Library.Flags["VisitorFlow"] and handleVisitorFlow() then
+			State._lastAction = tick()
 			return
 		end
 
 		-- 4. Admitted Patient Treatment (Priority 3)
 		if Library.Flags["RoomTreatment"] then
 			if handleRoomTreatment() then
+				State._lastAction = tick()
 				return
 			end
 		end
@@ -4656,6 +4671,7 @@ interval(
 		-- 5. Emergency & Ambulance Rooms (Priority 4)
 		if Library.Flags["EmergencyRooms"] then
 			if handleEmergency() then
+				State._lastAction = tick()
 				return
 			end
 		end
@@ -4688,6 +4704,17 @@ interval(
 		zombieAura()
 		skipDialogue()
 		autoRescueEaten()
+
+		-- Reaching here means NO feature returned true this tick.
+		-- Log stall state under DebugMode for live-troubleshooting.
+		if Library.Flags["DebugMode"] and (tick() - (State._lastAction or 0)) > 1.5 then
+			print(string.format("[Stall] %.1fs idle | obj=%s | treating=%s | visitor=%s | hasBed=%s",
+				tick() - (State._lastAction or 0),
+				State.CurrentObjective or "none",
+				tostring(State.IsTreatingRoom),
+				findVisitorAtCheckIn() and "yes" or "no",
+				next(PromptCache:GetPromptsByActionText("Apply Treatment")) and "yes" or "no"))
+		end
 	end
 )
 
