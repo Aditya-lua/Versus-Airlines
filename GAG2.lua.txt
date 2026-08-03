@@ -2728,25 +2728,24 @@ local function doSteal()
 end
 
 local function doSellAll()
+    local balBefore = getBalance()
+    -- track profit from last sell cycle
+    if sellBaseline and balBefore > sellBaseline then
+        local profit = balBefore - sellBaseline
+        if profit > 5000 then
+            sessionEarned = sessionEarned + profit
+            if profit > 100000 and Library.Flags["whBigHarvest"] then
+                sendWebhook("BIG Sell", "Sold " .. fmtCash(profit) .. " worth of crops!", 5763719)
+            end
+        end
+    end
+    sellBaseline = balBefore
     -- smart sell: respect daily deal toggle for bonus
     if Library.Flags["dailyDeal"] then
         netFire("NPCS.UseDailyDealAll")
     else
         netFire("NPCS.SellAll")
     end
-    -- track profit from sell: snapshot balance before next cycle
-    local balNow = getBalance()
-    if not sellBaseline then
-        sellBaseline = balNow
-    end
-    local profit = balNow - sellBaseline
-    if profit > 5000 then
-        sessionEarned = sessionEarned + profit
-        if profit > 100000 and Library.Flags["whBigHarvest"] then
-            sendWebhook("BIG Sell", "Sold " .. fmtCash(profit) .. " worth of crops!", 5763719)
-        end
-    end
-    sellBaseline = nil
 end
 
 local function doSellSelective()
@@ -3321,7 +3320,11 @@ local function doRetaliateShovel()
     end
 end
 
+local _packGrabbing = false
 local function doPackGrab()
+    if _packGrabbing then
+        return
+    end
     local spawns = Workspace:FindFirstChild("Map")
     spawns = spawns and spawns:FindFirstChild("SeedPackSpawnServerLocations")
     if not spawns then
@@ -3351,8 +3354,10 @@ local function doPackGrab()
                         notify("Rare Seed Spawned", packType(loc) or "Rare pack - grabbing!")
                         sendWebhook("Rare Seed", packType(loc) or "Rare pack spawned", 12255232)
                     end
+                    _packGrabbing = true
                     task.spawn(function()
                         pcall(grabPackRobust, loc)
+                        _packGrabbing = false
                     end)
                     break
                 end
@@ -3391,6 +3396,7 @@ end
 
 -- ESP (pooled highlights)
 local _espPool = {}
+local _espLabels = {}
 local function clearESP()
     for _, h in ipairs(_espPool) do
         pcall(function()
@@ -3398,6 +3404,12 @@ local function clearESP()
         end)
     end
     _espPool = {}
+    for _, b in ipairs(_espLabels) do
+        pcall(function()
+            b:Destroy()
+        end)
+    end
+    _espLabels = {}
 end
 
 local function doESP()
@@ -3440,6 +3452,81 @@ local function doESP()
             end
         end
     end
+
+    -- mutation labels on garden plants (BillboardGui text)
+    if Library.Flags["espMutationLabels"] then
+        local plot = myPlot()
+        local plants = plot and plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local mut = plant:GetAttribute("Mutation")
+                if type(mut) == "string" and mut ~= "" and mut ~= "None" then
+                    local rootPart = plant:FindFirstChildWhichIsA("BasePart")
+                    if rootPart then
+                        local sn = plant:GetAttribute("SeedName") or plant:GetAttribute("CorePartName") or "Plant"
+                        local col = mut == "Gold" and Color3.fromRGB(255, 215, 0)
+                            or mut == "Electric" and Color3.fromRGB(80, 160, 255)
+                            or mut == "Rainbow" and Color3.fromRGB(255, 100, 200)
+                            or mut == "Frozen" and Color3.fromRGB(100, 210, 255)
+                            or Color3.fromRGB(200, 200, 200)
+                        local bb = Instance.new("BillboardGui")
+                        bb.Adornee = rootPart
+                        bb.Size = UDim2.new(0, 200, 0, 30)
+                        bb.StudsOffset = Vector3.new(0, 3, 0)
+                        bb.AlwaysOnTop = true
+                        bb.Parent = CoreGui
+                        local tl = Instance.new("TextLabel")
+                        tl.Size = UDim2.new(1, 0, 1, 0)
+                        tl.BackgroundTransparency = 1
+                        tl.Text = "[" .. mut .. "] " .. sn
+                        tl.TextColor3 = col
+                        tl.TextStrokeColor3 = Color3.new(0, 0, 0)
+                        tl.TextStrokeTransparency = 0.5
+                        tl.TextSize = 14
+                        tl.Font = Enum.Font.GothamBold
+                        tl.Parent = bb
+                        _espLabels[#_espLabels + 1] = bb
+                    end
+                end
+            end
+        end
+    end
+
+    -- plant age labels (Age/MaxAge)
+    if Library.Flags["espPlantAge"] then
+        local plot = myPlot()
+        local plants = plot and plot:FindFirstChild("Plants")
+        if plants then
+            for _, plant in ipairs(plants:GetChildren()) do
+                local age = plant:GetAttribute("Age")
+                local maxAge = plant:GetAttribute("MaxAge")
+                if age and maxAge then
+                    local rootPart = plant:FindFirstChildWhichIsA("BasePart")
+                    if rootPart then
+                        local sn = plant:GetAttribute("SeedName") or plant:GetAttribute("CorePartName") or "Plant"
+                        local ripe = age >= maxAge
+                        local bb = Instance.new("BillboardGui")
+                        bb.Adornee = rootPart
+                        bb.Size = UDim2.new(0, 160, 0, 24)
+                        bb.StudsOffset = Vector3.new(0, 1.5, 0)
+                        bb.AlwaysOnTop = true
+                        bb.Parent = CoreGui
+                        local tl = Instance.new("TextLabel")
+                        tl.Size = UDim2.new(1, 0, 1, 0)
+                        tl.BackgroundTransparency = 1
+                        tl.Text = sn .. " " .. tostring(age) .. "/" .. tostring(maxAge)
+                        tl.TextColor3 = ripe and Color3.fromRGB(120, 235, 130) or Color3.fromRGB(200, 200, 200)
+                        tl.TextStrokeColor3 = Color3.new(0, 0, 0)
+                        tl.TextStrokeTransparency = 0.5
+                        tl.TextSize = 12
+                        tl.Font = Enum.Font.Gotham
+                        tl.Parent = bb
+                        _espLabels[#_espLabels + 1] = bb
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- instant interact prompt
@@ -3455,7 +3542,11 @@ end
 
 -- bypass gameplay paused
 local function doBypassPause()
-    for _, g in ipairs(client.PlayerGui:GetChildren()) do
+    local pg = client.PlayerGui
+    if not pg then
+        return
+    end
+    for _, g in ipairs(pg:GetChildren()) do
         if
             g:IsA("ScreenGui")
             and (g.Name:lower():find("pause") or g.Name:lower():find("modal") or g.Name:lower():find("gameplay"))
@@ -3836,6 +3927,19 @@ local function doMoveLoop()
             end
         end
     end
+    -- visual toggles (applied every frame to counter game resets)
+    if Library.Flags["fullBright"] then
+        LightingService.Brightness = tonumber(Library.Flags["brightness"]) or 5
+        LightingService.Ambient = Color3.fromRGB(255, 255, 255)
+        LightingService.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+    end
+    if Library.Flags["noFog"] then
+        LightingService.FogEnd = 100000
+        LightingService.FogStart = 100000
+    end
+    if Library.Flags["noShadows"] then
+        LightingService.GlobalShadows = false
+    end
 end
 
 -- stats tracking
@@ -4020,6 +4124,8 @@ local PERSISTENT_FLAGS = {
     "espPet",
     "espPetRarity",
     "espPetSize",
+    "espMutationLabels",
+    "espPlantAge",
     "noclipPlants",
     "moreFps",
     "autoRemoveGardens",
@@ -4030,6 +4136,10 @@ local PERSISTENT_FLAGS = {
     "noClip",
     "freeFlight",
     "flightSpeed",
+    "fullBright",
+    "brightness",
+    "noFog",
+    "noShadows",
 
     "autoTame",
     "autoEquip",
@@ -4086,13 +4196,6 @@ local function loadSettings()
         end
     end
 end
-
--- stats tracking
-local sessionEarned = 0
-local sessionHarvests = 0
-local sessionStart = os.clock()
-local sessionStartBal = getBalance()
-local profitWindow = {}
 
 -- ================================================================
 -- SECTIONS (9 tabs)
@@ -5074,6 +5177,20 @@ Misc:createToggle({
     Description = "Highlight spawned pets matching filters through walls.",
 })
 
+Misc:createLabel({ Name = "- [ Plant ESP ] -", Special = true })
+Misc:createToggle({
+    Name = "Show Mutations on Plants",
+    Flag = false,
+    flagName = "espMutationLabels",
+    Description = "Show mutation name labels above mutated garden plants.",
+})
+Misc:createToggle({
+    Name = "Show Plant Age",
+    Flag = false,
+    flagName = "espPlantAge",
+    Description = "Show Age/MaxAge above each plant in your garden.",
+})
+
 -- Misc
 Misc:createLabel({ Name = "Misc", Special = true })
 
@@ -5258,6 +5375,34 @@ Misc:createToggle({
             end
         end
     end,
+})
+
+Misc:createLabel({ Name = "- [ Visual ] -", Special = true })
+Misc:createToggle({
+    Name = "Full Bright",
+    Flag = false,
+    flagName = "fullBright",
+    Description = "Maximum ambient lighting.",
+})
+Misc:createSlider({
+    Name = "Brightness",
+    flagName = "brightness",
+    Min = 1,
+    Max = 10,
+    Default = 5,
+    Description = "Lighting brightness level.",
+})
+Misc:createToggle({
+    Name = "No Fog",
+    Flag = false,
+    flagName = "noFog",
+    Description = "Remove all environmental fog.",
+})
+Misc:createToggle({
+    Name = "No Shadows",
+    Flag = false,
+    flagName = "noShadows",
+    Description = "Disable global shadows.",
 })
 Misc:createToggle({
     Name = "Fly",
@@ -5787,29 +5932,32 @@ Visual:createButton({
 -- ================================================================
 
 -- sell on interval (single driver - no more double-mechanism)
-local _lastSell = 0
+local _lastAutoSell = 0
+local _lastSellFull = 0
 local _lastDailyDeal = 0
 track(RunService.Heartbeat:Connect(function()
     local now = os.clock()
-    if Library.Flags["autoSell"] then
-        local si = tonumber(Library.Flags["sellInterval"]) or 20
-        if now - _lastSell >= si then
-            _lastSell = now
-            doSellAll()
+    pcall(function()
+        if Library.Flags["autoSell"] then
+            local si = tonumber(Library.Flags["sellInterval"]) or 20
+            if now - _lastAutoSell >= si then
+                _lastAutoSell = now
+                doSellAll()
+            end
         end
-    end
-    -- sell on full (rate-limited to avoid spamming SellAll every frame)
-    if Library.Flags["sellOnFull"] and now - _lastSell >= 5 then
-        if isInventoryFull() then
-            _lastSell = now
-            doSellAll()
+        -- sell on full (rate-limited to avoid spamming SellAll every frame)
+        if Library.Flags["sellOnFull"] and now - _lastSellFull >= 5 then
+            if isInventoryFull() then
+                _lastSellFull = now
+                doSellAll()
+            end
         end
-    end
-    -- daily deal (rate-limited to ~1/s to avoid spam)
-    if Library.Flags["dailyDeal"] and now - _lastDailyDeal >= 1 then
-        _lastDailyDeal = now
-        netFire("NPCS.UseDailyDealAll")
-    end
+        -- daily deal (rate-limited to ~1/s to avoid spam)
+        if Library.Flags["dailyDeal"] and now - _lastDailyDeal >= 1 then
+            _lastDailyDeal = now
+            netFire("NPCS.UseDailyDealAll")
+        end
+    end)
 end))
 
 -- consolidated 2s loop: defense, notify, ESP, highlights, passives
@@ -5830,7 +5978,8 @@ task.spawn(function()
             end
             if Library.Flags["antiFling"] then
                 doAntiFling()
-            end            if Library.Flags["bypassPause"] then
+            end
+            if Library.Flags["bypassPause"] then
                 doBypassPause()
             end
             if Library.Flags["noclipPlants"] then
