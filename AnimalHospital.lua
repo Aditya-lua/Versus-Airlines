@@ -2494,10 +2494,21 @@ function continueRoomTreatment(room)
 		end
 		local tool = findToolInInventory(cure)
 		if not tool then
-			if not fetchToolFromShelf(cure) then
-				return true
+			-- Equip a diagnostic / fallback tool so the player is never empty-handed
+			-- while walking to the shelf (reference parity: prevents dead time).
+			local equipAny = equipMedicine()
+			if not equipAny then
+				if not fetchToolFromShelf(cure) then
+					return true
+				end
+				tool = findToolInInventory(cure)
+			else
+				if not fetchToolFromShelf(cure) then
+					return true
+				end
+				task.wait(0.3)
+				tool = findToolInInventory(cure)
 			end
-			tool = findToolInInventory(cure)
 		end
 		if tool and bedPP then
 			if useToolByName(tool.Name) then
@@ -2517,6 +2528,11 @@ function continueRoomTreatment(room)
 
 	local progress = fireRoomSteps(room)
 	if not progress then
+		-- Only release if this room is still the active one (reference parity:
+		-- prevents race condition where treatment moves to a different room mid-step).
+		if room ~= State.ActiveRoom then
+			return true
+		end
 		-- Nothing actionable left in this room: release the step lock
 		unlockTreatment()
 	end
@@ -2631,7 +2647,7 @@ function handleFainted()
 					or m:FindFirstChildWhichIsA("BasePart")
 				if p and distanceTo(p.Position) < 40 then
 					-- Pick up the fainted NPC and drop them at the trash can,
-					-- or at a bed inside their room if no trash can is available
+					-- or at their DesignatedRoom bed if no trash can is available
 					local carryPP = nil
 					for pp in pairs(PromptCache._prompts) do
 						if pp.Enabled then
@@ -2661,7 +2677,18 @@ function handleFainted()
 						task.wait(0.4)
 						updateMaxActivationDistance(trashPP, true)
 					else
-						local room = m:FindFirstAncestorWhichIsA("Model")
+						local designatedRoom = m:GetAttribute("DesignatedRoom")
+						local room = nil
+						if designatedRoom then
+							local rooms = Workspace:FindFirstChild("Rooms")
+							if rooms then
+								room = rooms.Medical and rooms.Medical:FindFirstChild(designatedRoom)
+									or (rooms.Emergency and rooms.Emergency:FindFirstChild(designatedRoom))
+							end
+						end
+						if not room then
+							room = m:FindFirstAncestorWhichIsA("Model")
+						end
 						local bedPP = findRoomBedPP(room)
 						if bedPP then
 							safeMoveToModel(bedPP:FindFirstAncestorWhichIsA("Model"))
