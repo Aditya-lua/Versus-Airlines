@@ -38,7 +38,7 @@ local httpRequest = (syn and syn.request)
     or (typeof(request) == "function" and request)
     or http_request
 
--- Platform & Stability Abstractions (High-Stability AFK Engine)
+-- Platform & Stability
 local Platform = {
     Client = client,
     Request = httpRequest,
@@ -84,7 +84,7 @@ local StabilityEngine = {
                     return
                 end
 
-                if Library and Library.Flags and (Library.Flags["autoHarvestAll"] or Library.Flags["autoPlant"] or Library.Flags["autoCollect"] or Library.Flags["autoSteal"] or Library.Flags["autoTame"] or Library.Flags["autoSprinklerAll"] or Library.Flags["autoWaterAll"]) then
+                if Library and Library.Flags and (Library.Flags["autoCollect"] or Library.Flags["autoCollectAll"] or Library.Flags["autoPlant"] or Library.Flags["autoSteal"] or Library.Flags["autoBuyPet"] or Library.Flags["autoSprinklerAll"] or Library.Flags["autoWaterAll"]) then
                     if self._lastPosition then
                         local dist = (root.Position - self._lastPosition).Magnitude
                         if dist < 1.5 then
@@ -478,7 +478,7 @@ local function DumpDebugLog()
     end
 end
 task.spawn(function()
-    while true do
+    while Hub.running do
         task.wait(4)
         if DebugLogOn and #DebugLogBuf ~= LastDebugDump then
             DumpDebugLog()
@@ -496,8 +496,7 @@ local mod = tryRequire(function()
     return require(sm and (sm:FindFirstChild("Networking") or sm:WaitForChild("Networking", 10)) or ReplicatedStorage.SharedModules.Networking)
 end)
 if not mod then
-    -- fallback: scan the gc for the already-loaded Networking table
-    -- (resolver fallback; require can fail when Packet isn't in cache yet)
+    -- packet-less fallback: force-load Packet module first
     mod = tryRequire(function()
         local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
         local pkt = sm and (sm:FindFirstChild("Packet") or sm:WaitForChild("Packet", 5))
@@ -657,7 +656,7 @@ do
     end
 end
 local ValueEngine = {}
--- exact clone of the game's FruitValueCalc(seedName, weightKg, mutationName, player, freshness)
+-- Value engine: mirrors game FruitValueCalc logic
 function ValueEngine.compute(crop, weight, mutationName, baseOnly)
     if not crop or crop == "" then
         return 0
@@ -981,7 +980,7 @@ local function nearPlot()
     end
 end
 
--- authoritative tool helpers (game client requires the matching tool equipped)
+-- tool lookups
 local function getToolParents()
     local parents = {}
     local char = client and client.Character
@@ -1525,7 +1524,7 @@ local function getSoilAreas(plot)
     return areas
 end
 
--- snap a world XZ to the nearest PlantArea soil surface (mirrors the game client's TryPlant/TryWater raycast hit)
+-- snap world XZ to nearest PlantArea soil surface
 local function soilPositionAt(plot, x, z)
     if not plot then
         return nil
@@ -2331,7 +2330,12 @@ end -- scoped: value ESP
 -- FEATURE FUNCTIONS
 -- ================================================================
 
+local _harvesting = false
 local function doHarvest(forceAll)
+    if _harvesting then
+        return
+    end
+    _harvesting = true
     local collected = 0
     local mode = forceAll and "All" or (firstValue(Library.Flags["collectFilter"] or {}) or "All")
     if Library.Flags["autoCollectAll"] then
@@ -2395,8 +2399,7 @@ local function doHarvest(forceAll)
                 task.wait(0.12)
             end
         end
-        -- fire the real CollectFruit remote for every ripe fruit
-        -- no prompt simulation - the server validates the request itself
+        -- fire CollectFruit remote for every ripe fruit
         for _, entry in ipairs(targets) do
             local skip = false
             if mode == "Filtered" then
@@ -2422,6 +2425,7 @@ local function doHarvest(forceAll)
     if collected > 0 then
         DebugLog("doHarvest", "collected=" .. collected, "mode=" .. mode)
     end
+    _harvesting = false
     return collected
 end
 
@@ -2531,7 +2535,7 @@ local function doPlant()
             local reserved = {}
             for _, seedName in ipairs(toPlant) do
                 local owned = (seeds[seedName] or 0)
-                if owned > keep then
+                for _ = 1, math.max(0, owned - keep) do
                     reserved[#reserved + 1] = seedName
                 end
             end
@@ -3075,9 +3079,7 @@ placeOneSprinkler = function(plot, name, ownedCount)
         DebugLog("doSprinkler", "exit: no position resolved", "name=" .. tostring(name))
         return false
     end
-    -- authoritative signature (from game dump SprinklerController.TryPlace):
-    -- Place.PlaceSprinkler:Fire(position, tool:SprinklerAttr, equippedTool, plotId)
-    -- requires the sprinkler tool to be equipped (server validates via equipped tool)
+    -- Place.PlaceSprinkler:Fire(position, sprinklerAttr, equippedTool, plotId)
     local sTool, sAttr = findToolByAttr("Sprinkler", name)
     if not sTool then
         DebugLog("doSprinkler", "exit: no sprinkler tool found", "want=" .. tostring(name))
@@ -3114,7 +3116,7 @@ local function doWateringCan()
         local decaying = pl:GetAttribute("IsDecaying") or pl:GetAttribute("Decaying")
         if decaying then
             local crop = pl:GetAttribute("SeedName") or pl:GetAttribute("CorePartName")
-            if waterAll or not targetCrop or (crop and crop:lower() == targetCrop:lower()) then
+            if waterAll or not targetCrop or (type(targetCrop) == "string" and crop and crop:lower() == targetCrop:lower()) then
                 local ok, basePos = pcall(function()
                     return pl:GetPivot().Position
                 end)
@@ -3929,6 +3931,7 @@ local function doMoveLoop()
         humanoid.JumpHeight = jh
     end
     if Library.Flags["noClip"] then
+        st.wasNoClip = true
         for _, p in ipairs(character:GetDescendants()) do
             if p:IsA("BasePart") and p.CanCollide then
                 p.CanCollide = false
@@ -4009,6 +4012,7 @@ local PERSISTENT_FLAGS = {
     "autoCollect",
     "autoCollectAll",
     "autoCollectBest",
+    "panicHarvest",
     "enableFilters",
     "collectNoTp",
     "stopOnFull",
@@ -4226,7 +4230,6 @@ local Shop = Setup:CreateSection("🛒 Shop")
 local Webhook = Setup:CreateSection("📡 Webhook")
 local Misc = Setup:CreateSection("🧰 Misc")
 local Visual = Setup:CreateSection("👁️ Visual")
-local DevTools = Setup:CreateSection("🐞 Dev Tools")
 local Settings = Setup:CreateSection("🔧 Settings")
 
 -- ================================================================
@@ -4469,6 +4472,12 @@ Main:createToggle({
     Flag = false,
     flagName = "autoCollectBest",
     Description = "Only collect the highest-value fruit.",
+})
+Main:createToggle({
+    Name = "Panic Harvest at Night",
+    Flag = false,
+    flagName = "panicHarvest",
+    Description = "Instantly harvest everything when night falls.",
 })
 
 Main:createLabel({ Name = "- [ Mutation Scanner ] -", Special = true })
@@ -5500,92 +5509,6 @@ Misc:createButton({
 -- ================================================================
 -- DEV TOOLS TAB
 -- ================================================================
-
-DevTools:createLabel({ Name = "Debug", Special = true })
-DevTools:createToggle({
-    Name = "Debug Logging",
-    Flag = true,
-    flagName = "debugLogging",
-    Description = "Log every remote fire, equip and error to console + gag2_debug_log.txt.",
-    Callback = function(v)
-        DebugLogOn = v and true or false
-    end,
-})
-DevTools:createButton({
-    Name = "Dump Debug Log",
-    Description = "Save the live action log (fires, equips, errors) to gag2_debug_log.txt.",
-    Callback = function()
-        if #DebugLogBuf == 0 then
-            notify("Debug", "No log entries yet - enable toggles first", "warning")
-            return
-        end
-        local ok, err = pcall(function()
-            local payload = "GAG2 debug log " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n" .. table.concat(DebugLogBuf, "\n") .. "\n"
-            writefile("gag2_debug_log.txt", payload)
-        end)
-        if ok then
-            LastDebugDump = #DebugLogBuf
-            notify("Debug", "Saved " .. #DebugLogBuf .. " entries to gag2_debug_log.txt")
-        else
-            notify("Debug", "writefile failed: " .. tostring(err), "warning")
-        end
-    end,
-})
-DevTools:createButton({
-    Name = "Dump Packet Names",
-    Description = "Print all real remote packet names + IDs from the game's Packet module to console.",
-    Callback = function()
-        local pk = ReplicatedStorage and ReplicatedStorage:FindFirstChild("SharedModules")
-            and ReplicatedStorage.SharedModules:FindFirstChild("Packet")
-        local ev = pk and pk:FindFirstChild("RemoteEvent")
-        if not (ev and ev.GetAttributes) then
-            notify("Packets", "Packet module / RemoteEvent not found", "warning")
-            return
-        end
-        local attrs = pcall(function()
-            return ev:GetAttributes()
-        end)
-        if not attrs then
-            notify("Packets", "Failed to read packet attributes", "warning")
-            return
-        end
-        local count = 0
-        local lines = {}
-        for name, id in pairs(ev:GetAttributes()) do
-            if type(name) == "string" then
-                count = count + 1
-                lines[#lines + 1] = string.format("[%s] id=%s", name, tostring(id))
-            end
-        end
-        table.sort(lines)
-        local text = table.concat(lines, "\n")
-        for _, line in ipairs(lines) do
-            print("[GAG2] packet " .. line)
-        end
-        local okClip, errClip = pcall(function()
-            setclipboard(text)
-        end)
-        local filePath = nil
-        if writefile then
-            pcall(function()
-                filePath = "gag2_packets_" .. tostring(os.date("%Y%m%d_%H%M%S")) .. ".txt"
-                writefile(filePath, text)
-            end)
-        end
-        local extras = {}
-        if okClip then
-            extras[#extras + 1] = "copied to clipboard"
-        else
-            extras[#extras + 1] = "clipboard failed: " .. tostring(errClip)
-        end
-        if filePath then
-            extras[#extras + 1] = "saved to " .. filePath
-        end
-        notify("Packets", count .. " packet names dumped - " .. table.concat(extras, ", "))
-    end,
-})
-
--- ================================================================
 -- SETTINGS TAB
 -- ================================================================
 
@@ -5608,13 +5531,8 @@ Settings:createToggle({
     Callback = function(enabled)
         if not enabled then
             StabilityEngine:StopAntiStuckWatchdog()
-            return
-        end
-        if enabled then
+        else
             StabilityEngine:StartAntiStuckWatchdog(2, 20)
-        elseif StabilityEngine._watchdogConn then
-            StabilityEngine._watchdogConn:Disconnect()
-            StabilityEngine._watchdogConn = nil
         end
     end,
 })
