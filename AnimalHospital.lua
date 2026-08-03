@@ -527,7 +527,11 @@ function isSkinwalker(npc)
 	if not npc or not npc:IsA("Model") then
 		return false
 	end
-	-- Verified attribute filter (PhotoEffect "Static" is NOT a monster)
+	-- Skinwalker attribute is the strongest signal (dump-verified: true even when
+	-- PhotoEffect = "Static", CameraEffect = "VoidPresence", etc.)
+	if npc:GetAttribute("Skinwalker") ~= nil then
+		return true
+	end
 	for _, attr in ipairs(MONSTER_ATTRIBUTES) do
 		local v = npc:GetAttribute(attr)
 		if v ~= nil and v ~= "Static" then
@@ -1228,6 +1232,9 @@ end
 function isMonsterVisitor(npc)
 	if not npc or not npc:IsA("Model") then
 		return false
+	end
+	if npc:GetAttribute("Skinwalker") ~= nil then
+		return true
 	end
 	for _, attr in ipairs(MONSTER_ATTRIBUTES) do
 		local v = npc:GetAttribute(attr)
@@ -2625,22 +2632,16 @@ function startShift()
 		return
 	end
 
-	local desk = Workspace:FindFirstChild("Misc") and Workspace.Misc:FindFirstChild("StartShift")
-	if desk then
-		local pp = desk:FindFirstChildWhichIsA("ProximityPrompt", true)
-		if pp and pp.Enabled then
-			fireModelPrompt(desk)
-			return
-		end
-	end
-
+	-- Scan all enabled prompts for shift-start keywords first
 	for pp in pairs(PromptCache._prompts) do
 		if pp.Enabled then
 			local model = pp:FindFirstAncestorWhichIsA("Model")
 			if model then
 				local name = model.Name
-				-- NOTE: "Computer" is the check-in register; never fire it here.
-				if (name:find("StartShift") or name:find("ShiftButton")) and not name:find("CheckIn") then
+				local at = (pp.ActionText or "")
+				-- NOTE: "Computer" alone is for check-in; never fire it here.
+				if ((name:find("StartShift") or name:find("ShiftButton") or at:find("Start Shift"))
+					and not name:find("CheckIn")) then
 					fireModelPrompt(model)
 					return
 				end
