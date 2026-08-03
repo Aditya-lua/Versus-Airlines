@@ -887,6 +887,23 @@ local function isNight()
     local n = ReplicatedStorage:FindFirstChild("Night")
     return n and n.Value == true
 end
+local EVENT_NAME = {
+    Day = "Day", Sunset = "Sunset", Moon = "Moon", Bloodmoon = "Blood Moon",
+    Goldmoon = "Gold Moon", ["Rainbow Moon"] = "Rainbow Moon",
+    ["Chained Moon"] = "Chained Moon", ["Pizza Moon"] = "Pizza Moon",
+}
+local function eventNameOf(r)
+    return EVENT_NAME[r] or tostring(r or "-")
+end
+local function fmtClock(s)
+    s = math.max(0, math.floor(s or 0))
+    return string.format("%d:%02d", math.floor(s / 60), s % 60)
+end
+local function currentEvent()
+    return workspace:GetAttribute("ActiveWeather"),
+        workspace:GetAttribute("ActivePhase"),
+        tonumber(workspace:GetAttribute("PhaseDuration"))
+end
 local function setCollide(on)
     local character = client.Character
     if not character then
@@ -4222,6 +4239,7 @@ Home:createLabel({ Name = "Session Earned: $0", flagName = "homeEarned", Special
 Home:createLabel({ Name = "Crops Harvested: 0", flagName = "homeHarvested", Special = true })
 Home:createLabel({ Name = "Fruit: 0/0", flagName = "homeFruit", Special = true })
 Home:createLabel({ Name = "Time: 0m", flagName = "homeTime", Special = true })
+Home:createLabel({ Name = "Weather: --", flagName = "homeWeather", Special = true })
 
 Home:createLabel({ Name = "Quick Actions", Special = true })
 Home:createButton({
@@ -5466,6 +5484,8 @@ Misc:createLabel({ Name = "Session Earned: $0", flagName = "statSession", Specia
 Misc:createLabel({ Name = "Fruit Count: 0/0", flagName = "statFruitCount", Special = true })
 Misc:createLabel({ Name = "Crops Harvested: 0", flagName = "statHarvested", Special = true })
 Misc:createLabel({ Name = "Session Time: 0m", flagName = "statSessionTime", Special = true })
+Misc:createLabel({ Name = "Weather: --", flagName = "statWeather", Special = true })
+Misc:createLabel({ Name = "Phase: --", flagName = "statPhase", Special = true })
 Misc:createButton({
     Name = "Reset Session Stats",
     Description = "Zero out the profit tracker.",
@@ -6095,7 +6115,8 @@ task.spawn(function()
                 doMailboxSend()
             end
             -- ESP
-            if Library.Flags["espFruitEnabled"] or Library.Flags["espPetEnabled"] then
+            if Library.Flags["espFruitEnabled"] or Library.Flags["espPetEnabled"]
+                or Library.Flags["espMutationLabels"] or Library.Flags["espPlantAge"] then
                 espTimer = espTimer + 1
                 if espTimer >= 1 then
                     espTimer = 0
@@ -6183,6 +6204,10 @@ task.spawn(function()
             ul("statFruitCount", "Fruit Count: " .. fc .. "/" .. mc .. invValStr)
             ul("statHarvested", "Crops Harvested: " .. sessionHarvests)
             ul("statSessionTime", "Session Time: " .. math.floor(elapsed / 60) .. "m")
+            -- weather info
+            local weatherTag, phaseTag, phaseDuration = currentEvent()
+            ul("statWeather", "Weather: " .. eventNameOf(weatherTag) .. " " .. fmtClock(phaseDuration))
+            ul("statPhase", "Phase: " .. eventNameOf(phaseTag))
             -- home tab live stats
             local function hl(tag, text)
                 local lb = Home:FindFirstChild(tag)
@@ -6195,6 +6220,7 @@ task.spawn(function()
             hl("homeHarvested", "Crops Harvested: " .. sessionHarvests)
             hl("homeFruit", "Fruit: " .. fc .. "/" .. mc .. invValStr)
             hl("homeTime", "Time: " .. math.floor(elapsed / 60) .. "m")
+            hl("homeWeather", eventNameOf(weatherTag) .. " " .. fmtClock(phaseDuration))
             ValueESP.update()
         end, function(err)
             DebugLog("mainLoop", "error", tostring(err))
