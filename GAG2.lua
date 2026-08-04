@@ -759,9 +759,6 @@ end
 -- live-synced fruit/plant tracking (Network event hooks)
 local plantData = {}
 local fruitData = {}
-local _purchasedThisCycle = {}
-local _purchasedStockTimestamps = {}
-local _purchaseCycleRestocks = {}
 local _plantConns = {}
 do
     local function safeConnect(node, cb)
@@ -1397,14 +1394,15 @@ local function matchesFilter(entry, fType, fRarity, fMutation, fThreshMode, fThr
         return false
     end
 
-    -- 4. Check threshold mode (Weight or Value)
+    -- 4. Check threshold (Above/Below direction)
     local tm = firstValue(Library.Flags[fThreshMode] or {})
     local thresholdValue = tonumber(Library.Flags[fThreshold]) or 0
     if tm and tm ~= "Disabled" and thresholdValue > 0 then
-        if tm == "Weight" and (entry.weight or 0) < thresholdValue then
+        local val = entry.weight or entry.value or 0
+        if tm == "Above" and val < thresholdValue then
             return false
         end
-        if tm == "Value" and (entry.value or 0) < thresholdValue then
+        if tm == "Below" and val > thresholdValue then
             return false
         end
     end
@@ -2172,48 +2170,42 @@ do
         local backpackCount = 0
         local firstFew = {}
         local firstFewCount = 0
-        for _, parent in ipairs(getToolParents()) do
-            for _, tool in ipairs(parent:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local hasHF = tool:GetAttribute("HarvestedFruit")
-                    local hasFN = tool:GetAttribute("FruitName")
-                    local hasFruit = tool:GetAttribute("Fruit")
-                    local hasSeed = tool:GetAttribute("Seed")
-                    if hasHF or hasFN or hasFruit or hasSeed then
-                        local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local rawW = tonumber(tool:GetAttribute("Weight"))
-                            or (
-                                (tonumber(tool:GetAttribute("SizeMultiplier")
-                                    or tool:GetAttribute("SizeMulti")) or 1)
-                                * (ValueDB.baseWeight[fname] or 1)
-                            )
-                        local weight = rawW and rawW > 0 and rawW or 1
-                        local mname = tool:GetAttribute("Mutation")
-                        if type(mname) ~= "string" then
-                            mname = nil
-                        end
-                        invVal = invVal + ValueEngine.compute(fname, weight, mname)
-                        count = count + 1
-                        backpackCount = backpackCount + 1
-                        if firstFewCount < 5 then
-                            firstFewCount = firstFewCount + 1
-                            local v = ValueEngine.compute(fname, weight, mname)
-                            local attrStr = string.format(
-                                "%s(%s,HF=%s,FN=%s,F=%s,W=%s,Id=%s,M=%s,val=%d)",
-                                tool.Name,
-                                fname,
-                                tostring(hasHF),
-                                tostring(hasFN),
-                                tostring(hasFruit),
-                                tostring(rawW),
-                                tostring(tool:GetAttribute("Id")),
-                                tostring(mname),
-                                v
-                            )
-                            firstFew[#firstFew + 1] = attrStr
-                        end
-                    end
-                end
+        for _, tool in ipairs(getFruitTools()) do
+            local hasHF = tool:GetAttribute("HarvestedFruit")
+            local hasFN = tool:GetAttribute("FruitName")
+            local hasFruit = tool:GetAttribute("Fruit")
+            local hasSeed = tool:GetAttribute("Seed")
+            local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+            local rawW = tonumber(tool:GetAttribute("Weight"))
+                or (
+                    (tonumber(tool:GetAttribute("SizeMultiplier")
+                        or tool:GetAttribute("SizeMulti")) or 1)
+                    * (ValueDB.baseWeight[fname] or 1)
+                )
+            local weight = rawW and rawW > 0 and rawW or 1
+            local mname = tool:GetAttribute("Mutation")
+            if type(mname) ~= "string" then
+                mname = nil
+            end
+            invVal = invVal + ValueEngine.compute(fname, weight, mname)
+            count = count + 1
+            backpackCount = backpackCount + 1
+            if firstFewCount < 5 then
+                firstFewCount = firstFewCount + 1
+                local v = ValueEngine.compute(fname, weight, mname)
+                local attrStr = string.format(
+                    "%s(%s,HF=%s,FN=%s,F=%s,W=%s,Id=%s,M=%s,val=%d)",
+                    tool.Name,
+                    fname,
+                    tostring(hasHF),
+                    tostring(hasFN),
+                    tostring(hasFruit),
+                    tostring(rawW),
+                    tostring(tool:GetAttribute("Id")),
+                    tostring(mname),
+                    v
+                )
+                firstFew[#firstFew + 1] = attrStr
             end
         end
         if backpackCount > 0 and now ~= _lastInvDbg then
@@ -2860,37 +2852,31 @@ local function doSellSelective()
         or playerData.Inventory.Backpack
         or playerData.Inventory.Harvested
     if not fruits then
-        -- fallback: scan backpack + character tools for fruit items
         fruits = {}
-        for _, parent in ipairs(getToolParents()) do
-            for _, tool in ipairs(parent:GetChildren()) do
-                if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
-                    local uid = getFruitId(tool)
-                    if uid then
-                        local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local wt = tonumber(tool:GetAttribute("Weight"))
-                            or (
-                                (tonumber(tool:GetAttribute("SizeMultiplier")
-                                    or tool:GetAttribute("SizeMulti")) or 1)
-                                * (ValueDB.baseWeight[cropName] or 1)
-                            )
-                        if not wt or wt <= 0 then
-                            wt = 1
-                        end
-                        local mutName = tool:GetAttribute("Mutation")
-                        if type(mutName) ~= "string" then mutName = nil end
-                        local entry = {
-                            crop = cropName,
-                            mutation = mutName,
-                            weight = wt,
-                            rarity = tool:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
-                            value = ValueEngine.compute(cropName, wt, mutName),
-                            _tool = tool,
-                            _uid = tostring(uid),
-                        }
-                        fruits[tostring(uid)] = entry
-                    end
+        for _, tool in ipairs(getFruitTools()) do
+            local uid = getFruitId(tool)
+            if uid then
+                local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+                local wt = tonumber(tool:GetAttribute("Weight"))
+                    or (
+                        (tonumber(tool:GetAttribute("SizeMultiplier")
+                            or tool:GetAttribute("SizeMulti")) or 1)
+                        * (ValueDB.baseWeight[cropName] or 1)
+                    )
+                if not wt or wt <= 0 then
+                    wt = 1
                 end
+                local mutName = tool:GetAttribute("Mutation")
+                if type(mutName) ~= "string" then mutName = nil end
+                fruits[tostring(uid)] = {
+                    crop = cropName,
+                    mutation = mutName,
+                    weight = wt,
+                    rarity = tool:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
+                    value = ValueEngine.compute(cropName, wt, mutName),
+                    _tool = tool,
+                    _uid = tostring(uid),
+                }
             end
         end
     end
@@ -2946,9 +2932,31 @@ end
 local function getFruitId(tool)
     local id = tool:GetAttribute("Id") or tool:GetAttribute("FruitId")
     if not id and tool.Parent then
-        id = tool.Parent:GetAttribute("Id") or tool.Parent:GetAttribute("FruitId")
+        id = tool.Parent:GetAttribute("Id")
     end
     return id
+end
+
+local function getFruitTools()
+    local list = {}
+    for _, parent in ipairs(getToolParents()) do
+        for _, obj in ipairs(parent:GetChildren()) do
+            if obj:IsA("Tool") then
+                local isFruit = obj:GetAttribute("HarvestedFruit")
+                    or obj:GetAttribute("FruitName")
+                    or obj:GetAttribute("Fruit")
+                if isFruit then
+                    list[#list + 1] = obj
+                end
+            elseif obj:IsA("Configuration") and obj:GetAttribute("FruitProxy") == true then
+                local tool = obj:FindFirstChildWhichIsA("Tool")
+                if tool then
+                    list[#list + 1] = tool
+                end
+            end
+        end
+    end
+    return list
 end
 
 local function doFavorite(setFav, all)
@@ -2961,37 +2969,31 @@ local function doFavorite(setFav, all)
         or playerData.Inventory.Backpack
         or playerData.Inventory.Harvested
     if not fruits then
-        -- fallback: scan backpack + character tools for fruit items
         fruits = {}
-        for _, parent in ipairs(getToolParents()) do
-            for _, tool in ipairs(parent:GetChildren()) do
-                if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
-                    local uid = getFruitId(tool)
-                    if uid then
-                        local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local wt = tonumber(tool:GetAttribute("Weight"))
-                            or (
-                                (tonumber(tool:GetAttribute("SizeMultiplier")
-                                    or tool:GetAttribute("SizeMulti")) or 1)
-                                * (ValueDB.baseWeight[cropName] or 1)
-                            )
-                        if not wt or wt <= 0 then
-                            wt = 1
-                        end
-                        local mutName = tool:GetAttribute("Mutation")
-                        if type(mutName) ~= "string" then mutName = nil end
-                        local entry = {
-                            crop = cropName,
-                            mutation = mutName,
-                            weight = wt,
-                            rarity = tool:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
-                            value = ValueEngine.compute(cropName, wt, mutName),
-                            _tool = tool,
-                            _uid = tostring(uid),
-                        }
-                        fruits[tostring(uid)] = entry
-                    end
+        for _, tool in ipairs(getFruitTools()) do
+            local uid = getFruitId(tool)
+            if uid then
+                local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+                local wt = tonumber(tool:GetAttribute("Weight"))
+                    or (
+                        (tonumber(tool:GetAttribute("SizeMultiplier")
+                            or tool:GetAttribute("SizeMulti")) or 1)
+                        * (ValueDB.baseWeight[cropName] or 1)
+                    )
+                if not wt or wt <= 0 then
+                    wt = 1
                 end
+                local mutName = tool:GetAttribute("Mutation")
+                if type(mutName) ~= "string" then mutName = nil end
+                fruits[tostring(uid)] = {
+                    crop = cropName,
+                    mutation = mutName,
+                    weight = wt,
+                    rarity = tool:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
+                    value = ValueEngine.compute(cropName, wt, mutName),
+                    _tool = tool,
+                    _uid = tostring(uid),
+                }
             end
         end
     end
@@ -4605,9 +4607,9 @@ Main:createDropdown({
 Main:createDropdown({
     Name = "Select Threshold Mode",
     flagName = "collectThreshMode",
-    List = { "Disabled", "Weight", "Value" },
+    List = { "Disabled", "Above", "Below" },
     Flag = { "Disabled" },
-    Description = "How to filter by threshold.",
+    Description = "Filter direction: Above = keep over threshold, Below = keep under.",
 })
 Main:createInputBox({
     Name = "Weight Threshold",
@@ -6105,32 +6107,14 @@ task.spawn(function()
             if Library.Flags["autoSellPets"] then
                 doSellPets()
             end
-            -- auto buy all (with dedup: only buy each item once per restock)
-            local function clearPurchaseTracking(stockParent, shopKey)
-                local lastRestock = _purchaseCycleRestocks[shopKey]
-                local curRestock = stockParent and stockParent:FindFirstChild("UnixNextRestock")
-                local curRestockVal = curRestock and curRestock.Value
-                if lastRestock and curRestockVal and curRestockVal ~= lastRestock then
-                    _purchasedThisCycle[shopKey] = {}
-                end
-                if curRestockVal then
-                    _purchaseCycleRestocks[shopKey] = curRestockVal
-                end
-            end
             if Library.Flags["autoBuyAllSeeds"] then
                 local stockParent = seedStock()
                 if stockParent then
-                    clearPurchaseTracking(stockParent, "SeedShop")
-                    _purchasedThisCycle["SeedShop"] = _purchasedThisCycle["SeedShop"] or {}
                     for _, stockValue in ipairs(stockParent:GetChildren()) do
-                        local name = stockValue.Name
-                        if name and name ~= "" and not _purchasedThisCycle["SeedShop"][name] then
-                            local qty = stockValue.Value or 0
-                            if qty > 0 then
-                                netFire("SeedShop.PurchaseSeed", name)
-                                _purchasedThisCycle["SeedShop"][name] = true
-                                task.wait(0.08)
-                            end
+                        local qty = stockValue.Value or 0
+                        if qty > 0 then
+                            netFire("SeedShop.PurchaseSeed", stockValue.Name)
+                            task.wait(0.05)
                         end
                     end
                 end
@@ -6138,17 +6122,10 @@ task.spawn(function()
             if Library.Flags["autoBuyAllGear"] then
                 local stockParent = gearStock()
                 if stockParent then
-                    clearPurchaseTracking(stockParent, "GearShop")
-                    _purchasedThisCycle["GearShop"] = _purchasedThisCycle["GearShop"] or {}
                     for _, stockValue in ipairs(stockParent:GetChildren()) do
-                        local name = stockValue.Name
-                        if name and name ~= "" and not _purchasedThisCycle["GearShop"][name] then
-                            local qty = stockValue.Value or 0
-                            if qty > 0 then
-                                netFire("GearShop.PurchaseGear", name)
-                                _purchasedThisCycle["GearShop"][name] = true
-                                task.wait(0.08)
-                            end
+                        if (stockValue.Value or 0) > 0 then
+                            netFire("GearShop.PurchaseGear", stockValue.Name)
+                            task.wait(0.05)
                         end
                     end
                 end
@@ -6156,17 +6133,10 @@ task.spawn(function()
             if Library.Flags["autoBuyAllCrates"] then
                 local stockParent = crateStock()
                 if stockParent then
-                    clearPurchaseTracking(stockParent, "CrateShop")
-                    _purchasedThisCycle["CrateShop"] = _purchasedThisCycle["CrateShop"] or {}
                     for _, stockValue in ipairs(stockParent:GetChildren()) do
-                        local name = stockValue.Name
-                        if name and name ~= "" and not _purchasedThisCycle["CrateShop"][name] then
-                            local qty = stockValue.Value or 0
-                            if qty > 0 then
-                                netFire("CrateShop.PurchaseCrate", name)
-                                _purchasedThisCycle["CrateShop"][name] = true
-                                task.wait(0.08)
-                            end
+                        if (stockValue.Value or 0) > 0 then
+                            netFire("CrateShop.PurchaseCrate", stockValue.Name)
+                            task.wait(0.05)
                         end
                     end
                 end
@@ -6265,30 +6235,20 @@ task.spawn(function()
                 end
             end
             if invVal <= 0 then
-                for _, parent in ipairs(getToolParents()) do
-                    for _, tool in ipairs(parent:GetChildren()) do
-                        if tool:IsA("Tool")
-                            and (
-                                tool:GetAttribute("HarvestedFruit")
-                                or tool:GetAttribute("FruitName")
-                                or tool:GetAttribute("Fruit")
-                            )
-                        then
-                            local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                            local rawW = tonumber(tool:GetAttribute("Weight"))
-                            or (
-                                (tonumber(tool:GetAttribute("SizeMultiplier")
-                                    or tool:GetAttribute("SizeMulti")) or 1)
-                                * (ValueDB.baseWeight[fname] or 1)
-                            )
-                            local weight = rawW and rawW > 0 and rawW or 1
-                            local mname = tool:GetAttribute("Mutation")
-                            if type(mname) ~= "string" then
-                                mname = nil
-                            end
-                            invVal = invVal + ValueEngine.compute(fname, weight, mname)
-                        end
+                for _, tool in ipairs(getFruitTools()) do
+                    local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
+                    local rawW = tonumber(tool:GetAttribute("Weight"))
+                        or (
+                            (tonumber(tool:GetAttribute("SizeMultiplier")
+                                or tool:GetAttribute("SizeMulti")) or 1)
+                            * (ValueDB.baseWeight[fname] or 1)
+                        )
+                    local weight = rawW and rawW > 0 and rawW or 1
+                    local mname = tool:GetAttribute("Mutation")
+                    if type(mname) ~= "string" then
+                        mname = nil
                     end
+                    invVal = invVal + ValueEngine.compute(fname, weight, mname)
                 end
             end
             local invValStr = invVal > 0 and (" ($" .. fmtCash(math.floor(invVal)) .. ")") or ""
