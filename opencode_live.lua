@@ -151,6 +151,15 @@ function Ops.get_editor()
     return { source = ScriptContent }
 end
 
+function Ops.web_fetch(args)
+    local url = args.url or args.query or ""
+    if url == "" then return { ok = false, error = "no url provided" } end
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if not ok then return { ok = false, error = "fetch failed: " .. tostring(body) } end
+    if #body > 20000 then body = string.sub(body, 1, 20000) .. "\n-- TRUNCATED" end
+    return { ok = true, content = body, length = #body }
+end
+
 function Ops.set_editor(args)
     ScriptContent = args.source or args.content or ""
     saveConfig()
@@ -520,26 +529,27 @@ local busy = false
 
 local SYSTEM_PROMPT = {
     role = "system",
-    content = [[You are an expert Roblox Luau scripting assistant running on the user's executor. You have access to TOOLS via function calls. Use them to help the user.
+    content = [[You are an expert Roblox Luau scripting assistant running on the user's executor. You have access to TOOLS via XML-style function calls.
 
 IMPORTANT RULES:
-1. Respond with CONVERSATION or TOOL CALLS, never both in one message.
-2. When the user asks you to DO something (execute code, read files, search instances), use a tool call. Format: <tool>tool_name</tool> followed by <input>{"key":"value"}</input>
-3. When the user asks a QUESTION or just wants to chat, respond with text.
+1. Respond with CONVERSATION or a TOOL CALL, never both in one message.
+2. To use a tool, reply ONLY with: <tool>name</tool><input>{"key":"value"}</input>
+3. When asking questions or chatting, respond normally.
 4. Available tools:
    - execute_luau: run Luau code. Input: {"code":"..."} 
-   - get_editor: read current editor content. Input: {}
+   - web_fetch: fetch a URL. Input: {"url":"https://..."}
+   - get_editor: read editor content. Input: {}
    - set_editor: write to editor. Input: {"source":"..."}
-   - read_file: read a device file. Input: {"name":"filename.lua"}
+   - read_file: read device file. Input: {"name":"filename.lua"}
    - write_file: write to device. Input: {"name":"file.lua","source":"..."}
-   - search: find instances in workspace. Input: {"query":"name"}
-   - get_console: read console output. Input: {"limit":30}
-   - read_tree: explore Instance hierarchy. Input: {"path":"workspace","depth":2}
-   - get_script_source: read a Roblox script source. Input: {"path":"game.ServerScriptService.etc"}
+   - search: find workspace instances. Input: {"query":"name"}
+   - get_console: read console output (last N lines). Input: {"limit":30}
+   - read_tree: explore instance hierarchy. Input: {"path":"workspace","depth":2}
+   - get_script_source: read Roblox script source. Input: {"path":"game.ServerScriptService..."}
 
-5. For tool calls, respond with ONLY the tool call and nothing else.
-6. Keep responses concise and helpful.
-7. The user runs an Android executor with: loadstring, writefile, readfile, getgenv, getgc, gethui.]]
+5. For tool calls, respond ONLY with <tool>...</tool><input>...</input> — nothing else.
+6. After each tool call, you will receive the result as a user message. Continue or ask another tool.
+7. Keep responses concise. The user runs an Android executor.]]
 }
 
 local function processToolCall(text)
@@ -549,11 +559,7 @@ local function processToolCall(text)
     local input = inputStr and jdecode(inputStr) or {}
     addBubble(chatLog, "tool", toolName .. " {" .. (inputStr or "{}") .. "}")
     local result = runTool(toolName, input)
-    return {
-        type = "tool_result",
-        tool_use_id = toolName,
-        content = jencode(result),
-    }
+    return { role = "user", content = "Tool result for " .. toolName .. ":\n" .. jencode(result) }
 end
 
 local function submitChat()
@@ -606,7 +612,7 @@ local function submitChat()
             local toolResult = processToolCall(response)
             if toolResult then
                 table.insert(messages, { role = "assistant", content = response })
-                table.insert(messages, { role = "user", content = { toolResult } })
+                table.insert(messages, toolResult) -- { role = "user", content = "Tool result:..." }
             else
                 -- plain text response
                 addBubble(chatLog, "ai", response)
