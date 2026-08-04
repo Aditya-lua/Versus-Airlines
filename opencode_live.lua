@@ -69,7 +69,11 @@ end
 local function saveConfig()
     if not writefile then return end
     pcall(function()
-        local cfg = { key = ApiKey, name = ScriptName, content = ScriptContent }
+        local content = ScriptContent
+        if #content > 180000 then
+            content = nil -- don't persist huge files, they crash the UI on reload
+        end
+        local cfg = { key = ApiKey, name = ScriptName, content = content }
         writefile(CONFIG_FILE, HttpService:JSONEncode(cfg))
     end)
 end
@@ -82,7 +86,9 @@ local function loadConfig()
             local cfg = HttpService:JSONDecode(data)
             if cfg.key then ApiKey = cfg.key end
             if cfg.name then ScriptName = cfg.name end
-            if cfg.content then ScriptContent = cfg.content end
+            if cfg.content and #cfg.content < 180000 then
+            ScriptContent = cfg.content
+        end
         end
     end)
 end
@@ -179,10 +185,9 @@ if Fluent then
     local editorInput
     EditorTab:AddParagraph({ Title = "", Content = "" }) -- spacer
 
-    -- use a large input as code editor
     editorInput = EditorTab:AddInput("codeEditor", {
         Title = "Code (Ctrl+Enter = execute)",
-        Default = ScriptContent,
+        Default = ScriptContent ~= "" and ScriptContent or "-- Write Luau code here",
         Callback = function(v)
             ScriptContent = v
             saveConfig()
@@ -233,37 +238,33 @@ if Fluent then
     })
 
     EditorTab:AddButton({
-        Title = "Load GAG2.lua from GitHub",
+        Title = "Save GAG2.lua to Device",
         Icon = "solar/download-bold",
         Callback = function()
             local ok, data = pcall(function()
                 return game:HttpGet("https://raw.githubusercontent.com/Aditya-lua/Versus-Airlines/main/GAG2.lua")
             end)
-            if ok and data then
-                ScriptContent = data
-                ScriptName = "GAG2.lua"
-                saveConfig()
-                Fluent:Notify({ Title = "Loaded", Content = "GAG2.lua (6K+ lines)", Duration = 2 })
+            if ok and data and writefile then
+                pcall(function() writefile("GAG2.lua", data) end)
+                Fluent:Notify({ Title = "Saved", Content = "GAG2.lua saved to device (6559 lines)", Duration = 2 })
             else
-                Fluent:Notify({ Title = "Error", Content = "Failed to fetch GAG2.lua", Duration = 3 })
+                Fluent:Notify({ Title = "Error", Content = "Failed to save GAG2.lua", Duration = 3 })
             end
         end,
     })
 
     EditorTab:AddButton({
-        Title = "Load FallHarvest.lua from GitHub",
+        Title = "Save FallHarvest.lua to Device",
         Icon = "solar/download-bold",
         Callback = function()
             local ok, data = pcall(function()
                 return game:HttpGet("https://raw.githubusercontent.com/Aditya-lua/Versus-Airlines/main/FallHarvest.lua")
             end)
-            if ok and data then
-                ScriptContent = data
-                ScriptName = "FallHarvest.lua"
-                saveConfig()
-                Fluent:Notify({ Title = "Loaded", Content = "FallHarvest.lua (6K+ lines)", Duration = 2 })
+            if ok and data and writefile then
+                pcall(function() writefile("FallHarvest.lua", data) end)
+                Fluent:Notify({ Title = "Saved", Content = "FallHarvest.lua saved to device", Duration = 2 })
             else
-                Fluent:Notify({ Title = "Error", Content = "Failed to fetch FallHarvest.lua", Duration = 3 })
+                Fluent:Notify({ Title = "Error", Content = "Failed to save FallHarvest.lua", Duration = 3 })
             end
         end,
     })
@@ -607,9 +608,8 @@ else
     actionBtn("Execute Script (Ctrl+Enter)", function() local ok, msg = executeCode(); StatusLabel.Text = ok and "OK" or msg end)
     actionBtn("Save to Device", function() if writefile then pcall(function() writefile(ScriptName, ScriptContent) end); StatusLabel.Text = "Saved: " .. ScriptName end end)
     actionBtn("Load from Device", function() if readfile then local ok, data = pcall(function() return readfile(ScriptName) end); if ok then ScriptContent = data; EditorBox.Text = data end end end)
-    actionBtn("Load GAG2.lua", function() local ok, data = pcall(function() return game:HttpGet("https://raw.githubusercontent.com/Aditya-lua/Versus-Airlines/main/GAG2.lua") end); if ok then ScriptContent = data; EditorBox.Text = data; ScriptName = "GAG2.lua" end end)
-    actionBtn("Load FallHarvest.lua", function() local ok, data = pcall(function() return game:HttpGet("https://raw.githubusercontent.com/Aditya-lua/Versus-Airlines/main/FallHarvest.lua") end); if ok then ScriptContent = data; EditorBox.Text = data; ScriptName = "FallHarvest.lua" end end)
-    actionBtn("Push GAG2 to Device", function() local ok, data = pcall(function() return game:HttpGet("https://raw.githubusercontent.com/Aditya-lua/Versus-Airlines/main/GAG2.lua") end); if ok and writefile then writefile("GAG2.lua", data) end end)
+    actionBtn("Save GAG2.lua to Device", function() local ok, data = pcall(function() return game:HttpGet("https://raw.githubusercontent.com/Aditya-lua/Versus-Airlines/main/GAG2.lua") end); if ok and writefile then writefile("GAG2.lua", data); StatusLabel.Text="Saved GAG2.lua" end end)
+    actionBtn("Save FH.lua to Device", function() local ok, data = pcall(function() return game:HttpGet("https://raw.githubusercontent.com/Aditya-lua/Versus-Airlines/main/FallHarvest.lua") end); if ok and writefile then writefile("FallHarvest.lua", data); StatusLabel.Text="Saved FH.lua" end end)
     actionBtn("Clear Editor", function() ScriptContent = ""; EditorBox.Text = "" end)
 
     -- Debug
