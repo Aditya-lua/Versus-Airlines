@@ -1460,7 +1460,7 @@ local function getRipeCrops()
                                 fruitId = m:GetAttribute("FruitId") or "",
                                 mutation = mut,
                                 crop = cropName,
-                                weight = wt,
+                                weight = (ValueDB.baseWeight[cropName] or 1) * wt,
                                 rarity = m:GetAttribute("Rarity") or plant:GetAttribute("Rarity") or SeedRarity[cropName] or "Common",
                                 value = ValueEngine.compute(cropName, (ValueDB.baseWeight[cropName] or 1) * wt, mut),
                             }
@@ -1815,14 +1815,24 @@ local function equipShovel()
     if not sh then
         return nil
     end
-    local humanoid = getHumanoid()
-    if humanoid and sh.Parent ~= client.Character then
-        pcall(function()
-            humanoid:EquipTool(sh)
-        end)
-        task.wait(0.3)
+    if sh.Parent == client.Character then
+        return sh
     end
-    return sh
+    local humanoid = getHumanoid()
+    if not humanoid then
+        return nil
+    end
+    pcall(function()
+        humanoid:EquipTool(sh)
+    end)
+    task.wait(0.15)
+    if sh.Parent ~= client.Character then
+        task.wait(0.15)
+    end
+    if sh.Parent == client.Character then
+        return sh
+    end
+    return nil
 end
 
 -- webhook
@@ -2399,10 +2409,9 @@ end -- scoped: value ESP
 
 local _harvesting = false
 local function doHarvest(forceAll)
-    if _harvesting then
-        return
-    end
+    if _harvesting then return end
     _harvesting = true
+    local ok, result = pcall(function()
     local collected = 0
     local mode = forceAll and "All" or (firstValue(Library.Flags["collectFilter"] or {}) or "All")
     if Library.Flags["autoCollectAll"] then
@@ -2492,8 +2501,10 @@ local function doHarvest(forceAll)
     if collected > 0 then
         DebugLog("doHarvest", "collected=" .. collected, "mode=" .. mode)
     end
-    _harvesting = false
     return collected
+    end)
+    _harvesting = false
+    return ok and result or 0
 end
 
 local function findSeedTool(seedName)
@@ -2826,11 +2837,9 @@ local function doSellAll()
     -- track profit from last sell cycle
     if sellBaseline and balBefore > sellBaseline then
         local profit = balBefore - sellBaseline
-        if profit > 5000 then
-            sessionEarned = sessionEarned + profit
-            if profit > 100000 and Library.Flags["whBigHarvest"] then
-                sendWebhook("BIG Sell", "Sold " .. fmtCash(profit) .. " worth of crops!", 5763719)
-            end
+        sessionEarned = sessionEarned + profit
+        if profit > 100000 and Library.Flags["whBigHarvest"] then
+            sendWebhook("BIG Sell", "Sold " .. fmtCash(profit) .. " worth of crops!", 5763719)
         end
     end
     sellBaseline = balBefore
@@ -2851,7 +2860,7 @@ local function doSellSelective()
         or playerData.Inventory.Fruits
         or playerData.Inventory.Backpack
         or playerData.Inventory.Harvested
-    if not fruits then
+    if not fruits or next(fruits) == nil then
         fruits = {}
         for _, tool in ipairs(getFruitTools()) do
             local uid = getFruitId(tool)
@@ -2898,7 +2907,7 @@ local function doSellSelective()
             if matchesFilter(entry, "sellFruit", "sellRarity", "sellMutation", "sellThreshMode", "sellThreshold") then
                 local fruitId = info._uid or tostring(uid)
                 netFire("NPCS.SellFruit", fruitId)
-                task.wait(0.1)
+                task.wait(tonumber(Library.Flags["sellDelay"]) or 0.1)
             end
         end
     end
@@ -2922,8 +2931,16 @@ local function doSellPets()
                 end
             end
             if rarityOk then
+                local wantSize = firstValue(Library.Flags["sellPetSize"] or {})
+                if wantSize and wantSize ~= "Any" and info.Size then
+                    if info.Size ~= wantSize then
+                        rarityOk = false
+                    end
+                end
+            end
+            if rarityOk then
                 netFire("NPCS.SellPet", tostring(uid))
-                task.wait(0.1)
+                task.wait(tonumber(Library.Flags["sellDelay"]) or 0.1)
             end
         end
     end
@@ -2968,7 +2985,7 @@ local function doFavorite(setFav, all)
         or playerData.Inventory.Fruits
         or playerData.Inventory.Backpack
         or playerData.Inventory.Harvested
-    if not fruits then
+    if not fruits or next(fruits) == nil then
         fruits = {}
         for _, tool in ipairs(getFruitTools()) do
             local uid = getFruitId(tool)
@@ -3019,7 +3036,7 @@ local function doFavorite(setFav, all)
             if match then
                 local fruitId = info._uid or tostring(uid)
                 netFire("Backpack.SetFruitFavorite", fruitId, setFav)
-                task.wait(0.05)
+                task.wait(tonumber(Library.Flags["sellDelay"]) or 0.05)
             end
         end
     end
@@ -3095,7 +3112,7 @@ local function doSprinklerAll()
     for sname, sval in pairs(owned) do
         if type(sname) == "string" and placeOneSprinkler(plot, sname, sval) then
             placed = placed + 1
-            task.wait(tonumber(Library.Flags["sprinklerDelay"]) or 0)
+            task.wait(math.max(0.3, tonumber(Library.Flags["sprinklerDelay"]) or 0))
             local re = plot:FindFirstChild("Sprinklers")
             if re and #re:GetChildren() >= 4 then
                 break
@@ -3206,22 +3223,22 @@ local function doWateringCan()
                     if not canTool then
                         local t = findToolByAttr("WateringCan", canName)
                         canTool = t and equipTool(t) or nil
-                        if not canTool and not canWarned then
-                            canWarned = true
-                            dumpTools("WateringCan")
-                            notify("Auto Water", "Watering can tool not found / equip failed (see console)", "warn")
+                        if not canTool then
+                            if not canWarned then
+                                canWarned = true
+                                dumpTools("WateringCan")
+                                notify("Auto Water", "Watering can tool not found / equip failed (see console)", "warn")
+                            end
+                            break
                         end
                     end
-                    if canTool then
-                        -- game client raycasts onto a PlantArea-tagged soil part and fires the hit surface pos
-                        local surface = soilPositionAt(plot, basePos.X, basePos.Z) or basePos
-                        netFire(
-                            "WateringCan.UseWateringCan",
-                            surface - Vector3.new(0, 0.3, 0),
-                            canTool:GetAttribute("WateringCan") or canName or "",
-                            canTool
-                        )
-                    end
+                    local surface = soilPositionAt(plot, basePos.X, basePos.Z) or basePos
+                    netFire(
+                        "WateringCan.UseWateringCan",
+                        surface,
+                        canTool:GetAttribute("WateringCan") or canName or "",
+                        canTool
+                    )
                     task.wait(0.2)
                 end
             end
@@ -3268,15 +3285,19 @@ local function doShovelFruit()
                             "shovelThreshold"
                         )
                     then
-                        -- verified: Shovel.UseShovel(plantId, fruitId, shovelAttr, toolInstance)
-                        netFire(
-                            "Shovel.UseShovel",
-                            pl:GetAttribute("PlantId"),
-                            m:GetAttribute("FruitId") or "",
-                            shovelAttr,
-                            shovel
-                        )
-                        task.wait(tonumber(Library.Flags["shovelFruitDelay"]) or 0.1)
+                        local plantId = pl:GetAttribute("PlantId")
+                        if not plantId then
+                            --
+                        else
+                            netFire(
+                                "Shovel.UseShovel",
+                                plantId,
+                                m:GetAttribute("FruitId") or "",
+                                shovelAttr,
+                                shovel
+                            )
+                            task.wait(tonumber(Library.Flags["shovelFruitDelay"]) or 0.1)
+                        end
                     end
                 end
             end
@@ -3306,8 +3327,11 @@ local function doShovelTree()
             { crop = crop, mutation = pl:GetAttribute("Mutation"), rarity = pl:GetAttribute("Rarity"), value = 0 }
         if (not target) or (crop and crop:lower() == target:lower()) then
             if matchesFilter(entry, nil, "shovelTreeRarity", "shovelTreeMutation", nil, nil) then
-                netFire("Shovel.UseShovel", pl:GetAttribute("PlantId"), "", shovelAttr, shovel)
-                task.wait(tonumber(Library.Flags["shovelTreeDelay"]) or 0.1)
+                local plantId = pl:GetAttribute("PlantId")
+                if plantId then
+                    netFire("Shovel.UseShovel", plantId, "", shovelAttr, shovel)
+                    task.wait(tonumber(Library.Flags["shovelTreeDelay"]) or 0.1)
+                end
             end
         end
     end
@@ -3448,11 +3472,13 @@ local function doPackGrab()
                 local isGold = loc:GetAttribute("GoldSeed") == true
                 local isRainbow = loc:GetAttribute("RainbowSeed") == true
                 local valid = true
-                if grabGold and not grabRainbow and not isGold then
+                if grabGold and grabRainbow then
+                    if not isGold and not isRainbow then
+                        valid = false
+                    end
+                elseif grabGold and not isGold then
                     valid = false
-                elseif grabRainbow and not grabGold and not isRainbow then
-                    valid = false
-                elseif not (grabGold or grabRainbow) and Library.Flags["rareSeedOnly"] and not rare then
+                elseif grabRainbow and not isRainbow then
                     valid = false
                 end
                 if valid then
@@ -3662,29 +3688,31 @@ end
 
 -- instant interact prompt
 local function doInstantPrompt()
-    for _, p in ipairs(CollectionService:GetTagged("ProximityPrompt")) do
-        pcall(function()
-            if p:IsA("ProximityPrompt") and p.HoldDuration > 0 then
+    for _, p in ipairs(Workspace:GetDescendants()) do
+        if p:IsA("ProximityPrompt") and p.Enabled and p.HoldDuration > 0 then
+            pcall(function()
                 p.HoldDuration = 0
-            end
-        end)
+            end)
+        end
     end
 end
 
 -- bypass gameplay paused
 local function doBypassPause()
-    local pg = client.PlayerGui
-    if not pg then
-        return
-    end
-    for _, g in ipairs(pg:GetChildren()) do
-        if
-            g:IsA("ScreenGui")
-            and (g.Name:lower():find("pause") or g.Name:lower():find("modal") or g.Name:lower():find("gameplay"))
-        then
-            pcall(function()
-                g.Enabled = false
-            end)
+    for _, container in ipairs({ client.PlayerGui, CoreGui }) do
+        if not container then
+            --
+        else
+            for _, g in ipairs(container:GetDescendants()) do
+                if g:IsA("ScreenGui") and g.Enabled then
+                    local nm = g.Name:lower()
+                    if nm:find("pause") or nm:find("modal") or nm:find("gameplay") then
+                        pcall(function()
+                            g.Enabled = false
+                        end)
+                    end
+                end
+            end
         end
     end
 end
@@ -4075,16 +4103,43 @@ local function doMoveLoop()
     end
     -- visual toggles (applied every frame to counter game resets)
     if Library.Flags["fullBright"] then
+        if not st.fullBrightWasOn then
+            st.origBrightness = LightingService.Brightness
+            st.origAmbient = LightingService.Ambient
+            st.origOutdoor = LightingService.OutdoorAmbient
+        end
+        st.fullBrightWasOn = true
         LightingService.Brightness = tonumber(Library.Flags["brightness"]) or 5
         LightingService.Ambient = Color3.fromRGB(255, 255, 255)
         LightingService.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+    elseif st.fullBrightWasOn then
+        st.fullBrightWasOn = false
+        LightingService.Brightness = st.origBrightness or 2
+        LightingService.Ambient = st.origAmbient or Color3.new(0, 0, 0)
+        LightingService.OutdoorAmbient = st.origOutdoor or Color3.new(0, 0, 0)
     end
     if Library.Flags["noFog"] then
+        if not st.noFogWasOn then
+            st.origFogEnd = LightingService.FogEnd
+            st.origFogStart = LightingService.FogStart
+        end
+        st.noFogWasOn = true
         LightingService.FogEnd = 100000
         LightingService.FogStart = 100000
+    elseif st.noFogWasOn then
+        st.noFogWasOn = false
+        LightingService.FogEnd = st.origFogEnd or 10000
+        LightingService.FogStart = st.origFogStart or 0
     end
     if Library.Flags["noShadows"] then
+        if not st.noShadowsWasOn then
+            st.origShadows = LightingService.GlobalShadows
+        end
+        st.noShadowsWasOn = true
         LightingService.GlobalShadows = false
+    elseif st.noShadowsWasOn then
+        st.noShadowsWasOn = false
+        LightingService.GlobalShadows = st.origShadows ~= false and st.origShadows or true
     end
 end
 
@@ -4297,6 +4352,7 @@ local PERSISTENT_FLAGS = {
     "hopPetSpecies",
     "tpTween",
     "tpTweenSpeed",
+    "tpMode",
     "rarePackNotify",
     "espFruitValue",
     "espTotalValue",
@@ -4720,7 +4776,7 @@ Main:createDropdown({
 Main:createDropdown({
     Name = "Select Mutation",
     flagName = "stealMutation",
-    List = { "Any", "Mutated Only", "Non-Mutated" },
+    List = { "Any", "Mutated Only", "Non-Mutated Only" },
     Flag = { "Any" },
     Description = "Mutation filter for stealing.",
 })
@@ -4832,14 +4888,14 @@ Main:createDropdown({
 Main:createDropdown({
     Name = "Select Sell Mutation",
     flagName = "sellMutation",
-    List = { "Any", "Mutated Only", "Non-Mutated" },
+    List = { "Any", "Mutated Only", "Non-Mutated Only" },
     Flag = { "Any" },
     Description = "Mutation filter for selling.",
 })
 Main:createDropdown({
     Name = "Select Threshold Mode",
     flagName = "sellThreshMode",
-    List = { "Disabled", "Weight", "Value" },
+    List = { "Disabled", "Above", "Below" },
     Flag = { "Disabled" },
     Description = "Threshold mode for selective selling.",
 })
@@ -5026,7 +5082,7 @@ Automatically:createDropdown({
 Automatically:createDropdown({
     Name = "Select Mutation Tree",
     flagName = "shovelTreeMutation",
-    List = { "Any", "Mutated Only", "Non-Mutated" },
+    List = { "Any", "Mutated Only", "Non-Mutated Only" },
     Flag = { "Any" },
     Description = "Mutation filter for tree shoveling.",
 })
@@ -5064,14 +5120,14 @@ Automatically:createDropdown({
 Automatically:createDropdown({
     Name = "Select Mutation",
     flagName = "shovelFruitMutation",
-    List = { "Any", "Mutated Only", "Non-Mutated" },
+    List = { "Any", "Mutated Only", "Non-Mutated Only" },
     Flag = { "Any" },
     Description = "Mutation filter for fruit shoveling.",
 })
 Automatically:createDropdown({
     Name = "Select Threshold Mode",
     flagName = "shovelThreshMode",
-    List = { "Disabled", "Weight", "Value" },
+    List = { "Disabled", "Above", "Below" },
     Flag = { "Disabled" },
     Description = "Threshold mode for shoveling.",
 })
@@ -5121,14 +5177,14 @@ Inventory:createDropdown({
 Inventory:createDropdown({
     Name = "Select Favorite Mutation",
     flagName = "favMutation",
-    List = { "Any", "Mutated Only", "Non-Mutated" },
+    List = { "Any", "Mutated Only", "Non-Mutated Only" },
     Flag = { "Any" },
     Description = "Mutation filter for auto-favorite.",
 })
 Inventory:createDropdown({
     Name = "Select Threshold Mode",
     flagName = "favThreshMode",
-    List = { "Disabled", "Weight", "Value" },
+    List = { "Disabled", "Above", "Below" },
     Flag = { "Disabled" },
     Description = "Threshold mode for auto-favorite.",
 })
@@ -5333,7 +5389,7 @@ Misc:createDropdown({
 Misc:createDropdown({
     Name = "Select ESP Mutation",
     flagName = "espFruitMutation",
-    List = { "Any", "Mutated Only", "Non-Mutated" },
+    List = { "Any", "Mutated Only", "Non-Mutated Only" },
     Flag = { "Any" },
     Description = "Mutation filter for ESP.",
 })
@@ -6368,7 +6424,7 @@ track(UserInputService.JumpRequest:Connect(function()
             local hrp = character:FindFirstChild("HumanoidRootPart")
             if hrp then
                 hrp.Velocity =
-                    Vector3.new(hrp.Velocity.X, (tonumber(Library.Flags["jumpHeight"]) or 7.2) * 50, hrp.Velocity.Z)
+                    Vector3.new(hrp.Velocity.X, 50, hrp.Velocity.Z)
             end
         end
     else
@@ -6480,9 +6536,12 @@ track(client.CharacterAdded:Connect(function(character)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     if humanoid then
         humanoid.WalkSpeed = tonumber(Library.Flags["runSpeed"]) or 16
-        humanoid.UseJumpPower = true
         humanoid.JumpHeight = tonumber(Library.Flags["jumpHeight"]) or 7.2
+        humanoid.UseJumpPower = false
+        humanoid.PlatformStand = false
     end
+    jumped = 0
+    _flyBV, _flyBG = nil, nil
 end))
 
 print("[GAG2] Loaded successfully (" .. os.date("%H:%M:%S") .. ")")
