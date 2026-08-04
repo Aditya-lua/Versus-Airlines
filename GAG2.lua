@@ -1022,7 +1022,7 @@ local function getToolParents()
     if char then
         parents[#parents + 1] = char
     end
-    local bp = client and client:FindFirstChild("Backpack")
+    local bp = client and client.Backpack
     if bp then
         parents[#parents + 1] = bp
     end
@@ -1241,22 +1241,7 @@ local function getCropList()
     return list
 end
 local function getPetList()
-    local playerData = getData()
-    local seen = {}
-    if playerData and playerData.Inventory and playerData.Inventory.Pets then
-        for _, info in pairs(playerData.Inventory.Pets) do
-            local nm = (type(info) == "table" and (info.PetType or info.Name)) or tostring(info)
-            if nm and nm ~= "" then
-                seen[nm] = true
-            end
-        end
-    end
-    local list = {}
-    for k in pairs(seen) do
-        list[#list + 1] = k
-    end
-    table.sort(list)
-    return list
+    return getAllPetSpecies()
 end
 -- all species in the game (PetData catalog), sorted alphabetically
 local function getAllPetSpecies()
@@ -2161,11 +2146,13 @@ do
         return ok and _vInvTotal ~= nil
     end
     local _lastInvDbg = 0
+    local _invVerbose = true
     local function computeInvValue()
         local d = getData()
         local invVal = 0
         local count = 0
         local now = os.time()
+        local verbose = _invVerbose
         local hf = d and d.Inventory and d.Inventory.HarvestedFruits
         if hf then
             for _, finfo in pairs(hf) do
@@ -2208,14 +2195,20 @@ do
                         invVal = invVal + ValueEngine.compute(fname, weight, mname)
                         count = count + 1
                         backpackCount = backpackCount + 1
-                        if firstFewCount < 3 then
+                        if firstFewCount < 5 then
                             firstFewCount = firstFewCount + 1
+                            local v = ValueEngine.compute(fname, weight, mname)
                             local attrStr = string.format(
-                                "%s(HF=%s,FN=%s,F=%s,S=%s,Id=%s,W=%s,SM=%s,M=%s)",
-                                fname, tostring(hasHF), tostring(hasFN), tostring(hasFruit),
-                                tostring(hasSeed), tostring(tool:GetAttribute("Id")),
-                                tostring(rawW), tostring(tool:GetAttribute("SizeMultiplier")),
-                                tostring(mname)
+                                "%s(%s,HF=%s,FN=%s,F=%s,W=%s,Id=%s,M=%s,val=%d)",
+                                tool.Name,
+                                fname,
+                                tostring(hasHF),
+                                tostring(hasFN),
+                                tostring(hasFruit),
+                                tostring(rawW),
+                                tostring(tool:GetAttribute("Id")),
+                                tostring(mname),
+                                v
                             )
                             firstFew[#firstFew + 1] = attrStr
                         end
@@ -2229,6 +2222,15 @@ do
                 "found=" .. backpackCount,
                 "totalCount=" .. count,
                 "val=" .. invVal,
+                "samples=" .. table.concat(firstFew, ";")
+            )
+        end
+        if verbose and backpackCount > 0 then
+            _invVerbose = false
+            DebugLog(
+                "invValue", "verbose",
+                "backpackFound=" .. backpackCount,
+                "totalTools=" .. tostring(#(getToolParents()[2] and getToolParents()[2]:GetChildren() or {})),
                 "samples=" .. table.concat(firstFew, ";")
             )
         end
@@ -2863,7 +2865,7 @@ local function doSellSelective()
         for _, parent in ipairs(getToolParents()) do
             for _, tool in ipairs(parent:GetChildren()) do
                 if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
-                    local uid = tool:GetAttribute("Id")
+                    local uid = getFruitId(tool)
                     if uid then
                         local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
                         local wt = tonumber(tool:GetAttribute("Weight"))
@@ -2941,6 +2943,14 @@ local function doSellPets()
     end
 end
 
+local function getFruitId(tool)
+    local id = tool:GetAttribute("Id") or tool:GetAttribute("FruitId")
+    if not id and tool.Parent then
+        id = tool.Parent:GetAttribute("Id") or tool.Parent:GetAttribute("FruitId")
+    end
+    return id
+end
+
 local function doFavorite(setFav, all)
     local playerData = getData()
     if not (playerData and playerData.Inventory) then
@@ -2956,7 +2966,7 @@ local function doFavorite(setFav, all)
         for _, parent in ipairs(getToolParents()) do
             for _, tool in ipairs(parent:GetChildren()) do
                 if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
-                    local uid = tool:GetAttribute("Id")
+                    local uid = getFruitId(tool)
                     if uid then
                         local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
                         local wt = tonumber(tool:GetAttribute("Weight"))
@@ -3461,30 +3471,55 @@ local function doPackGrab()
 end
 
 local function doCollectDropped()
+    local droppedFolder = Workspace:FindFirstChild("DroppedItems")
+    if not droppedFolder then
+        return
+    end
+    local items = droppedFolder:GetChildren()
+    if #items == 0 then
+        return
+    end
     local rootPart = getHRP()
     if not rootPart then
         return
     end
-    local dropped = Workspace:FindFirstChild("DroppedItems") or Workspace:FindFirstChild("Temporary")
-    if not dropped then
-        return
-    end
-    for _, d in ipairs(dropped:GetChildren()) do
-        if d:IsA("Tool") or (d:IsA("Model") and d:GetAttribute("Fruit")) then
-            local part = d:IsA("BasePart") and d or d:FindFirstChildWhichIsA("BasePart", true)
-            if part then
-                if firetouchinterest then
-                    pcall(function()
-                        firetouchinterest(rootPart, part, 0)
-                        firetouchinterest(rootPart, part, 1)
-                    end)
-                else
-                    pcall(function()
-                        part.CFrame = rootPart.CFrame
-                    end)
-                end
+    local closest, closestDist
+    for _, item in ipairs(items) do
+        local part = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart", true)
+        if part then
+            local dist = (part.Position - rootPart.Position).Magnitude
+            if not closestDist or dist < closestDist then
+                closestDist = dist
+                closest = item
             end
         end
+    end
+    if not closest then
+        return
+    end
+    if closestDist > 3 then
+        local target = closest:IsA("BasePart") and closest.Position or closest:GetPivot().Position
+        teleport(target)
+    end
+    local prompt = closest:FindFirstChildWhichIsA("ProximityPrompt")
+    if not prompt then
+        for _, d in ipairs(closest:GetDescendants()) do
+            if d:IsA("ProximityPrompt") then
+                prompt = d
+                break
+            end
+        end
+    end
+    if prompt and prompt.Enabled then
+        local oldDist = prompt.MaxActivationDistance
+        local oldHold = prompt.HoldDuration
+        prompt.MaxActivationDistance = math.huge
+        prompt.HoldDuration = 0
+        prompt:InputHoldBegin()
+        task.wait(0.1)
+        prompt:InputHoldEnd()
+        prompt.MaxActivationDistance = oldDist
+        prompt.HoldDuration = oldHold
     end
 end
 
@@ -3854,46 +3889,58 @@ local function doAutoBuyPet()
     if not Library.Flags["autoBuyPet"] then
         return
     end
-    local maxPrice = tonumber(Library.Flags["petBuyMaxPrice"]) or 500
-    local balance = getBalance()
     local map = Workspace:FindFirstChild("Map")
-    local spawns = map and (map:FindFirstChild("WildPetSpawns") or map:FindFirstChild("WildPetRef"))
+    local spawns = map and map:FindFirstChild("WildPetSpawns")
     if not spawns then
         return
     end
-    local bought = 0
     local wantSpecies = firstValue(Library.Flags["buyPet"] or {})
-    local wantRarity = firstValue(Library.Flags["buyPetRarity"] or {})
-    local wantRarityIdx = (wantRarity and wantRarity ~= "Any") and (RARITY_ORDER[wantRarity] or 0) or 0
+    local maxPrice = tonumber(Library.Flags["petBuyMaxPrice"]) or 500
+    local balance = getBalance()
     for _, pet in ipairs(spawns:GetChildren()) do
         local part = pet:IsA("BasePart") and pet or pet:FindFirstChildWhichIsA("BasePart", true)
-        if part then
-            local species = part:GetAttribute("PetName") or part.Parent and part.Parent:GetAttribute("PetName")
-            local price = part:GetAttribute("Price")
-            local owner = part:GetAttribute("OwnerUserId")
-            local pass = true
-            if wantSpecies and species and normName(species) ~= normName(wantSpecies) then
-                pass = false
-            end
-            if pass and wantRarityIdx > 0 and species then
-                local rarity = getSpeciesRarity(species)
-                if rarity and (RARITY_ORDER[rarity] or 0) < wantRarityIdx then
-                    pass = false
-                end
-            end
-            local state = part:GetAttribute("State")
-            if pass and type(price) == "number" and price > 0 and price <= maxPrice and price <= balance then
-                if (not owner or owner == 0) and (not state or state == "idle") then
-                    netFire("Pets.WildPetTame", pet)
-                    balance = balance - price
-                    bought = bought + 1
-                    task.wait(0.3)
+        if not part then
+            goto nextPet
+        end
+        local species = part:GetAttribute("PetName") or pet:GetAttribute("PetName")
+        if wantSpecies and species and normName(species) ~= normName(wantSpecies) then
+            goto nextPet
+        end
+        local price = part:GetAttribute("Price")
+        if type(price) ~= "number" or price <= 0 or price > maxPrice or price > balance then
+            goto nextPet
+        end
+        local owner = part:GetAttribute("OwnerUserId")
+        if owner and owner ~= 0 then
+            goto nextPet
+        end
+        -- teleport to pet
+        local pos = part.Position + Vector3.new(0, 3, 0)
+        teleport(pos)
+        task.wait(0.3)
+        -- fire ProximityPrompt
+        local prompt = pet:FindFirstChildWhichIsA("ProximityPrompt")
+        if not prompt then
+            for _, d in ipairs(pet:GetDescendants()) do
+                if d:IsA("ProximityPrompt") and d.Enabled then
+                    prompt = d
+                    break
                 end
             end
         end
-    end
-    if bought > 0 then
-        notify("Pet Buyer", "Purchased " .. bought .. " pet(s)")
+        if prompt and prompt.Enabled then
+            local oldDist = prompt.MaxActivationDistance
+            local oldHold = prompt.HoldDuration
+            prompt.MaxActivationDistance = math.huge
+            prompt.HoldDuration = 0
+            prompt:InputHoldBegin()
+            task.wait(0.15)
+            prompt:InputHoldEnd()
+            prompt.MaxActivationDistance = oldDist
+            prompt.HoldDuration = oldHold
+        end
+        break
+        ::nextPet::
     end
 end
 
@@ -6074,15 +6121,14 @@ task.spawn(function()
                     clearPurchaseTracking(stockParent, "SeedShop")
                     _purchasedThisCycle["SeedShop"] = _purchasedThisCycle["SeedShop"] or {}
                     for _, stockValue in ipairs(stockParent:GetChildren()) do
-                        if
-                            stockValue:IsA("ValueBase")
-                            and stockValue.Value > 0
-                            and not _purchasedThisCycle["SeedShop"][stockValue.Name]
-                            and getBalance() >= (SeedPrice[stockValue.Name] or 0)
-                        then
-                            netFire("SeedShop.PurchaseSeed", stockValue.Name)
-                            _purchasedThisCycle["SeedShop"][stockValue.Name] = true
-                            task.wait(0.08)
+                        local name = stockValue.Name
+                        if name and name ~= "" and not _purchasedThisCycle["SeedShop"][name] then
+                            local qty = stockValue.Value or 0
+                            if qty > 0 then
+                                netFire("SeedShop.PurchaseSeed", name)
+                                _purchasedThisCycle["SeedShop"][name] = true
+                                task.wait(0.08)
+                            end
                         end
                     end
                 end
@@ -6093,14 +6139,14 @@ task.spawn(function()
                     clearPurchaseTracking(stockParent, "GearShop")
                     _purchasedThisCycle["GearShop"] = _purchasedThisCycle["GearShop"] or {}
                     for _, stockValue in ipairs(stockParent:GetChildren()) do
-                        if
-                            stockValue:IsA("ValueBase")
-                            and stockValue.Value > 0
-                            and not _purchasedThisCycle["GearShop"][stockValue.Name]
-                        then
-                            netFire("GearShop.PurchaseGear", stockValue.Name)
-                            _purchasedThisCycle["GearShop"][stockValue.Name] = true
-                            task.wait(0.08)
+                        local name = stockValue.Name
+                        if name and name ~= "" and not _purchasedThisCycle["GearShop"][name] then
+                            local qty = stockValue.Value or 0
+                            if qty > 0 then
+                                netFire("GearShop.PurchaseGear", name)
+                                _purchasedThisCycle["GearShop"][name] = true
+                                task.wait(0.08)
+                            end
                         end
                     end
                 end
@@ -6111,14 +6157,14 @@ task.spawn(function()
                     clearPurchaseTracking(stockParent, "CrateShop")
                     _purchasedThisCycle["CrateShop"] = _purchasedThisCycle["CrateShop"] or {}
                     for _, stockValue in ipairs(stockParent:GetChildren()) do
-                        if
-                            stockValue:IsA("ValueBase")
-                            and stockValue.Value > 0
-                            and not _purchasedThisCycle["CrateShop"][stockValue.Name]
-                        then
-                            netFire("CrateShop.PurchaseCrate", stockValue.Name)
-                            _purchasedThisCycle["CrateShop"][stockValue.Name] = true
-                            task.wait(0.08)
+                        local name = stockValue.Name
+                        if name and name ~= "" and not _purchasedThisCycle["CrateShop"][name] then
+                            local qty = stockValue.Value or 0
+                            if qty > 0 then
+                                netFire("CrateShop.PurchaseCrate", name)
+                                _purchasedThisCycle["CrateShop"][name] = true
+                                task.wait(0.08)
+                            end
                         end
                     end
                 end
