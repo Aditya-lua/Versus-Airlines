@@ -1241,10 +1241,6 @@ local function getCropList()
     return list
 end
 local function getPetList()
-    return getAllPetSpecies()
-end
--- all species in the game (PetData catalog), sorted alphabetically
-local function getAllPetSpecies()
     local seen, list = {}, {}
     for key, val in pairs(PetCache or {}) do
         if type(key) == "string" and type(val) == "table" and not seen[key] then
@@ -1254,6 +1250,10 @@ local function getAllPetSpecies()
     end
     table.sort(list)
     return list
+end
+-- alias kept for compatibility
+local function getAllPetSpecies()
+    return getPetList()
 end
 
 -- sprinkler names from the game's SprinklerData module (SprinklerName field);
