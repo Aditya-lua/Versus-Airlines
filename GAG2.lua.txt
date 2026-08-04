@@ -84,7 +84,15 @@ local StabilityEngine = {
                     return
                 end
 
-                if Library and Library.Flags and (Library.Flags["autoCollect"] or Library.Flags["autoCollectAll"] or Library.Flags["autoPlant"] or Library.Flags["autoSteal"] or Library.Flags["autoBuyPet"] or Library.Flags["autoSprinklerAll"] or Library.Flags["autoWaterAll"]) then
+                if Library and Library.Flags and (
+                    Library.Flags["autoCollect"]
+                    or Library.Flags["autoCollectAll"]
+                    or Library.Flags["autoPlant"]
+                    or Library.Flags["autoSteal"]
+                    or Library.Flags["autoBuyPet"]
+                    or Library.Flags["autoSprinklerAll"]
+                    or Library.Flags["autoWaterAll"]
+                ) then
                     if self._lastPosition then
                         local dist = (root.Position - self._lastPosition).Magnitude
                         if dist < 1.5 then
@@ -526,10 +534,21 @@ if not mod then
     return
 end
 Network = mod
-DebugLog("bootstrap", "Network resolved", "hasPlantSeed=" .. tostring(Network.Plant and Network.Plant.PlantSeed ~= nil), "leafType=" .. typeof(Network.Plant and Network.Plant.PlantSeed))
+DebugLog(
+    "bootstrap",
+    "Network resolved",
+    "hasPlantSeed=" .. tostring(Network.Plant and Network.Plant.PlantSeed ~= nil),
+    "leafType=" .. typeof(Network.Plant and Network.Plant.PlantSeed)
+)
 mod = tryRequire(function()
-    local cm = ReplicatedStorage:FindFirstChild("ClientModules") or ReplicatedStorage:WaitForChild("ClientModules", 10)
-    return require(cm and (cm:FindFirstChild("PlayerStateClient") or cm:WaitForChild("PlayerStateClient", 10)) or ReplicatedStorage.ClientModules.PlayerStateClient)
+    local cm = ReplicatedStorage:FindFirstChild("ClientModules")
+        or ReplicatedStorage:WaitForChild("ClientModules", 10)
+    local cms = ReplicatedStorage.ClientModules
+    return require(
+        cm and (cm:FindFirstChild("PlayerStateClient")
+            or cm:WaitForChild("PlayerStateClient", 10))
+        or (cms and cms.PlayerStateClient)
+    )
 end)
 if mod then
     PlayerState = mod
@@ -554,15 +573,31 @@ for _, seedEntry in ipairs(SeedData or {}) do
     end
 end
 mod = tryRequire(function()
-    local sd = ReplicatedStorage:FindFirstChild("SharedData") or ReplicatedStorage:WaitForChild("SharedData", 10)
-    return require(sd and (sd:FindFirstChild("PetData") or sd:FindFirstChild("Pets") or sd:FindFirstChild("PetCache") or sd:WaitForChild("PetData", 5)) or ReplicatedStorage.SharedData.PetData)
+    local sd = ReplicatedStorage:FindFirstChild("SharedData")
+        or ReplicatedStorage:WaitForChild("SharedData", 10)
+    local rcsd = ReplicatedStorage.SharedData
+    return require(
+        sd and (
+            sd:FindFirstChild("PetData")
+            or sd:FindFirstChild("Pets")
+            or sd:FindFirstChild("PetCache")
+            or sd:WaitForChild("PetData", 5)
+        )
+        or (rcsd and rcsd.PetData)
+    )
 end)
 if mod then
     PetCache = mod
 end
 mod = tryRequire(function()
-    local sm = ReplicatedStorage:FindFirstChild("SharedModules") or ReplicatedStorage:WaitForChild("SharedModules", 10)
-    return require(sm and (sm:FindFirstChild("FruitValueCalc") or sm:WaitForChild("FruitValueCalc", 10)) or ReplicatedStorage.SharedModules.FruitValueCalc)
+    local sm = ReplicatedStorage:FindFirstChild("SharedModules")
+        or ReplicatedStorage:WaitForChild("SharedModules", 10)
+    local rcsm = ReplicatedStorage.SharedModules
+    return require(
+        sm and (sm:FindFirstChild("FruitValueCalc")
+            or sm:WaitForChild("FruitValueCalc", 10))
+        or (rcsm and rcsm.FruitValueCalc)
+    )
 end)
 if type(mod) == "function" then
     FruitValueCalc = mod
@@ -1261,18 +1296,27 @@ local function getSprinklerList()
             end
         end
     end
-    local playerData = getData()
-    if playerData and playerData.Inventory and playerData.Inventory.Sprinklers then
-        for k in pairs(playerData.Inventory.Sprinklers) do
-            seen[tostring(k)] = true
-        end
-    end
     local list = {}
     for k in pairs(seen) do
         list[#list + 1] = k
     end
     table.sort(list)
     return list
+end
+
+local function getOwnedSprinklers()
+    local owned = {}
+    for _, parent in ipairs(getToolParents()) do
+        for _, tool in ipairs(parent:GetChildren()) do
+            if tool:IsA("Tool") then
+                local s = tool:GetAttribute("Sprinkler")
+                if type(s) == "string" and s ~= "" then
+                    owned[s] = (owned[s] or 0) + 1
+                end
+            end
+        end
+    end
+    return owned
 end
 
 -- normalize names for matching: lowercase, strip spaces/punctuation
@@ -1421,7 +1465,12 @@ local function getRipeCrops()
                     if plantId then
                         local cropName = m:GetAttribute("CorePartName") or m:GetAttribute("SeedName") or ""
                             local mut = m:GetAttribute("Mutation") or plant:GetAttribute("Mutation")
-                            local wt = tonumber(m:GetAttribute("SizeMultiplier") or m:GetAttribute("SizeMulti") or plant:GetAttribute("SizeMultiplier") or plant:GetAttribute("SizeMulti")) or 1
+                            local wt = tonumber(
+                                m:GetAttribute("SizeMultiplier")
+                                or m:GetAttribute("SizeMulti")
+                                or plant:GetAttribute("SizeMultiplier")
+                                or plant:GetAttribute("SizeMulti")
+                            ) or 1
                             out[#out + 1] = {
                                 model = m,
                                 plantId = plantId,
@@ -2145,7 +2194,12 @@ do
                     local hasSeed = tool:GetAttribute("Seed")
                     if hasHF or hasFN or hasFruit or hasSeed then
                         local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local rawW = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[fname] or 1)
+                        local rawW = tonumber(tool:GetAttribute("Weight"))
+                            or (
+                                (tonumber(tool:GetAttribute("SizeMultiplier")
+                                    or tool:GetAttribute("SizeMulti")) or 1)
+                                * (ValueDB.baseWeight[fname] or 1)
+                            )
                         local weight = rawW and rawW > 0 and rawW or 1
                         local mname = tool:GetAttribute("Mutation")
                         if type(mname) ~= "string" then
@@ -2156,46 +2210,65 @@ do
                         backpackCount = backpackCount + 1
                         if firstFewCount < 3 then
                             firstFewCount = firstFewCount + 1
-                            firstFew[#firstFew + 1] = string.format("%s(HF=%s,FN=%s,F=%s,S=%s,Id=%s,W=%s,SM=%s,M=%s)", fname, tostring(hasHF), tostring(hasFN), tostring(hasFruit), tostring(hasSeed), tostring(tool:GetAttribute("Id")), tostring(rawW), tostring(tool:GetAttribute("SizeMultiplier")), tostring(mname))
+                            local attrStr = string.format(
+                                "%s(HF=%s,FN=%s,F=%s,S=%s,Id=%s,W=%s,SM=%s,M=%s)",
+                                fname, tostring(hasHF), tostring(hasFN), tostring(hasFruit),
+                                tostring(hasSeed), tostring(tool:GetAttribute("Id")),
+                                tostring(rawW), tostring(tool:GetAttribute("SizeMultiplier")),
+                                tostring(mname)
+                            )
+                            firstFew[#firstFew + 1] = attrStr
                         end
                     end
                 end
             end
         end
         if backpackCount > 0 and now ~= _lastInvDbg then
-            DebugLog("invValue", "backpackScan", "found=" .. backpackCount, "totalCount=" .. count, "val=" .. invVal, "samples=" .. table.concat(firstFew, ";"))
+            DebugLog(
+                "invValue", "backpackScan",
+                "found=" .. backpackCount,
+                "totalCount=" .. count,
+                "val=" .. invVal,
+                "samples=" .. table.concat(firstFew, ";")
+            )
         end
         if now ~= _lastInvDbg then
             _lastInvDbg = now
+            local invKeys = "?"
+            if d and d.Inventory and type(d.Inventory) == "table" then
+                local ks = {}
+                for k in pairs(d.Inventory) do
+                    ks[#ks + 1] = tostring(k)
+                end
+                table.sort(ks)
+                invKeys = table.concat(ks, ",")
+            end
+            local sampleCount = 0
             local sample = ""
             if hf then
-                local n = 0
                 for k, v in pairs(hf) do
-                    if n < 2 then
-                        sample = sample .. " " .. tostring(k) .. "="
-                            .. (type(v) == "table" and (tostring(v.FruitName or v.Name or v.Seed or "?") .. "/" .. tostring(v.SizeMultiplier or v.Weight or "?")) or tostring(v))
+                    if sampleCount < 2 then
+                        local vstr = type(v) == "table"
+                            and (tostring(v.FruitName or v.Name or v.Seed or "?")
+                                .. "/" .. tostring(v.SizeMultiplier or v.Weight or "?"))
+                            or tostring(v)
+                        sample = sample .. " " .. tostring(k) .. "=" .. vstr
                     end
-                    n = n + 1
+                    sampleCount = sampleCount + 1
                 end
             end
-            DebugLog("invValue", "data=" .. tostring(d ~= nil), "inv=" .. tostring(d and d.Inventory ~= nil),
-                "hf=" .. tostring(type(hf)), "count=" .. tostring(count), "val=" .. tostring(invVal),
-                "FVC=" .. tostring(FruitValueCalc ~= nil), "sellLive=" .. tostring(ValueDB.sellLive ~= nil),
-                "invKeys=" .. (d and d.Inventory and type(d.Inventory) == "table" and (function()
-                    local ks = {}
-                    for k in pairs(d.Inventory) do
-                        ks[#ks + 1] = tostring(k)
-                    end
-                    table.sort(ks)
-                    return table.concat(ks, ",")
-                end)() or "?") ..
-                " sample[" .. tostring(hf and (function()
-                    local c = 0
-                    for _ in pairs(hf) do
-                        c = c + 1
-                    end
-                    return c
-                end)() or 0) .. "]" .. sample)
+            DebugLog(
+                "invValue",
+                "data=" .. tostring(d ~= nil),
+                "inv=" .. tostring(d and d.Inventory ~= nil),
+                "hf=" .. tostring(type(hf)),
+                "count=" .. tostring(count),
+                "val=" .. tostring(invVal),
+                "FVC=" .. tostring(FruitValueCalc ~= nil),
+                "sellLive=" .. tostring(ValueDB.sellLive ~= nil),
+                "invKeys=" .. invKeys,
+                "sample[" .. sampleCount .. "]" .. sample
+            )
         end
         return invVal, count
     end
@@ -2717,7 +2790,13 @@ local function doSteal()
                     elapsed = elapsed + 0.08
                     if Library.Flags["stealEvasion"] then
                         for _, pl in ipairs(Players:GetPlayers()) do
-                            if pl ~= client and pl.Character and (t.userId == pl.UserId or pl.Character:FindFirstChild("Shovel") or pl.Character:FindFirstChild("Crowbar")) then
+                            if pl ~= client and pl.Character
+                                and (
+                                    t.userId == pl.UserId
+                                    or pl.Character:FindFirstChild("Shovel")
+                                    or pl.Character:FindFirstChild("Crowbar")
+                                )
+                            then
                                 local phrp = pl.Character:FindFirstChild("HumanoidRootPart")
                                 local myhrp = getHRP()
                                 if phrp and myhrp and (phrp.Position - myhrp.Position).Magnitude < 18 then
@@ -2774,7 +2853,10 @@ local function doSellSelective()
     if not (playerData and playerData.Inventory) then
         return
     end
-    local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
+    local fruits = playerData.Inventory.HarvestedFruits
+        or playerData.Inventory.Fruits
+        or playerData.Inventory.Backpack
+        or playerData.Inventory.Harvested
     if not fruits then
         -- fallback: scan backpack + character tools for fruit items
         fruits = {}
@@ -2784,7 +2866,12 @@ local function doSellSelective()
                     local uid = tool:GetAttribute("Id")
                     if uid then
                         local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local wt = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[cropName] or 1)
+                        local wt = tonumber(tool:GetAttribute("Weight"))
+                            or (
+                                (tonumber(tool:GetAttribute("SizeMultiplier")
+                                    or tool:GetAttribute("SizeMulti")) or 1)
+                                * (ValueDB.baseWeight[cropName] or 1)
+                            )
                         if not wt or wt <= 0 then
                             wt = 1
                         end
@@ -2859,7 +2946,10 @@ local function doFavorite(setFav, all)
     if not (playerData and playerData.Inventory) then
         return
     end
-    local fruits = playerData.Inventory.HarvestedFruits or playerData.Inventory.Fruits or playerData.Inventory.Backpack or playerData.Inventory.Harvested
+    local fruits = playerData.Inventory.HarvestedFruits
+        or playerData.Inventory.Fruits
+        or playerData.Inventory.Backpack
+        or playerData.Inventory.Harvested
     if not fruits then
         -- fallback: scan backpack + character tools for fruit items
         fruits = {}
@@ -2869,7 +2959,12 @@ local function doFavorite(setFav, all)
                     local uid = tool:GetAttribute("Id")
                     if uid then
                         local cropName = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                        local wt = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[cropName] or 1)
+                        local wt = tonumber(tool:GetAttribute("Weight"))
+                            or (
+                                (tonumber(tool:GetAttribute("SizeMultiplier")
+                                    or tool:GetAttribute("SizeMulti")) or 1)
+                                * (ValueDB.baseWeight[cropName] or 1)
+                            )
                         if not wt or wt <= 0 then
                             wt = 1
                         end
@@ -2920,17 +3015,20 @@ end
 
 local placeOneSprinkler
 local function doSprinkler()
-    local playerData = getData()
-    local invSprinklers = playerData and playerData.Inventory and playerData.Inventory.Sprinklers
-    if not invSprinklers then
-        DebugLog("doSprinkler", "exit: no Inventory.Sprinklers data", "invKeys=" .. (playerData and playerData.Inventory and type(playerData.Inventory) == "table" and (function()
+    local owned = getOwnedSprinklers()
+    if not next(owned) then
+        DebugLog("doSprinkler", "exit: no sprinkler tools in backpack")
+        local invKeys = "nil"
+        local d = getData()
+        if d and d.Inventory and type(d.Inventory) == "table" then
             local ks = {}
-            for k in pairs(playerData.Inventory) do
+            for k in pairs(d.Inventory) do
                 ks[#ks + 1] = tostring(k)
             end
             table.sort(ks)
-            return table.concat(ks, ",")
-        end)() or "nil"))
+            invKeys = table.concat(ks, ",")
+        end
+        DebugLog("doSprinkler", "invKeys=" .. invKeys)
     end
     local plot = myPlot()
     if not plot then
@@ -2948,28 +3046,10 @@ local function doSprinkler()
     end
     local name = firstValue(Library.Flags["sprinklerSelect"] or {})
     if not name or name == "" then
-        if invSprinklers then
-            for sname, sval in pairs(invSprinklers) do
-                if type(sname) == "string" then
-                    name = sname
-                    break
-                end
-            end
-        end
-        if not name then
-            for _, parent in ipairs(getToolParents()) do
-                for _, tool in ipairs(parent:GetChildren()) do
-                    if tool:IsA("Tool") then
-                        local s = tool:GetAttribute("Sprinkler")
-                        if type(s) == "string" and s ~= "" then
-                            name = s
-                            break
-                        end
-                    end
-                end
-                if name then
-                    break
-                end
+        for sname in pairs(owned) do
+            if type(sname) == "string" then
+                name = sname
+                break
             end
         end
     end
@@ -2977,29 +3057,14 @@ local function doSprinkler()
         DebugLog("doSprinkler", "exit: no sprinkler name found")
         return
     end
-    placeOneSprinkler(plot, name, invSprinklers and invSprinklers[name] or 1)
+    placeOneSprinkler(plot, name, owned[name] or 1)
 end
 
 local function doSprinklerAll()
-    local playerData = getData()
-    local sprinklers = playerData and playerData.Inventory and playerData.Inventory.Sprinklers
-    if not sprinklers then
-        -- fallback: scan backpack + character tools with "Sprinkler" attribute
-        sprinklers = {}
-        for _, parent in ipairs(getToolParents()) do
-            for _, tool in ipairs(parent:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local s = tool:GetAttribute("Sprinkler")
-                    if type(s) == "string" and s ~= "" then
-                        sprinklers[s] = (sprinklers[s] or 0) + 1
-                    end
-                end
-            end
-        end
-        if not next(sprinklers) then
-            DebugLog("doSprinklerAll", "exit: no sprinklers owned")
-            return
-        end
+    local owned = getOwnedSprinklers()
+    if not next(owned) then
+        DebugLog("doSprinklerAll", "exit: no sprinkler tools in backpack")
+        return
     end
     local plot = myPlot()
     if not plot then
@@ -3015,7 +3080,7 @@ local function doSprinklerAll()
         return
     end
     local placed = 0
-    for sname, sval in pairs(sprinklers) do
+    for sname, sval in pairs(owned) do
         if type(sname) == "string" and placeOneSprinkler(plot, sname, sval) then
             placed = placed + 1
             task.wait(tonumber(Library.Flags["sprinklerDelay"]) or 0)
@@ -3093,7 +3158,12 @@ placeOneSprinkler = function(plot, name, ownedCount)
     sAttr = sTool:GetAttribute("Sprinkler") or sAttr
     local plotId = tonumber(tostring(plot.Name):match("%d+"))
     netFire("Place.PlaceSprinkler", pos, sAttr, sTool, plotId or 0)
-    DebugLog("doSprinkler", "fire", sAttr, "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z), "plotId=" .. tostring(plotId), "owned=" .. tostring(ownedCount))
+    DebugLog(
+        "doSprinkler", "fire", sAttr,
+        "pos=" .. tostring(pos.X) .. "," .. tostring(pos.Z),
+        "plotId=" .. tostring(plotId),
+        "owned=" .. tostring(ownedCount)
+    )
     return true
 end
 
@@ -3133,7 +3203,12 @@ local function doWateringCan()
                     if canTool then
                         -- game client raycasts onto a PlantArea-tagged soil part and fires the hit surface pos
                         local surface = soilPositionAt(plot, basePos.X, basePos.Z) or basePos
-                        netFire("WateringCan.UseWateringCan", surface - Vector3.new(0, 0.3, 0), canTool:GetAttribute("WateringCan") or canName or "", canTool)
+                        netFire(
+                            "WateringCan.UseWateringCan",
+                            surface - Vector3.new(0, 0.3, 0),
+                            canTool:GetAttribute("WateringCan") or canName or "",
+                            canTool
+                        )
                     end
                     task.wait(0.2)
                 end
@@ -6102,9 +6177,20 @@ task.spawn(function()
             if invVal <= 0 then
                 for _, parent in ipairs(getToolParents()) do
                     for _, tool in ipairs(parent:GetChildren()) do
-                        if tool:IsA("Tool") and (tool:GetAttribute("HarvestedFruit") or tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit")) then
+                        if tool:IsA("Tool")
+                            and (
+                                tool:GetAttribute("HarvestedFruit")
+                                or tool:GetAttribute("FruitName")
+                                or tool:GetAttribute("Fruit")
+                            )
+                        then
                             local fname = tool:GetAttribute("FruitName") or tool:GetAttribute("Fruit") or tool:GetAttribute("Seed") or tool.Name or ""
-                            local rawW = tonumber(tool:GetAttribute("Weight")) or (tonumber(tool:GetAttribute("SizeMultiplier") or tool:GetAttribute("SizeMulti")) or 1) * (ValueDB.baseWeight[fname] or 1)
+                            local rawW = tonumber(tool:GetAttribute("Weight"))
+                            or (
+                                (tonumber(tool:GetAttribute("SizeMultiplier")
+                                    or tool:GetAttribute("SizeMulti")) or 1)
+                                * (ValueDB.baseWeight[fname] or 1)
+                            )
                             local weight = rawW and rawW > 0 and rawW or 1
                             local mname = tool:GetAttribute("Mutation")
                             if type(mname) ~= "string" then
