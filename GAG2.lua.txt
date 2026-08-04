@@ -2565,17 +2565,7 @@ local function doPlant()
         hasFilter = false -- Auto Plant All ignores the seed dropdown entirely
     end
     local toPlant = {}
-    if Library.Flags["smartReplant"] then
-        -- plant only the most profitable seed you own
-        local best = getBestSeed()
-        if best then
-            local keep = Library.Flags["seedReserve"] and (tonumber(Library.Flags["reserveCount"]) or 0) or 0
-            for _ = 1, math.max(0, (seeds[best] or 0) - keep) do
-                toPlant[#toPlant + 1] = best
-            end
-        end
-    else
-        for name, count in pairs(seeds) do
+    for name, count in pairs(seeds) do
             if hasFilter then
                 local match = false
                 if type(seedFilter) == "table" then
@@ -2600,7 +2590,6 @@ local function doPlant()
                 for _ = 1, count or 0 do
                     toPlant[#toPlant + 1] = name
                 end
-            end
         end
     end
     if #toPlant == 0 then
@@ -2610,11 +2599,17 @@ local function doPlant()
     if Library.Flags["seedReserve"] then
         local keep = math.max(0, tonumber(Library.Flags["reserveCount"]) or 0)
         if keep > 0 then
-            local reserved = {}
+            local want = {}
             for _, seedName in ipairs(toPlant) do
-                local owned = (seeds[seedName] or 0)
-                for _ = 1, math.max(0, owned - keep) do
-                    reserved[#reserved + 1] = seedName
+                want[seedName] = (want[seedName] or 0) + 1
+            end
+            local reserved = {}
+            for seedName, wanted in pairs(want) do
+                local owned = seeds[seedName] or 0
+                if owned > keep then
+                    for _ = 1, wanted do
+                        reserved[#reserved + 1] = seedName
+                    end
                 end
             end
             toPlant = reserved
@@ -2843,12 +2838,7 @@ local function doSellAll()
         end
     end
     sellBaseline = balBefore
-    -- smart sell: respect daily deal toggle for bonus
-    if Library.Flags["dailyDeal"] then
-        netFire("NPCS.UseDailyDealAll")
-    else
-        netFire("NPCS.SellAll")
-    end
+    netFire("NPCS.SellAll")
 end
 
 local function doSellSelective()
@@ -3526,8 +3516,11 @@ local function doCollectDropped()
         return
     end
     if closestDist > 3 then
-        local target = closest:IsA("BasePart") and closest.Position or closest:GetPivot().Position
-        teleport(target)
+        local target = closest:IsA("BasePart") and closest.Position
+            or (closest:IsA("Model") and closest:GetPivot().Position)
+        if target then
+            teleport(target)
+        end
     end
     local prompt = closest:FindFirstChildWhichIsA("ProximityPrompt")
     if not prompt then
@@ -3929,7 +3922,8 @@ local function doAutoBuyPet()
     local balance = getBalance()
     for _, pet in ipairs(spawns:GetChildren()) do
         local skip
-        local part = pet:IsA("BasePart") and pet or pet:FindFirstChildWhichIsA("BasePart", true)
+        local part = pet:IsA("BasePart") and pet
+            or pet:IsA("Model") and (pet.PrimaryPart or pet:FindFirstChildWhichIsA("BasePart", true))
         if not part then
             skip = true
         end
@@ -4180,7 +4174,6 @@ local SAVE_FILE = "GAG2_Settings.json"
 local PERSISTENT_FLAGS = {
     "autoPlant",
     "autoPlantAll",
-    "smartReplant",
     "plantNoTp",
     "plantSeeds",
     "plantPattern",
@@ -4602,10 +4595,15 @@ createIntervalToggle(
     { Name = "Auto Plant All Seeds", flagName = "autoPlantAll", tag = "autoPlantAll", delay = 1.2, Step = doPlant }
 )
 Main:createToggle({
-    Name = "Smart Replant",
-    Flag = false,
-    flagName = "smartReplant",
-    Description = "Plant only the most profitable seed you own.",
+    Name = "Seed Reserve",
+    flagName = "seedReserve",
+    Description = "Keep a minimum of each seed type.",
+})
+Main:createInputBox({
+    Name = "Reserve Count",
+    flagName = "reserveCount",
+    Flag = "10",
+    Description = "Minimum seeds to keep of each type.",
 })
 
 -- Automation Collection
@@ -5059,7 +5057,14 @@ Automatically:createToggle({
     Name = "Auto Place All Sprinkler",
     Flag = false,
     flagName = "autoSprinklerAll",
-    Description = "Place all owned sprinklers at once.",
+    Description = "Place all owned sprinklers automatically.",
+})
+
+Automatically:createToggle({
+    Name = "Auto Water All Plants",
+    Flag = false,
+    flagName = "autoWaterAll",
+    Description = "Water all decaying plants using Watering Can.",
 })
 
 -- Automation Shovel
