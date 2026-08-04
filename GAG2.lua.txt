@@ -4254,6 +4254,7 @@ local PERSISTENT_FLAGS = {
     "autoHopRare",
     "espInvValue",
     "autoSave",
+    "autoTPFallHarvest",
 }
 local function saveSettings()
     if not writefile then
@@ -4306,6 +4307,47 @@ local Webhook = Setup:CreateSection("📡 Webhook")
 local Misc = Setup:CreateSection("🧰 Misc")
 local Visual = Setup:CreateSection("👁️ Visual")
 local Settings = Setup:CreateSection("🔧 Settings")
+
+local FALL_HARVEST_PLACE_ID = 129343810645058
+local isInFallHarvest = (game.PlaceId == FALL_HARVEST_PLACE_ID)
+local isMainGame = not isInFallHarvest
+
+if isMainGame then
+    local FallTab = Setup:CreateSection("🍂 Fall Event")
+
+    FallTab:createLabel({ Name = "Fall Harvest Event", Special = true })
+    FallTab:createLabel({ Name = "Place ID: " .. FALL_HARVEST_PLACE_ID, Special = true })
+
+    FallTab:createButton({
+        Name = "Teleport to Fall Harvest",
+        Description = "Join the Fall Harvest event server.",
+        Callback = function()
+            local tps = game:GetService("TeleportService")
+            pcall(function()
+                tps:Teleport(FALL_HARVEST_PLACE_ID, client)
+            end)
+        end,
+    })
+
+    FallTab:createToggle({
+        Name = "Auto TP to Fall Harvest",
+        Flag = false,
+        flagName = "autoTPFallHarvest",
+        Description = "Automatically teleport to the Fall event on script load.",
+        Callback = function(enabled)
+            if enabled then
+                FallTab:createLabel({ Name = "TP'ing in 3s...", flagName = "fallTPHint", Special = true })
+                task.wait(3)
+                if Library.Flags["autoTPFallHarvest"] then
+                    local tps = game:GetService("TeleportService")
+                    pcall(function()
+                        tps:Teleport(FALL_HARVEST_PLACE_ID, client)
+                    end)
+                end
+            end
+        end,
+    })
+end
 
 -- ================================================================
 -- HOME TAB (Dashboard)
@@ -6410,6 +6452,19 @@ Library.Flags["savedPlantPos"] = Library.Flags["savedPlantPos"] or false
 Library.Flags["savedSprinklerPos"] = Library.Flags["savedSprinklerPos"] or false
 
 loadSettings()
+
+-- auto-teleport to Fall Harvest if flag was persisted
+if isMainGame and Library.Flags["autoTPFallHarvest"] then
+    task.spawn(function()
+        task.wait(1)
+        if Library.Flags["autoTPFallHarvest"] then
+            local tps = game:GetService("TeleportService")
+            pcall(function()
+                tps:Teleport(FALL_HARVEST_PLACE_ID)
+            end)
+        end
+    end)
+end
 
 -- re-apply movement settings on respawn
 track(client.CharacterAdded:Connect(function(character)

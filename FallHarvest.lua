@@ -1,3 +1,4 @@
+-- Fall Harvest Auto-Farm
 -- services
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
@@ -18,8 +19,8 @@ local NotificationController
 pcall(function() NotificationController = require(game.StarterPlayer.StarterPlayerScripts.Controllers.NotificationController) end)
 
 -- Prevent duplicate script instances & memory leaks on re-execution
-if getgenv and type(getgenv().GAG2_unload) == "function" then
-    pcall(getgenv().GAG2_unload)
+if getgenv and type(getgenv().FH_unload) == "function" then
+    pcall(getgenv().FH_unload)
     task.wait(0.1)
 end
 
@@ -198,12 +199,12 @@ do
         Library.CleanupConnectionsByTag = noop
         Library.CleanupConnections = noop
         Library.CloseAllPopups = noop
-        warn("[GAG2] Could not load UI library - running in headless mode")
+        warn("[FH] Could not load UI library - running in headless mode")
     else
         local ls = (getgenv and getgenv().loadstring) or loadstring
         local chunk, err = ls(src)
         if not chunk then
-            warn("[GAG2 Library Load Error] " .. tostring(err))
+            warn("[FH Library Load Error] " .. tostring(err))
             local noop = function() end
             local dummyUpdate = { updateText = noop, updateList = noop, Set = noop }
             local function dummySection()
@@ -458,7 +459,7 @@ local function DebugLog(...)
     end
     local parts = { ... }
     local line = os.time() .. " " .. table.concat(parts, " | ")
-    print("[GAG2DBG] " .. line)
+    print("[FHDBG] " .. line)
     local buf = DebugLogBuf
     if #buf >= 2000 then
         local out = {}
@@ -478,7 +479,7 @@ local function DumpDebugLog()
         return
     end
     local ok, err = pcall(function()
-        local payload = "GAG2 debug log " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n" .. table.concat(DebugLogBuf, "\n") .. "\n"
+        local payload = "FH debug log " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n" .. table.concat(DebugLogBuf, "\n") .. "\n"
         writefile("gag2_debug_log.txt", payload)
     end)
     if ok then
@@ -530,7 +531,7 @@ if not mod and getgc then
     end)
 end
 if not mod then
-    warn("[GAG2] Networking module unavailable - aborting")
+    warn("[FH] Networking module unavailable - aborting")
     return
 end
 Network = mod
@@ -1614,7 +1615,7 @@ local function dumpTools(attrName)
     end
     scanTools(client.Character)
     scanTools(client:FindFirstChild("Backpack"))
-    print("[GAG2] tools(" .. tostring(attrName) .. "): " .. (#seen > 0 and table.concat(seen, ", ") or "NONE"))
+    print("[FH] tools(" .. tostring(attrName) .. "): " .. (#seen > 0 and table.concat(seen, ", ") or "NONE"))
 end
 
 local function getPlantSlots(plot, pattern)
@@ -1866,11 +1867,11 @@ local function sendWebhook(title, desc, color, fields)
                         description = tostring(desc),
                         color = color or 5763719,
                         fields = fields or {},
-                        footer = { text = client.Name .. " | GAG2" },
+                        footer = { text = client.Name .. " | FallHarvest" },
                         timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
                     },
                 },
-                username = Library.Flags["whName"] or "GAG2 Bot",
+                username = Library.Flags["whName"] or "FallHarvest Bot",
             }),
         })
     end)
@@ -2020,7 +2021,7 @@ do
     end
     local function newTag(part)
         local bb = Instance.new("BillboardGui")
-        bb.Name = "GAG2ValueESP"
+        bb.Name = "FHValueESP"
         bb.Adornee = part
         bb.AlwaysOnTop = true
         bb.Size = UDim2.fromOffset(160, 42)
@@ -2061,7 +2062,7 @@ do
         local ok = pcall(function()
             local host = (gethui and gethui()) or CoreGui
             local sg = Instance.new("ScreenGui")
-            sg.Name = "GAG2ValueHUD"
+            sg.Name = "FHValueHUD"
             sg.ResetOnSpawn = false
             sg.IgnoreGuiInset = true
             sg.DisplayOrder = 59
@@ -2114,7 +2115,7 @@ do
         local ok = pcall(function()
             local host = (gethui and gethui()) or CoreGui
             local sg = Instance.new("ScreenGui")
-            sg.Name = "GAG2InvValueHUD"
+            sg.Name = "FHInvValueHUD"
             sg.ResetOnSpawn = false
             sg.IgnoreGuiInset = true
             sg.DisplayOrder = 58
@@ -3217,6 +3218,28 @@ local function doWateringCan()
     end
 end
 
+local _lastTornado = 0
+local function doWindStaffTornado()
+    local now = os.clock()
+    local delay = tonumber(Library.Flags["windStaffDelay"]) or 30
+    if now - _lastTornado < delay then
+        return
+    end
+    local t = findToolByAttr("WindStaff", firstValue(Library.Flags["windStaffSelect"] or {}))
+    if not t then
+        DebugLog("windStaff", "exit: no WindStaff tool found")
+        return
+    end
+    t = equipTool(t)
+    if not t then
+        DebugLog("windStaff", "exit: equip failed")
+        return
+    end
+    _lastTornado = now
+    netFire("WindStaff.TriggerTornado")
+    DebugLog("windStaff", "fired tornado")
+end
+
 local function doShovelFruit()
     local plot = myPlot()
     if not plot then
@@ -4070,7 +4093,7 @@ function gardenNearPlayer()
 end
 
 -- settings persistence
-local SAVE_FILE = "GAG2_Settings.json"
+local SAVE_FILE = "FH_Settings.json"
 local PERSISTENT_FLAGS = {
     "autoPlant",
     "autoPlantAll",
@@ -4132,7 +4155,9 @@ local PERSISTENT_FLAGS = {
     "buyPetRarity",
     "buyPetSize",
     "autoSprinkler",
-    "autoSprinklerAll",
+"autoSprinklerAll",
+    "autoWindStaff",
+    "windStaffDelay",
     "sprinklerNoTp",
     "sprinklerSelect",
     "sprinklerPos",
@@ -4254,7 +4279,6 @@ local PERSISTENT_FLAGS = {
     "autoHopRare",
     "espInvValue",
     "autoSave",
-    "autoTPFallHarvest",
 }
 local function saveSettings()
     if not writefile then
@@ -4307,47 +4331,6 @@ local Webhook = Setup:CreateSection("📡 Webhook")
 local Misc = Setup:CreateSection("🧰 Misc")
 local Visual = Setup:CreateSection("👁️ Visual")
 local Settings = Setup:CreateSection("🔧 Settings")
-
-local FALL_HARVEST_PLACE_ID = 129343810645058
-local isInFallHarvest = (game.PlaceId == FALL_HARVEST_PLACE_ID)
-local isMainGame = not isInFallHarvest
-
-if isMainGame then
-    local FallTab = Setup:CreateSection("🍂 Fall Event")
-
-    FallTab:createLabel({ Name = "Fall Harvest Event", Special = true })
-    FallTab:createLabel({ Name = "Place ID: " .. FALL_HARVEST_PLACE_ID, Special = true })
-
-    FallTab:createButton({
-        Name = "Teleport to Fall Harvest",
-        Description = "Join the Fall Harvest event server.",
-        Callback = function()
-            local tps = game:GetService("TeleportService")
-            pcall(function()
-                tps:Teleport(FALL_HARVEST_PLACE_ID, client)
-            end)
-        end,
-    })
-
-    FallTab:createToggle({
-        Name = "Auto TP to Fall Harvest",
-        Flag = false,
-        flagName = "autoTPFallHarvest",
-        Description = "Automatically teleport to the Fall event on script load.",
-        Callback = function(enabled)
-            if enabled then
-                FallTab:createLabel({ Name = "TP'ing in 3s...", flagName = "fallTPHint", Special = true })
-                task.wait(3)
-                if Library.Flags["autoTPFallHarvest"] then
-                    local tps = game:GetService("TeleportService")
-                    pcall(function()
-                        tps:Teleport(FALL_HARVEST_PLACE_ID, client)
-                    end)
-                end
-            end
-        end,
-    })
-end
 
 -- ================================================================
 -- HOME TAB (Dashboard)
@@ -5044,6 +5027,25 @@ createIntervalToggle(
         tag = "autoShovelFruit",
         delay = 3,
         Step = doShovelFruit,
+    }
+)
+
+-- Wind Staff
+Automatically:createLabel({ Name = "- [ Wind Staff ] -", Special = true })
+Automatically:createInputBox({
+    Name = "Tornado Delay",
+    flagName = "windStaffDelay",
+    Flag = "30",
+    Description = "Seconds between tornado casts.",
+})
+createIntervalToggle(
+    Automatically,
+    {
+        Name = "Auto Tornado",
+        flagName = "autoWindStaff",
+        tag = "autoWindStaff",
+        delay = 30,
+        Step = doWindStaffTornado,
     }
 )
 
@@ -6427,10 +6429,10 @@ function Hub.unload()
     setCollide(true)
     StabilityEngine:StopAntiStuckWatchdog()
     StabilityEngine:SetAFKThrottling(false)
-    print("[GAG2] unloaded.")
+    print("[FH] unloaded.")
 end
 if getgenv then
-    getgenv().GAG2_unload = Hub.unload
+    getgenv().FH_unload = Hub.unload
 end
 
 -- cleanup on close
@@ -6453,19 +6455,6 @@ Library.Flags["savedSprinklerPos"] = Library.Flags["savedSprinklerPos"] or false
 
 loadSettings()
 
--- auto-teleport to Fall Harvest if flag was persisted
-if isMainGame and Library.Flags["autoTPFallHarvest"] then
-    task.spawn(function()
-        task.wait(1)
-        if Library.Flags["autoTPFallHarvest"] then
-            local tps = game:GetService("TeleportService")
-            pcall(function()
-                tps:Teleport(FALL_HARVEST_PLACE_ID)
-            end)
-        end
-    end)
-end
-
 -- re-apply movement settings on respawn
 track(client.CharacterAdded:Connect(function(character)
     task.wait(0.6)
@@ -6477,10 +6466,10 @@ track(client.CharacterAdded:Connect(function(character)
     end
 end))
 
-print("[GAG2] Loaded successfully (" .. os.date("%H:%M:%S") .. ")")
-print("[GAG2] Player: " .. client.Name .. " | UserId: " .. client.UserId)
+print("[FH] Loaded successfully (" .. os.date("%H:%M:%S") .. ")")
+print("[FH] Player: " .. client.Name .. " | UserId: " .. client.UserId)
 print(
-    "[GAG2] Network: "
+    "[FH] Network: "
         .. tostring(Network ~= nil)
         .. " | SeedData: "
         .. tostring(SeedData ~= nil)
@@ -6489,4 +6478,4 @@ print(
         .. " | FruitCalc: "
         .. tostring(FruitValueCalc ~= nil)
 )
-notify("GAG2", "9 tabs loaded - Value ESP", "info")
+notify("FallHarvest", "9 tabs loaded - Value ESP", "info")
