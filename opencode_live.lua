@@ -36,12 +36,84 @@ local function json(v) local o,e=pcall(function()return HttpService:JSONEncode(v
 local function unjson(s) local o,e=pcall(function()return HttpService:JSONDecode(s)end) if o then return e end end
 
 -- ── Config persistence ──
-local Config = { key="", editor="", editorName="live.lua", theme="dark", fontSize=11, compactChat=true }
+local Config = { key="", editor="", editorName="live.lua", theme="dark", fontSize=11,
+    activeSession="default", sessions={}, autoSave=true }
+local SESSIONS_DIR = "opencode_sessions/"
+local CURRENT_SESSION = nil -- name of loaded session (nil = unsaved)
+local chist = {} -- chat history (moved up for session loader)
+
+-- ── Session management ──
+local function sessionPath(name)
+    return SESSIONS_DIR .. name .. ".json"
+end
+
+local function saveSession(name)
+    if not g_writefile then return end
+    name = name or CURRENT_SESSION or Config.activeSession
+    pcall(function()
+        if g_makefolder then g_makefolder(SESSIONS_DIR) end
+        local data = json({ name=name, history=chist, savedAt=os.time(), msgCount=#chist })
+        g_writefile(sessionPath(name), data)
+    end)
+    CURRENT_SESSION = name
+end
+
+local function loadSession(name)
+    if not g_readfile then return nil end
+    local ok, data = pcall(function() return g_readfile(sessionPath(name)) end)
+    if not ok or not data then return nil end
+    local d = unjson(data)
+    if d and d.history then return d end
+    return nil
+end
+
+local function listSessions()
+    if not g_listfiles then return {} end
+    local ok, files = pcall(function() return g_listfiles(SESSIONS_DIR) end)
+    if not ok then return {} end
+    local results = {}
+    for _, f in ipairs(files) do
+        local name = f:match("([^/]+)%.json$")
+        if name then results[#results + 1] = name end
+    end
+    table.sort(results)
+    return results
+end
+
+local function deleteSession(name)
+    if not g_delfile then return end
+    pcall(function() g_delfile(sessionPath(name)) end)
+    if CURRENT_SESSION == name then CURRENT_SESSION = nil end
+end
+
+local function exportSession(name, fmt)
+    name = name or CURRENT_SESSION or "default"
+    local d = loadSession(name)
+    if not d or not d.history then return nil end
+    if fmt == "markdown" or fmt == "md" then
+        local lines = {"# opencode-live · " .. name, "", "Saved: " .. os.date("%Y-%m-%d %H:%M:%S", d.savedAt or os.time()), ""}
+        for _, m in ipairs(d.history) do
+            local role = m.role == "assistant" and "**AI**" or (m.role == "user" and "**You**" or "**" .. m.role .. "**")
+            lines[#lines + 1] = role .. ": " .. (m.content or "")
+            lines[#lines + 1] = ""
+        end
+        return table.concat(lines, "\n")
+    end
+    return json(d.history)
+end
+
+-- load active session on startup
+local active = loadSession(Config.activeSession)
+if active then chist = active.history or {} CURRENT_SESSION = Config.activeSession end
+
 local function saveCfg()
     if not g_writefile then return end
     pcall(function()
-        local c = Config
-        if #(c.editor or "") > 50000 then c.editor = nil end
+        local c = {
+            key=Config.key, editorName=Config.editorName, fontSize=Config.fontSize,
+            activeSession=Config.activeSession, autoSave=Config.autoSave,
+        }
+        if #(Config.editor or "") < 50000 then c.editor = Config.editor end
         g_writefile(CONFIG_FILE, json(c))
     end)
 end
@@ -379,9 +451,9 @@ end
 -- tabs
 local tabs={}local bodies={}
 local tbar=make("Frame",{Size=UDim2.new(1,0,0,30),Position=UDim2.new(0,0,0,36),BackgroundColor3=C.bg,Parent=root})
-for i,n in ipairs({"Chat","Editor","Console","Settings"})do
-    local w=1/4
-    local t=make("TextButton",{Size=UDim2.new(w,-3,1,-4),Position=UDim2.new((i-1)*w,2,0,2),
+for i,n in ipairs({"Chat","Editor","Console","Sessions","Settings"})do
+    local w=1/5
+    local t=make("TextButton",{Size=UDim2.new(w,-2,1,-4),Position=UDim2.new((i-1)*w,1,0,2),
         BackgroundColor3=i==1 and C.accent or C.code,Text=n,TextColor3=C.text,Font=FM,TextSize=10,Parent=tbar})
     rnd(t,4)tabs[i]=t
     local b=make("Frame",{Size=UDim2.new(1,0,1,-66),Position=UDim2.new(0,0,0,66),
@@ -389,12 +461,13 @@ for i,n in ipairs({"Chat","Editor","Console","Settings"})do
     t.MouseButton1Click:Connect(function()
         for j,tt in ipairs(tabs)do tt.BackgroundColor3=C.code;bodies[j].Visible=false end
         t.BackgroundColor3=C.accent;b.Visible=true
+        if n=="Sessions"then refreshSessions()end
     end)
 end
 
 -- ═══ CHAT ═══
 local chatB=bodies[1]
-local chist={};local busy=false
+local busy=false
 local clog=make("ScrollingFrame",{Size=UDim2.new(1,0,1,-76),BackgroundTransparency=1,
     ScrollBarThickness=4,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=chatB})
 local clist=make("UIListLayout",{Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder,Parent=clog})
@@ -450,7 +523,9 @@ make("TextButton",{Size=UDim2.fromOffset(64,60),Position=UDim2.new(1,-68,1,-66),
                 bubble("ai",r)
                 chist[#chist+1]={role="user",content=t}
                 chist[#chist+1]={role="assistant",content=r}
-                if#chist>30 then table.remove(chist,1)table.remove(chist,1)end
+                if#chist>60 then table.remove(chist,1)table.remove(chist,1)end
+                if Config.autoSave then saveSession(CURRENT_SESSION or Config.activeSession) end
+                refreshSessions()
                 break
             end
         end
@@ -515,8 +590,97 @@ make("TextButton",{Size=UDim2.new(1,-8,0,28),Position=UDim2.new(0,4,1,-32),
     Text="Refresh Console",Parent=conB}).MouseButton1Click:Connect(refreshCon)
 rnd(conB:FindFirstChildOfClass("TextButton"),4)
 
+-- ═══ SESSIONS ═══
+local sesB=bodies[4]
+local seslist=make("UIListLayout",{Padding=UDim.new(0,6),Parent=sesB})
+pad(sesB,6)
+
+make("TextLabel",{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1,Font=FM,TextSize=11,
+    TextColor3=C.text,Text="Chat Sessions",Parent=sesB})
+
+local sesInfo=make("TextLabel",{Size=UDim2.new(1,0,0,32),BackgroundTransparency=1,Font=FR,TextSize=9,
+    TextColor3=C.mute,TextWrapped=true,Text="Active: "..(CURRENT_SESSION or "unsaved"),Parent=sesB})
+
+local sesListFrame=make("ScrollingFrame",{Size=UDim2.new(1,0,1,-220),BackgroundTransparency=1,
+    ScrollBarThickness=4,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=sesB})
+local sesItems=make("UIListLayout",{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder,Parent=sesListFrame})
+pad(sesListFrame,2)
+
+local function sesBtn(parent,text,cb,clr)
+    local b=make("TextButton",{Size=UDim2.new(1,0,0,28),BackgroundColor3=clr or C.code,
+        Font=FB,TextSize=10,TextColor3=clr and Color3.fromRGB(0,0,0)or C.text,Text=text,Parent=parent})
+    rnd(b,4)b.MouseButton1Click:Connect(function()pcall(cb)end)return b
+end
+
+function refreshSessions()
+    sesInfo.Text="Active: "..(CURRENT_SESSION or"unsaved").." · "..(#chist).." msgs"
+    for _,c in ipairs(sesListFrame:GetChildren())do if c:IsA("TextButton")then c:Destroy()end end
+    local list=listSessions()
+    for _,name in ipairs(list)do
+        local row=make("Frame",{Size=UDim2.new(1,0,0,30),BackgroundColor3=C.code,Parent=sesListFrame})
+        rnd(row,4)
+        make("TextLabel",{Size=UDim2.new(0.6,0,1,0),BackgroundTransparency=1,Font=FR,TextSize=10,
+            TextColor3=(name==CURRENT_SESSION and C.accent or C.text),Text="  "..name,
+            TextXAlignment=Enum.TextXAlignment.Left,Parent=row})
+
+        local d=loadSession(name)
+        local info=make("TextLabel",{Size=UDim2.new(0,200,1,0),Position=UDim2.new(1,-280,0,0),
+            BackgroundTransparency=1,Font=FR,TextSize=8,TextColor3=C.mute,
+            Text=(d and#d.history or 0).." msgs",TextXAlignment=Enum.TextXAlignment.Right,Parent=row})
+
+        row.InputBegan:Connect(function(input)
+            if input.UserInputType==Enum.UserInputType.MouseButton1 then
+                local d=loadSession(name)
+                if d and d.history then
+                    chist=d.history;CURRENT_SESSION=name;Config.activeSession=name;saveCfg()
+                    clog:ClearAllChildren()
+                    for _,m in ipairs(chist)do
+                        local role=m.role=="assistant"and"ai"or m.role=="user"and"user"or"tool"
+                        bubble(role,m.content)
+                    end
+                    bubble("ai","Session loaded: "..name.." ("..#chist.." messages)")
+                    refreshSessions()
+                end
+            elseif input.UserInputType==Enum.UserInputType.MouseButton2 then
+                deleteSession(name)refreshSessions()
+            end
+        end)
+    end
+end
+
+sesBtn(sesB,"Save Current Session",function()
+    local name=CURRENT_SESSION or"session_"..os.date("%Y%m%d_%H%M%S")
+    saveSession(name)Config.activeSession=name;saveCfg()
+    sesInfo.Text="Saved: "..name.." · "..#chist.." msgs"
+    bubble("tool","Session saved: "..name)
+    refreshSessions()
+end,C.green)
+
+sesBtn(sesB,"Save As New Session",function()
+    local name="session_"..os.date("%Y%m%d_%H%M%S")
+    saveSession(name)Config.activeSession=name;CURRENT_SESSION=name;saveCfg()
+    refreshSessions()bubble("tool","New session: "..name)
+end)
+
+sesBtn(sesB,"Export as Markdown",function()
+    local md=exportSession(nil,"md")
+    if md and g_setclipboard then pcall(function()g_setclipboard(md)end)end
+    bubble("tool","Session exported"..(g_setclipboard and" (copied)"or""))
+end)
+
+sesBtn(sesB,"Export as JSON",function()
+    local js=exportSession(nil,"json")
+    if js and g_setclipboard then pcall(function()g_setclipboard(js)end)end
+    bubble("tool","JSON exported"..(g_setclipboard and" (copied)"or""))
+end)
+
+sesBtn(sesB,"Clear Current Chat",function()
+    chist={};clog:ClearAllChildren();bubble("ai","Chat cleared. Unsaved changes lost.")
+    refreshSessions()
+end,C.red)
+
 -- ═══ SETTINGS ═══
-local setB=bodies[4]
+local setB=bodies[5]
 local slist=make("UIListLayout",{Padding=UDim.new(0,7),Parent=setB})
 pad(setB,6)
 
