@@ -17,12 +17,35 @@ local ApiKey = ""
 local ScriptContent = "-- Write Luau code here\n-- Ctrl+Enter to execute\n-- Ask AI to generate/debug code"
 local ScriptName = "live_script.lua"
 
--- executor HTTP detection (same pattern as GAG2)
+-- executor HTTP detection — same pattern as NoTokenLimit connector
 local httpRequest = (syn and syn.request)
     or (http and http.request)
-    or (fluxus and fluxus.request)
-    or (typeof(request) == "function" and request)
     or http_request
+    or request
+    or (fluxus and fluxus.request)
+    or (krnl and krnl.request)
+
+local function callHttp(body)
+    if not httpRequest then
+        return nil
+    end
+    local ok, resp = pcall(httpRequest, {
+        Url = DEEPSEEK_URL,
+        Method = "POST",
+        Headers = {
+            ["Content-Type"] = "application/json",
+            ["Authorization"] = "Bearer " .. ApiKey,
+        },
+        Body = body,
+    })
+    if ok and resp then
+        local bodyStr = type(resp) == "table"
+            and (resp.Body or resp.body or tostring(resp))
+            or tostring(resp)
+        return bodyStr
+    end
+    return nil
+end
 
 -- ================ Load Fluent-modded ================
 local Fluent = nil
@@ -86,13 +109,13 @@ end
 -- ================ AI ================
 local function askDeepseek(prompt, history)
     if ApiKey == "" then
-        return "No API key. Set it in Settings tab."
+        return "Set API key in Settings tab first."
     end
 
     local messages = {
         {
             role = "system",
-            content = "You are an expert Roblox Luau scripting assistant powered by deepseek-v4-pro. You help write, debug, and optimize executor scripts for Grow a Garden 2 and Fall Harvest. Be concise. Provide complete, working code when asked. The user runs scripts on an Android executor with: loadstring, writefile, readfile, getgenv, getgc, gethui, HttpService."
+            content = "You are an expert Roblox Luau scripting assistant. Help write, debug, and optimize scripts. Be concise. Provide complete working code when asked. The user runs scripts on an Android executor."
         }
     }
     if history then
@@ -110,53 +133,22 @@ local function askDeepseek(prompt, history)
         max_tokens = 4096,
     })
 
-    -- try executor HTTP first (syn.request, http.request, etc.)
-    if httpRequest then
-        local ok, result = pcall(httpRequest, {
-            Url = DEEPSEEK_URL,
-            Method = "POST",
-            Headers = {
-                ["Content-Type"] = "application/json",
-                ["Authorization"] = "Bearer " .. ApiKey,
-            },
-            Body = body,
-        })
-        if ok and result and result.Body then
-            local data = HttpService:JSONDecode(result.Body)
-            if data and data.choices and data.choices[1] then
-                return data.choices[1].message.content
-            end
-        end
-        if not ok then
-            return "HTTP error: " .. tostring(result)
-        end
+    local result = callHttp(body)
+    if not result then
+        return "HTTP unavailable — no executor function found.\n\nTry:\n- syn.request (Synapse X / Delta X)\n- http.request (KRNL / Script-Ware)\n- fluxus.request (Fluxus)\n- Or set HttpService.HttpEnabled = true in game settings"
+    end
+    if result == "" then
+        return "Empty response from API. Check your API key."
     end
 
-    -- fallback: try HttpService in a coroutine (some executors allow it from spawn)
-    if HttpService then
-        local co = coroutine.create(function()
-            local ok, result = pcall(function()
-                return HttpService:PostAsync(
-                    DEEPSEEK_URL,
-                    body,
-                    Enum.HttpContentType.ApplicationJson,
-                    false,
-                    { ["Authorization"] = "Bearer " .. ApiKey }
-                )
-            end)
-            if ok and result then
-                local data = HttpService:JSONDecode(result)
-                if data and data.choices and data.choices[1] then
-                    coroutine.yield(data.choices[1].message.content)
-                end
-            end
-            coroutine.yield(nil)
-        end)
-        local _, response = coroutine.resume(co)
-        if response then return response end
+    local data = HttpService:JSONDecode(result)
+    if data and data.choices and data.choices[1] then
+        return data.choices[1].message.content
     end
-
-    return "No HTTP function available on this executor. Try: syn.request, http.request, or fluxus.request"
+    if data and data.error then
+        return "API error: " .. tostring(data.error.message or data.error)
+    end
+    return "Invalid API response: " .. string.sub(tostring(result), 1, 200)
 end
 
 -- ================ Fluent UI ================
