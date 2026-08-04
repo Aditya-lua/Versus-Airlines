@@ -363,7 +363,9 @@ chatBox.TextYAlignment = Enum.TextYAlignment.Top
 chatBox.TextWrapped = true
 chatBox.Parent = chatTab
 Instance.new("UICorner", chatBox).CornerRadius = UDim.new(0, 6)
-Instance.new("UIPadding", chatBox).PaddingAll = UDim.new(0, 6)
+local p = Instance.new("UIPadding", chatBox)
+p.PaddingLeft = UDim.new(0, 6); p.PaddingRight = UDim.new(0, 6)
+p.PaddingTop = UDim.new(0, 6); p.PaddingBottom = UDim.new(0, 6)
 
 local sendBtn = Instance.new("TextButton")
 sendBtn.Size = UDim2.fromOffset(64, 60)
@@ -406,7 +408,9 @@ editorBox.MultiLine = true
 editorBox.TextWrapped = true
 editorBox.Parent = editorTab
 Instance.new("UICorner", editorBox).CornerRadius = UDim.new(0, 5)
-Instance.new("UIPadding", editorBox).PaddingAll = UDim.new(0, 4)
+local ep = Instance.new("UIPadding", editorBox)
+ep.PaddingLeft = UDim.new(0, 4); ep.PaddingRight = UDim.new(0, 4)
+ep.PaddingTop = UDim.new(0, 4); ep.PaddingBottom = UDim.new(0, 4)
 
 local function makeBtn(parent, text, posY, cb)
     local btn = Instance.new("TextButton")
@@ -452,7 +456,9 @@ local settingsTab = tabFrames[3]
 
 local settingsList = Instance.new("UIListLayout", settingsTab)
 settingsList.Padding = UDim.new(0, 6)
-Instance.new("UIPadding", settingsTab).PaddingAll = UDim.new(0, 6)
+local sp = Instance.new("UIPadding", settingsTab)
+sp.PaddingLeft = UDim.new(0, 6); sp.PaddingRight = UDim.new(0, 6)
+sp.PaddingTop = UDim.new(0, 6); sp.PaddingBottom = UDim.new(0, 6)
 
 local title1 = Instance.new("TextLabel")
 title1.Size = UDim2.new(1, 0, 0, 18)
