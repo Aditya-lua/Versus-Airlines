@@ -17,6 +17,13 @@ local ApiKey = ""
 local ScriptContent = "-- Write Luau code here\n-- Ctrl+Enter to execute\n-- Ask AI to generate/debug code"
 local ScriptName = "live_script.lua"
 
+-- executor HTTP detection (same pattern as GAG2)
+local httpRequest = (syn and syn.request)
+    or (http and http.request)
+    or (fluxus and fluxus.request)
+    or (typeof(request) == "function" and request)
+    or http_request
+
 -- ================ Load Fluent-modded ================
 local Fluent = nil
 pcall(function()
@@ -81,14 +88,11 @@ local function askDeepseek(prompt, history)
     if ApiKey == "" then
         return "No API key. Set it in Settings tab."
     end
-    if not HttpService then
-        return "HttpService not available."
-    end
 
     local messages = {
         {
             role = "system",
-            content = "You are an expert Roblox Luau scripting assistant powered by deepseek-v4-pro. You help write, debug, and optimize executor scripts for Grow a Garden 2 and Fall Harvest. You know the game's full Networking module, remote paths, ValueEngine, tool system, and data structures. Be concise and provide complete, working code snippets when asked. The user is running scripts on an Android executor with access to: loadstring, writefile, readfile, getgenv, getgc, gethui, HttpService, syn/synapse APIs."
+            content = "You are an expert Roblox Luau scripting assistant powered by deepseek-v4-pro. You help write, debug, and optimize executor scripts for Grow a Garden 2 and Fall Harvest. Be concise. Provide complete, working code when asked. The user runs scripts on an Android executor with: loadstring, writefile, readfile, getgenv, getgc, gethui, HttpService."
         }
     }
     if history then
@@ -106,22 +110,53 @@ local function askDeepseek(prompt, history)
         max_tokens = 4096,
     })
 
-    local ok, result = pcall(function()
-        return HttpService:PostAsync(
-            DEEPSEEK_URL,
-            body,
-            Enum.HttpContentType.ApplicationJson,
-            false,
-            { ["Authorization"] = "Bearer " .. ApiKey }
-        )
-    end)
-
-    if not ok then return "HttpService error: " .. tostring(result) end
-    local data = HttpService:JSONDecode(result)
-    if data and data.choices and data.choices[1] then
-        return data.choices[1].message.content
+    -- try executor HTTP first (syn.request, http.request, etc.)
+    if httpRequest then
+        local ok, result = pcall(httpRequest, {
+            Url = DEEPSEEK_URL,
+            Method = "POST",
+            Headers = {
+                ["Content-Type"] = "application/json",
+                ["Authorization"] = "Bearer " .. ApiKey,
+            },
+            Body = body,
+        })
+        if ok and result and result.Body then
+            local data = HttpService:JSONDecode(result.Body)
+            if data and data.choices and data.choices[1] then
+                return data.choices[1].message.content
+            end
+        end
+        if not ok then
+            return "HTTP error: " .. tostring(result)
+        end
     end
-    return "API error: " .. tostring(result)
+
+    -- fallback: try HttpService in a coroutine (some executors allow it from spawn)
+    if HttpService then
+        local co = coroutine.create(function()
+            local ok, result = pcall(function()
+                return HttpService:PostAsync(
+                    DEEPSEEK_URL,
+                    body,
+                    Enum.HttpContentType.ApplicationJson,
+                    false,
+                    { ["Authorization"] = "Bearer " .. ApiKey }
+                )
+            end)
+            if ok and result then
+                local data = HttpService:JSONDecode(result)
+                if data and data.choices and data.choices[1] then
+                    coroutine.yield(data.choices[1].message.content)
+                end
+            end
+            coroutine.yield(nil)
+        end)
+        local _, response = coroutine.resume(co)
+        if response then return response end
+    end
+
+    return "No HTTP function available on this executor. Try: syn.request, http.request, or fluxus.request"
 end
 
 -- ================ Fluent UI ================
