@@ -3898,49 +3898,51 @@ local function doAutoBuyPet()
     local maxPrice = tonumber(Library.Flags["petBuyMaxPrice"]) or 500
     local balance = getBalance()
     for _, pet in ipairs(spawns:GetChildren()) do
+        local skip
         local part = pet:IsA("BasePart") and pet or pet:FindFirstChildWhichIsA("BasePart", true)
         if not part then
-            goto nextPet
+            skip = true
         end
-        local species = part:GetAttribute("PetName") or pet:GetAttribute("PetName")
+        local species = part and (part:GetAttribute("PetName") or pet:GetAttribute("PetName"))
         if wantSpecies and species and normName(species) ~= normName(wantSpecies) then
-            goto nextPet
+            skip = true
         end
-        local price = part:GetAttribute("Price")
+        local price = part and part:GetAttribute("Price")
         if type(price) ~= "number" or price <= 0 or price > maxPrice or price > balance then
-            goto nextPet
+            skip = true
         end
-        local owner = part:GetAttribute("OwnerUserId")
+        local owner = part and part:GetAttribute("OwnerUserId")
         if owner and owner ~= 0 then
-            goto nextPet
+            skip = true
         end
-        -- teleport to pet
-        local pos = part.Position + Vector3.new(0, 3, 0)
-        teleport(pos)
-        task.wait(0.3)
-        -- fire ProximityPrompt
-        local prompt = pet:FindFirstChildWhichIsA("ProximityPrompt")
-        if not prompt then
-            for _, d in ipairs(pet:GetDescendants()) do
-                if d:IsA("ProximityPrompt") and d.Enabled then
-                    prompt = d
-                    break
+        if skip then
+            --
+        else
+            local pos = part.Position + Vector3.new(0, 3, 0)
+            teleport(pos)
+            task.wait(0.3)
+            local prompt = pet:FindFirstChildWhichIsA("ProximityPrompt")
+            if not prompt then
+                for _, d in ipairs(pet:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") and d.Enabled then
+                        prompt = d
+                        break
+                    end
                 end
             end
+            if prompt and prompt.Enabled then
+                local oldDist = prompt.MaxActivationDistance
+                local oldHold = prompt.HoldDuration
+                prompt.MaxActivationDistance = math.huge
+                prompt.HoldDuration = 0
+                prompt:InputHoldBegin()
+                task.wait(0.15)
+                prompt:InputHoldEnd()
+                prompt.MaxActivationDistance = oldDist
+                prompt.HoldDuration = oldHold
+            end
+            break
         end
-        if prompt and prompt.Enabled then
-            local oldDist = prompt.MaxActivationDistance
-            local oldHold = prompt.HoldDuration
-            prompt.MaxActivationDistance = math.huge
-            prompt.HoldDuration = 0
-            prompt:InputHoldBegin()
-            task.wait(0.15)
-            prompt:InputHoldEnd()
-            prompt.MaxActivationDistance = oldDist
-            prompt.HoldDuration = oldHold
-        end
-        break
-        ::nextPet::
     end
 end
 
