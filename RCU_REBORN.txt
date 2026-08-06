@@ -319,11 +319,6 @@ function getData()
     return DataController.data
 end
 
-function isArrayLike(tbl)
-    if type(tbl) ~= "table" then return false end
-    return #tbl > 0
-end
-
 function hasValue(tbl, value)
     if type(tbl) ~= "table" then return false end
     if tbl[value] then return true end
@@ -373,21 +368,6 @@ function createIntervalToggle(section, cfg)
             Library:CleanupConnectionsByTag(tag)
             if not enabled then return end
             interval(tag, cfg.flagName, cfg.delay or 1, cfg.Step)
-        end,
-    })
-end
-
-function createTodoToggle(section, name, flagName, note)
-    section:createToggle({
-        Name = tostring(name) .. " (TODO)",
-        Flag = false,
-        flagName = flagName,
-        Callback = function(enabled)
-            Library:CleanupConnectionsByTag(flagName)
-            if not enabled then return end
-            interval(flagName, flagName, 5, function()
-                -- blank
-            end)
         end,
     })
 end
@@ -1633,10 +1613,6 @@ function farmTree(useTeleport, groupOverride)
     local tree = pickNearestTree(group)
     if not tree then return end
 
-    if Library.Flags["UseVersusAI"] and not useTeleport then
-        -- TODO: whenever I add versus ai to this
-    end
-
     if useTeleport then
         teleportNear(tree, 4)
     end
@@ -2454,13 +2430,6 @@ function selectedTotemAlreadyActive(totemName)
     return false
 end
 
-function craftSelectedSmoothie()
-    local smoothieId = firstValue(Library.Flags["SelectedInventorySmoothie"] or "None")
-    if not smoothieId or smoothieId == "None" then return false end
-    local result = safeServiceCall(RewardService, "craftSmoothie", smoothieId)
-    return result == "success" or result == true
-end
-
 function placeSelectedTotemIfNeeded()
     local totemId = firstValue(Library.Flags["SelectedTotem"] or "None")
     if not totemId or totemId == "None" then return false end
@@ -3070,17 +3039,6 @@ function getInventoryItemAmountByName(itemName, className)
     if ok and itemObject and itemObject.getAmount then
         local okAmount, amount = pcall(function() return itemObject:getAmount() end)
         if okAmount and tonumber(amount) then return tonumber(amount) end
-    end
-    return 0
-end
-
-function getUpgradeAmount(upgradeId)
-    local data = getData() or {}
-    local upgrades = data.upgrades or data.Upgrades or {}
-    local value = upgrades[upgradeId]
-    if type(value) == "number" then return value end
-    if type(value) == "table" then
-        return tonumber(value.amount or value.level or value.value or value.Amount or value.Level) or 0
     end
     return 0
 end
@@ -4830,16 +4788,6 @@ function resolveRebirthIndexFromFlag()
     if index and RebirthList[index] then return index end
     return getBestRebirthIndex()
 end
-function getNormalUpgradeNames()
-    local names = {}
-    for upgradeId, info in pairs(upgradesList or {}) do
-        local label = info.name or info.displayName or humanizeToken(upgradeId)
-        table.insert(names, label)
-        names[label] = upgradeId
-    end
-    table.sort(names)
-    return names
-end
 function buySelectedUpgradesBatch(maxBuys)
     local selected = readSelectedDropdownValues(Library.Flags["SelectedNormalUpgrades"])
     if #selected == 0 then return buyNormalUpgradesBatch(maxBuys) end
@@ -6048,14 +5996,6 @@ function getQuestModule()
     local ok, mod = pcall(require, obj)
     if not ok or type(mod) ~= "table" then return nil end
     return mod.Quests or mod
-end
-
-function formatPercent(value)
-    value = tonumber(value) or 0
-    local formatted = string.format("%.6f", value)
-    formatted = formatted:gsub("0+$", "")
-    formatted = formatted:gsub("%.$", "")
-    return formatted .. "%"
 end
 
 function getActiveTreesInGroup(groupId, data)
@@ -10024,16 +9964,6 @@ createIntervalToggle(Main, {
     end,
 })
 
-Main:createToggle({
-    Name = "VersusAI Pathing",
-    Description = "Allows route-based pathing for farming features when available.",
-    flagName = "UseVersusAI",
-    Flag = false,
-    Callback = function(enabled)
-        print("VersusAI Pathing:", enabled and "allowed" or "disabled")
-    end,
-})
-
 Main:createLabel({ Name = "Rebirth", Special = true })
 createIntervalToggle(Main, {
     Name = "Auto Rebirth (Best)",
@@ -11429,8 +11359,8 @@ startVersusLabelUpdater(treesStatusLabel, "RCU_TreesStatus", function()
     if Library.Flags["AutoFarmTrees"] then table.insert(active, "Farm Trees") end
     if Library.Flags["AutoFarmTreesTeleport"] then table.insert(active, "Teleport Farm") end
     if Library.Flags["AutoUpgradeAxe"] then table.insert(active, "Upgrade Axe") end
-    if Library.Flags["AutoLumberjackClaim"] then table.insert(active, "Lumberjack Claim") end
-    if Library.Flags["AutoLumberjackUpgrade"] then table.insert(active, "Lumberjack Upgrade") end
+    if Library.Flags["AutoLumberjackWork"] then table.insert(active, "Lumberjack Work") end
+    if Library.Flags["AutoUpgradeLumberjack"] then table.insert(active, "Lumberjack Upgrade") end
     if Library.Flags["AutoEquipBestAxe"] then table.insert(active, "Equip Best Axe") end
     if #active == 0 then return "Tree Features: none active" end
     local group = getFirstSelectedDropdownValue(Library.Flags["TreeGroup"], "Nearest")
