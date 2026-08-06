@@ -2446,6 +2446,16 @@ function placeSelectedTotemIfNeeded()
     return result == "success" or result == true
 end
 
+function craftSelectedSmoothie()
+    local selected = getFirstSelectedDropdownValue(Library.Flags["SelectedSmoothie"])
+    if not selected or selected == "" then return false end
+    local _, map = getSmoothieOptions()
+    local smoothieId = map[selected]
+    if not smoothieId then return false end
+    local result = safeServiceCall(RewardService, "craftSmoothie", smoothieId)
+    return result == "success" or result == true
+end
+
 function getUpgradeLevelForAutoBuy(data, upgradeId)
     local upgrades = type(data.upgrades) == "table" and data.upgrades or {}
     local value = upgrades[upgradeId]
