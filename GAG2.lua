@@ -5208,12 +5208,6 @@ Shop:createDropdown({
     Description = "Which seed to auto-purchase.",
 })
 Shop:createToggle({
-    Name = "Auto Buy Seeds",
-    Flag = false,
-    flagName = "autoBuySeed",
-    Description = "Auto-purchase the selected seed.",
-})
-Shop:createToggle({
     Name = "Auto Buy All Seeds",
     Flag = false,
     flagName = "autoBuyAllSeeds",
@@ -5228,12 +5222,6 @@ Shop:createDropdown({
     flagName = "buyGear",
     List = getGearList(),
     Description = "Which gear item to auto-purchase.",
-})
-Shop:createToggle({
-    Name = "Auto Buy Gear",
-    Flag = false,
-    flagName = "autoBuyGear",
-    Description = "Auto-purchase the selected gear.",
 })
 Shop:createToggle({
     Name = "Auto Buy All Gear",
@@ -5252,26 +5240,12 @@ Shop:createDropdown({
     Description = "Which crate to auto-purchase.",
 })
 Shop:createToggle({
-    Name = "Auto Buy Crate",
-    Flag = false,
-    flagName = "autoBuyCrate",
-    Description = "Auto-purchase the selected crate.",
-})
-Shop:createToggle({
     Name = "Auto Buy All Crate",
     Flag = false,
     flagName = "autoBuyAllCrates",
     Description = "Buy every available crate type.",
 })
 
-Shop:createSlider({
-    Name = "Buy Sprees Per Cycle",
-    flagName = "buySprees",
-    value = 5,
-    minValue = 1,
-    maxValue = 25,
-    Description = "How many of each to buy per cycle.",
-})
 
 -- ================================================================
 -- WEBHOOK TAB
@@ -5286,64 +5260,14 @@ Webhook:createInputBox({
     Flag = "",
     Description = "Input your webhook URL.",
 })
-Webhook:createInputBox({
-    Name = "Ping Message/ID",
-    flagName = "whPing",
-    Flag = "",
-    Description = "Ping message or ID for notifications.",
-})
-Webhook:createToggle({
-    Name = "Allow Ping On Ping Message/ID",
-    Flag = false,
-    flagName = "whAllowPing",
-    Description = "Allow pings on the specified message/ID.",
-})
 
 -- Pets Purchase Webhook
 Webhook:createLabel({ Name = "Pets Purchase Webhook", Special = true })
 
-Webhook:createDropdown({
-    Name = "Select Pets",
-    flagName = "whPetFilter",
-    List = getPetList(),
-    Description = "Only notify for these pet types.",
-})
-Webhook:createDropdown({
-    Name = "Select Rarity Pets",
-    flagName = "whPetRarity",
-    List = RARITY_LIST,
-    Flag = { "Any" },
-    Description = "Minimum pet rarity to notify.",
-})
-Webhook:createDropdown({
-    Name = "Select Size Pets",
-    flagName = "whPetSize",
-    List = { "Any", "Small", "Medium", "Large", "Huge" },
-    Flag = { "Any" },
-    Description = "Pet size filter for notifications.",
-})
-Webhook:createToggle({
-    Name = "Pets Purchase Webhook",
-    Flag = false,
-    flagName = "whPetPurchase",
-    Description = "Send webhook when a matching pet is purchased or tamed.",
-})
 
 -- Webhook Collection Event Seed
 Webhook:createLabel({ Name = "Webhook Collection Event Seed", Special = true })
 
-Webhook:createDropdown({
-    Name = "Select Event Seed",
-    flagName = "whEventSeed",
-    List = getSeedList(),
-    Description = "Which event/rare seeds to notify about.",
-})
-Webhook:createToggle({
-    Name = "Webhook Collection Event Seed",
-    Flag = false,
-    flagName = "whEventSeedEnabled",
-    Description = "Send webhook when a matching event seed is collected.",
-})
 
 -- ================================================================
 -- MISC TAB
