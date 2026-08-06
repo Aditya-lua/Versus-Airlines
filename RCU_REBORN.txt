@@ -1677,19 +1677,21 @@ function riskyAutoCutTreeStep()
         task.wait(0.1)
     end
 
+    local origGetRay = TreeController.getRay
+    TreeController.getRay = function(_, _, _) return true end
+    local origGetTree = TreeController.getTreeFromRayResult
+    TreeController.getTreeFromRayResult = function(_, _) return closestTree end
     pcall(function()
-        local origGetRay = TreeController.getRay
-        TreeController.getRay = function(_, _, _) return true end
-        local origGetTree = TreeController.getTreeFromRayResult
-        TreeController.getTreeFromRayResult = function(_, _) return closestTree end
         TreeController:sendRayFromInput(0, 0)
-        TreeController.getRay = origGetRay
-        TreeController.getTreeFromRayResult = origGetTree
     end)
+    TreeController.getRay = origGetRay
+    TreeController.getTreeFromRayResult = origGetTree
 
-    pcall(function()
-        TreeService.damage2:Fire(closestGroup, closestId, -1)
-    end)
+    if TreeService and TreeService.damage2 then
+        pcall(function()
+            TreeService.damage2:Fire(closestGroup, closestId, -1)
+        end)
+    end
 end
 
 function getOreRooms()
@@ -4529,18 +4531,22 @@ end
 function autoEquipBestAxeStep()
     local data = getData()
     if not data or not data.inventory or not data.inventory.exclusive then return end
-    local axeIndex = nil
-    for inventoryIndex, itemData in pairs(data.inventory.exclusive) do
+    if data.isAxeEquipped then return end
+    local bestId, bestMult
+    for id, itemData in pairs(data.inventory.exclusive) do
         local ok, itemObj = pcall(function() return itemUtils.createItemFromData(itemData) end)
         if ok and itemObj then
-            local ok2, itemName = pcall(function() return itemObj:getName():lower() end)
-            if ok2 and itemName:find("axe") and not itemName:find("pickaxe") then
-                axeIndex = inventoryIndex
-                break
+            local ok2, name = pcall(function() return itemObj:getName():lower() end)
+            if ok2 and name and name:find("axe") and not name:find("pickaxe") then
+                local mult = 0
+                pcall(function() mult = tonumber(itemObj:getMultiplier()) or 0 end)
+                if not bestId or mult > bestMult then
+                    bestId, bestMult = id, mult
+                end
             end
         end
     end
-    if not axeIndex or data.isAxeEquipped then return end
+    if not bestId then return end
     local unequipIndex = nil
     if data.isPickaxeEquipped then
         for inventoryIndex, itemData in pairs(data.inventory.exclusive) do
@@ -4570,7 +4576,7 @@ function autoEquipBestAxeStep()
         safeServiceCall(InventoryService, "useItem", unequipIndex)
         task.wait(1)
     end
-    safeServiceCall(InventoryService, "useItem", axeIndex)
+    safeServiceCall(InventoryService, "useItem", bestId)
 end
 function setTreeCooldownBypass(enabled)
     if not TreeController then return end
@@ -7693,15 +7699,15 @@ function runCurrentSeasonQuestStep()
                         end
                     end
                     if closestTree and TreeController then
+                        local origGetRay = TreeController.getRay
+                        TreeController.getRay = function(_, _, _) return true end
+                        local origGetTree = TreeController.getTreeFromRayResult
+                        TreeController.getTreeFromRayResult = function(_, _) return closestTree end
                         pcall(function()
-                            local origGetRay = TreeController.getRay
-                            TreeController.getRay = function(_, _, _) return true end
-                            local origGetTree = TreeController.getTreeFromRayResult
-                            TreeController.getTreeFromRayResult = function(_, _) return closestTree end
                             TreeController:sendRayFromInput(0, 0)
-                            TreeController.getRay = origGetRay
-                            TreeController.getTreeFromRayResult = origGetTree
                         end)
+                        TreeController.getRay = origGetRay
+                        TreeController.getTreeFromRayResult = origGetTree
                         local treeGroupId = closestTree:GetAttribute("groupId")
                         local treeId = closestTree:GetAttribute("treeId")
                         local lumberId
@@ -11465,34 +11471,31 @@ createIntervalToggle(Fishing, {
     tag = "RCU_AutoEquipBestRod",
     delay = 5,
     Step = function()
-        local function createItem(rawData)
-            if itemUtils and type(itemUtils.createItemFromData) == "function" and type(rawData) == "table" then
-                local ok, result = pcall(function() return itemUtils.createItemFromData(rawData) end)
-                if ok then return result end
-            end
-            return nil
-        end
         local data = getData()
         if not data then return end
-        local rodId
+        if data.isFishingRodEquipped then return end
+        local bestId, bestMult
         for id, itemData in pairs(data.inventory.exclusive) do
-            local itemObj = createItem(itemData)
-            if itemObj then
-                local ok, name = pcall(function() return itemObj:getName() end)
-                if ok and name and (tostring(name):lower():find("fishingrod") or tostring(name):lower():find("rod")) then
-                    rodId = id
-                    break
+            local ok, itemObj = pcall(function() return itemUtils.createItemFromData(itemData) end)
+            if ok and itemObj then
+                local ok2, name = pcall(function() return itemObj:getName():lower() end)
+                if ok2 and name and (name:find("fishingrod") or name:find("rod")) then
+                    local mult = 0
+                    pcall(function() mult = tonumber(itemObj:getMultiplier()) or 0 end)
+                    if not bestId or mult > bestMult then
+                        bestId, bestMult = id, mult
+                    end
                 end
             end
         end
-        if not rodId or data.isFishingRodEquipped then return end
+        if not bestId then return end
         local unequipId
         if data.isAxeEquipped then
             for id, itemData in pairs(data.inventory.exclusive) do
-                local itemObj = createItem(itemData)
-                if itemObj then
-                    local ok, name = pcall(function() return itemObj:getName() end)
-                    if ok and name and tostring(name):lower():find("axe") and not tostring(name):lower():find("pickaxe") then
+                local ok, itemObj = pcall(function() return itemUtils.createItemFromData(itemData) end)
+                if ok and itemObj then
+                    local ok2, name = pcall(function() return itemObj:getName():lower() end)
+                    if ok2 and name and name:find("axe") and not name:find("pickaxe") then
                         unequipId = id
                         break
                     end
@@ -11501,10 +11504,10 @@ createIntervalToggle(Fishing, {
         end
         if not unequipId and data.isPickaxeEquipped then
             for id, itemData in pairs(data.inventory.exclusive) do
-                local itemObj = createItem(itemData)
-                if itemObj then
-                    local ok, name = pcall(function() return itemObj:getName() end)
-                    if ok and name and tostring(name):lower():find("pickaxe") then
+                local ok, itemObj = pcall(function() return itemUtils.createItemFromData(itemData) end)
+                if ok and itemObj then
+                    local ok2, name = pcall(function() return itemObj:getName():lower() end)
+                    if ok2 and name and name:find("pickaxe") then
                         unequipId = id
                         break
                     end
@@ -11515,7 +11518,7 @@ createIntervalToggle(Fishing, {
             safeServiceCall(InventoryService, "useItem", unequipId, {use=1})
             task.wait(1)
         end
-        safeServiceCall(InventoryService, "useItem", rodId, {use=1})
+        safeServiceCall(InventoryService, "useItem", bestId, {use=1})
     end,
 })
 
